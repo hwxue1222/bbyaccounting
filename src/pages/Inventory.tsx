@@ -32,9 +32,25 @@ export default function Inventory() {
   const [itemName, setItemName] = useState("");
   const [selectedItemId, setSelectedItemId] = useState<string>("");
   const [stock, setStock] = useState<{ qty: number; valueBase: number } | null>(null);
-
-  const [moveStatus, setMoveStatus] = useState<"" | "draft" | "posted">("");
   const [moves, setMoves] = useState<Move[]>([]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+  const [startDate, setStartDate] = useState(monthStart);
+  const [endDate, setEndDate] = useState(today);
+  const [balances, setBalances] = useState<
+    | {
+        openingQty: number;
+        openingValueBase: number;
+        inQty: number;
+        inValueBase: number;
+        outQty: number;
+        outValueBase: number;
+        closingQty: number;
+        closingValueBase: number;
+      }
+    | null
+  >(null);
 
   const [receipt, setReceipt] = useState({ date: new Date().toISOString().slice(0, 10), qty: 1, unitCostTxn: 10, currency: "SGD", fxRate: 1, offsetAccountId: "" });
   const [shipment, setShipment] = useState({ date: new Date().toISOString().slice(0, 10), qty: 1 });
@@ -58,10 +74,24 @@ export default function Inventory() {
   async function refreshMoves() {
     const qs = new URLSearchParams();
     qs.set("limit", "100");
-    if (moveStatus) qs.set("status", moveStatus);
     if (selectedItemId) qs.set("itemId", selectedItemId);
+    if (startDate) qs.set("startDate", startDate);
+    if (endDate) qs.set("endDate", endDate);
     const r = await api<{ moves: any[] }>(`/api/inventory/moves?${qs.toString()}`);
     setMoves(r.moves as any);
+  }
+
+  async function refreshBalances() {
+    if (!startDate || !endDate) {
+      setBalances(null);
+      return;
+    }
+    const qs = new URLSearchParams();
+    qs.set("startDate", startDate);
+    qs.set("endDate", endDate);
+    if (selectedItemId) qs.set("itemId", selectedItemId);
+    const r = await api<any>(`/api/inventory/moves/balances?${qs.toString()}`);
+    setBalances(r as any);
   }
 
   async function refreshStock(itemId: string) {
@@ -97,7 +127,12 @@ export default function Inventory() {
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     refreshMoves().catch((e) => setErr(e.message));
-  }, [activeOrgId, orgSwitching, selectedItemId, moveStatus]);
+  }, [activeOrgId, orgSwitching, selectedItemId, startDate, endDate]);
+
+  useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    refreshBalances().catch((e) => setErr(e.message));
+  }, [activeOrgId, orgSwitching, selectedItemId, startDate, endDate]);
 
   return (
     <AppShell title={tr("库存 FIFO", "Inventory FIFO")}>
@@ -328,47 +363,52 @@ export default function Inventory() {
                 </select>
               </div>
               <div>
-                <div className="text-xs text-zinc-600">状态</div>
-                <div className="mt-1 rounded-xl border border-zinc-200 bg-white p-1">
-                  <div className="grid grid-cols-3 gap-1">
-                    <button
-                      className={
-                        moveStatus === ""
-                          ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                          : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-                      }
-                      type="button"
-                      onClick={() => setMoveStatus("")}
-                    >
-                      all
-                    </button>
-                    <button
-                      className={
-                        moveStatus === "draft"
-                          ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                          : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-                      }
-                      type="button"
-                      onClick={() => setMoveStatus("draft")}
-                    >
-                      draft
-                    </button>
-                    <button
-                      className={
-                        moveStatus === "posted"
-                          ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                          : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-                      }
-                      type="button"
-                      onClick={() => setMoveStatus("posted")}
-                    >
-                      posted
-                    </button>
-                  </div>
+                <div className="text-xs text-zinc-600">时间段</div>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    className="w-36 rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    type="date"
+                  />
+                  <span className="text-sm text-zinc-500">-</span>
+                  <input
+                    className="w-36 rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    type="date"
+                  />
                 </div>
               </div>
               <div className="mt-5 text-xs text-zinc-500">draft=来自分录/未过账；posted=已过账并写入 FIFO</div>
             </div>
+
+            {balances ? (
+              <div className="mt-3 grid gap-2 rounded-lg border border-zinc-100 bg-zinc-50 p-3 text-sm md:grid-cols-2">
+                <div>
+                  <div className="text-xs text-zinc-600">期初余额</div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <div className="text-zinc-700">数量</div>
+                    <div className="font-medium">{Math.trunc(balances.openingQty)}</div>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <div className="text-zinc-700">金额(基准)</div>
+                    <div className="font-medium">{balances.openingValueBase.toFixed(2)}</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-zinc-600">期末余额</div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <div className="text-zinc-700">数量</div>
+                    <div className="font-medium">{Math.trunc(balances.closingQty)}</div>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <div className="text-zinc-700">金额(基准)</div>
+                    <div className="font-medium">{balances.closingValueBase.toFixed(2)}</div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-3 overflow-x-auto rounded-lg border border-zinc-100">
               <table className="w-full table-fixed text-sm">
@@ -407,9 +447,19 @@ export default function Inventory() {
                           )}
                         </td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{unitTxn == null ? "-" : `${unitTxn.toFixed(2)} ${m.currency || ""}`}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">{amountTxn == null ? "-" : `${amountTxn.toFixed(2)} ${m.currency || ""}`}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          {amountTxn == null ? (
+                            "-"
+                          ) : (
+                            <span className={isOut ? "text-red-700" : ""}>
+                              {(isOut ? -amountTxn : amountTxn).toFixed(2)} {m.currency || ""}
+                            </span>
+                          )}
+                        </td>
                         <td className="hidden px-3 py-2 whitespace-nowrap md:table-cell">{m.status}</td>
-                        <td className="hidden px-3 py-2 whitespace-nowrap lg:table-cell">{m.entryId ? <a className="text-blue-700 hover:underline" href="/journal">打开</a> : "-"}</td>
+                        <td className="hidden px-3 py-2 whitespace-nowrap lg:table-cell">
+                          {m.entryId ? <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(m.entryId)}`}>打开</a> : "-"}
+                        </td>
                       </tr>
                     );
                   })}

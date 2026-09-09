@@ -92,8 +92,19 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!orgId) return;
   const status = typeof req.query.status === "string" ? req.query.status : null;
   const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
+  const startDate = typeof req.query.startDate === "string" ? req.query.startDate : null;
+  const endDate = typeof req.query.endDate === "string" ? req.query.endDate : null;
   const limit = typeof req.query.limit === "string" ? Math.min(200, Math.max(1, Number(req.query.limit) || 50)) : 50;
   const sql = getSql();
+
+  const dateCond =
+    startDate && endDate
+      ? sql`AND m.move_date >= ${startDate} AND m.move_date <= ${endDate}`
+      : startDate
+        ? sql`AND m.move_date >= ${startDate}`
+        : endDate
+          ? sql`AND m.move_date <= ${endDate}`
+          : sql``;
 
   const rows =
     status === "draft" || status === "posted"
@@ -116,7 +127,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             i.uom as "uom"
           FROM inventory_moves m
           JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
-          WHERE m.org_id = ${orgId} AND m.status = ${status} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
+          WHERE m.org_id = ${orgId} AND m.status = ${status} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``} ${dateCond}
           ORDER BY m.move_date DESC, m.created_at DESC
           LIMIT ${limit}
         `
@@ -139,12 +150,67 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             i.uom as "uom"
           FROM inventory_moves m
           JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
-          WHERE m.org_id = ${orgId} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
+          WHERE m.org_id = ${orgId} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``} ${dateCond}
           ORDER BY m.move_date DESC, m.created_at DESC
           LIMIT ${limit}
         `;
 
   res.status(200).json({ success: true, data: { moves: rows } });
+});
+
+router.get("/moves/balances", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const startDate = typeof req.query.startDate === "string" ? req.query.startDate : null;
+  const endDate = typeof req.query.endDate === "string" ? req.query.endDate : null;
+  const status = typeof req.query.status === "string" ? req.query.status : null;
+  const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
+  if (!startDate || !endDate) {
+    res.status(400).json({ success: false, error: "Missing startDate/endDate" });
+    return;
+  }
+  const sql = getSql();
+  const statusCond = status === "draft" || status === "posted" ? sql`AND m.status = ${status}` : sql``;
+  const itemCond = itemId ? sql`AND m.item_id = ${itemId}` : sql``;
+
+  const rows = await sql`
+    SELECT
+      COALESCE(SUM(CASE WHEN m.move_date < ${startDate} THEN (CASE WHEN m.move_type = 'shipment' THEN -m.qty ELSE m.qty END) ELSE 0 END), 0) as "openingQty",
+      COALESCE(SUM(CASE WHEN m.move_date < ${startDate} THEN (CASE WHEN m.move_type = 'shipment' THEN -m.qty * COALESCE(m.unit_cost_base, 0) ELSE m.qty * COALESCE(m.unit_cost_base, 0) END) ELSE 0 END), 0) as "openingValueBase",
+      COALESCE(SUM(CASE WHEN m.move_date >= ${startDate} AND m.move_date <= ${endDate} AND m.move_type = 'receipt' THEN m.qty ELSE 0 END), 0) as "inQty",
+      COALESCE(SUM(CASE WHEN m.move_date >= ${startDate} AND m.move_date <= ${endDate} AND m.move_type = 'receipt' THEN m.qty * COALESCE(m.unit_cost_base, 0) ELSE 0 END), 0) as "inValueBase",
+      COALESCE(SUM(CASE WHEN m.move_date >= ${startDate} AND m.move_date <= ${endDate} AND m.move_type = 'shipment' THEN m.qty ELSE 0 END), 0) as "outQty",
+      COALESCE(SUM(CASE WHEN m.move_date >= ${startDate} AND m.move_date <= ${endDate} AND m.move_type = 'shipment' THEN m.qty * COALESCE(m.unit_cost_base, 0) ELSE 0 END), 0) as "outValueBase"
+    FROM inventory_moves m
+    WHERE m.org_id = ${orgId} ${statusCond} ${itemCond}
+  `;
+
+  const r = rows[0] as any;
+  const openingQty = Number(r.openingQty) || 0;
+  const openingValueBase = Number(r.openingValueBase) || 0;
+  const inQty = Number(r.inQty) || 0;
+  const inValueBase = Number(r.inValueBase) || 0;
+  const outQty = Number(r.outQty) || 0;
+  const outValueBase = Number(r.outValueBase) || 0;
+  const closingQty = openingQty + inQty - outQty;
+  const closingValueBase = openingValueBase + inValueBase - outValueBase;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      startDate,
+      endDate,
+      openingQty,
+      openingValueBase,
+      inQty,
+      inValueBase,
+      outQty,
+      outValueBase,
+      closingQty,
+      closingValueBase,
+    },
+  });
 });
 
 router.get("/shipments/quote", requireAuth, async (req: AuthedRequest, res: Response) => {

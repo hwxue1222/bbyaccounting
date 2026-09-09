@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -42,6 +42,8 @@ export default function Journal() {
   const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
   const tr = useTr();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const detailRef = useRef<HTMLDivElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -270,6 +272,19 @@ export default function Journal() {
     setDetail(null);
     refresh().catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
+
+  useEffect(() => {
+    const entryId = searchParams.get("entryId");
+    if (!entryId) return;
+    if (!activeOrgId || orgSwitching) return;
+    setSelectedId(entryId);
+    setSearchParams((p) => {
+      const next = new URLSearchParams(p);
+      next.delete("entryId");
+      return next;
+    });
+    setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }, [searchParams, activeOrgId, orgSwitching, setSearchParams]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -782,7 +797,7 @@ export default function Journal() {
           </div>
         </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm" ref={detailRef}>
             <div className="text-sm font-semibold">凭证详情</div>
             {detail ? (
               <div className="mt-3 space-y-3">
@@ -847,10 +862,16 @@ export default function Journal() {
                     <tbody>
                       {detail.lines.map((l) => {
                         const acc = accounts.find((a) => a.id === l.accountId);
+                        const isAuto = l.lineNo > 2 && (String(acc?.code || "") === "5000" || String(acc?.code || "") === "1500");
                         return (
-                          <tr key={l.id} className="border-t border-zinc-100">
+                          <tr key={l.id} className={"border-t border-zinc-100 " + (isAuto ? "bg-amber-50" : "")}>
                             <td className="px-3 py-2">{l.lineNo}</td>
-                            <td className="px-3 py-2">{acc ? `${acc.code} ${acc.name}` : l.accountId}</td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0 flex-1">{acc ? `${acc.code} ${acc.name}` : l.accountId}</div>
+                                {isAuto ? <span className="whitespace-nowrap text-xs text-amber-800">系统自动生成</span> : null}
+                              </div>
+                            </td>
                             <td className="px-3 py-2 text-right">{Number(l.debitTxn).toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{Number(l.creditTxn).toFixed(2)}</td>
                           </tr>
