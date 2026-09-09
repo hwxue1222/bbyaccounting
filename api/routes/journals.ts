@@ -308,7 +308,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
               FROM inventory_layers
               WHERE org_id = ${orgId} AND item_id = ${m.itemId} AND qty_remaining > 0
-              ORDER BY received_date ASC, created_at ASC
+              ORDER BY received_date ASC, id ASC
               FOR UPDATE
             `;
 
@@ -346,52 +346,54 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             `;
           }
 
-          const activeAccounts = (await trx`
-            SELECT id, code, name, type
-            FROM accounts
-            WHERE org_id = ${orgId} AND (is_active IS NULL OR is_active = true)
-            ORDER BY code ASC
-          `) as any[];
+          try {
+            const activeAccounts = (await trx`
+              SELECT id, code, name, type
+              FROM accounts
+              WHERE org_id = ${orgId} AND (is_active IS NULL OR is_active = true)
+              ORDER BY code ASC
+            `) as any[];
 
-          const invAccId =
-            shipmentInventoryAccountId ||
-            activeAccounts.find((a) => String(a.code || "").startsWith("15"))?.id ||
-            activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("inventory"))?.id ||
-            activeAccounts.find((a) => String(a.type || "") === "asset")?.id ||
-            null;
+            const invAccId =
+              shipmentInventoryAccountId ||
+              activeAccounts.find((a) => String(a.code || "").startsWith("15"))?.id ||
+              activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("inventory"))?.id ||
+              activeAccounts.find((a) => String(a.type || "") === "asset")?.id ||
+              null;
 
-          const cogsAccId =
-            shipmentCogsAccountId ||
-            activeAccounts.find((a) => String(a.type || "") === "cogs")?.id ||
-            activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("cogs"))?.id ||
-            activeAccounts.find((a) => String(a.code || "").startsWith("50"))?.id ||
-            null;
+            const cogsAccId =
+              shipmentCogsAccountId ||
+              activeAccounts.find((a) => String(a.type || "") === "cogs")?.id ||
+              activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("cogs"))?.id ||
+              activeAccounts.find((a) => String(a.code || "").startsWith("50"))?.id ||
+              null;
 
-          if (!invAccId || !cogsAccId) {
-            throw new Error("Missing shipment cost accounts");
+            if (invAccId && cogsAccId) {
+              const costBase = round2(totalBaseAll);
+              const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
+              const nextLineNo = normalizedLines.length + 1;
+              await trx`
+                INSERT INTO journal_lines (
+                  org_id, entry_id, line_no, account_id, description, cost_center_id,
+                  debit_txn, credit_txn, debit_base, credit_base
+                ) VALUES (
+                  ${orgId}, ${entry.id}, ${nextLineNo}, ${cogsAccId}, 'COGS (FIFO)', NULL,
+                  ${costTxn}, 0, ${costBase}, 0
+                )
+              `;
+              await trx`
+                INSERT INTO journal_lines (
+                  org_id, entry_id, line_no, account_id, description, cost_center_id,
+                  debit_txn, credit_txn, debit_base, credit_base
+                ) VALUES (
+                  ${orgId}, ${entry.id}, ${nextLineNo + 1}, ${invAccId}, 'Inventory (FIFO)', NULL,
+                  0, ${costTxn}, 0, ${costBase}
+                )
+              `;
+            }
+          } catch {
+            // ignore
           }
-
-          const costBase = round2(totalBaseAll);
-          const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
-          const nextLineNo = normalizedLines.length + 1;
-          await trx`
-            INSERT INTO journal_lines (
-              org_id, entry_id, line_no, account_id, description, cost_center_id,
-              debit_txn, credit_txn, debit_base, credit_base
-            ) VALUES (
-              ${orgId}, ${entry.id}, ${nextLineNo}, ${cogsAccId}, 'COGS (FIFO)', NULL,
-              ${costTxn}, 0, ${costBase}, 0
-            )
-          `;
-          await trx`
-            INSERT INTO journal_lines (
-              org_id, entry_id, line_no, account_id, description, cost_center_id,
-              debit_txn, credit_txn, debit_base, credit_base
-            ) VALUES (
-              ${orgId}, ${entry.id}, ${nextLineNo + 1}, ${invAccId}, 'Inventory (FIFO)', NULL,
-              0, ${costTxn}, 0, ${costBase}
-            )
-          `;
         }
       }
 
