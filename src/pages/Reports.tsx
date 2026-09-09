@@ -141,9 +141,27 @@ export default function Reports() {
                   <th className="px-3 py-2 text-right">借</th>
                   <th className="px-3 py-2 text-right">贷</th>
                 </tr>
+              ) : tab === "tb" ? (
+                <tr>
+                  <th className="px-3 py-2 text-left">Code</th>
+                  <th className="px-3 py-2 text-left">Name</th>
+                  <th className="px-3 py-2 text-right">Opening Dr</th>
+                  <th className="px-3 py-2 text-right">Opening Cr</th>
+                  <th className="px-3 py-2 text-right">Period Dr</th>
+                  <th className="px-3 py-2 text-right">Period Cr</th>
+                  <th className="px-3 py-2 text-right">Closing Dr</th>
+                  <th className="px-3 py-2 text-right">Closing Cr</th>
+                </tr>
+              ) : tab === "pl" ? (
+                <tr>
+                  <th className="px-3 py-2 text-left">Section</th>
+                  <th className="px-3 py-2 text-left">Code</th>
+                  <th className="px-3 py-2 text-left">Name</th>
+                  <th className="px-3 py-2 text-right">Amount</th>
+                </tr>
               ) : (
                 <tr>
-                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-left">Section</th>
                   <th className="px-3 py-2 text-left">Code</th>
                   <th className="px-3 py-2 text-left">Name</th>
                   <th className="px-3 py-2 text-right">Debit</th>
@@ -161,13 +179,31 @@ export default function Reports() {
                     <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
                     <td className="px-3 py-2 text-right">{Number(r.creditBase ?? 0).toFixed(2)}</td>
                   </tr>
-                ) : (
+                ) : tab === "tb" ? (
                   <tr key={idx} className="border-t border-zinc-100">
-                    <td className="px-3 py-2">{r.type}</td>
                     <td className="px-3 py-2">{r.code}</td>
                     <td className="px-3 py-2">{r.name}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.debit).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.credit).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.openingDebit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.openingCredit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.periodDebit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.periodCredit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.closingDebit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.closingCredit ?? 0).toFixed(2)}</td>
+                  </tr>
+                ) : tab === "pl" ? (
+                  <tr key={idx} className={("border-t border-zinc-100 " + (r.isTotal ? "bg-zinc-50 font-semibold" : "")).trim()}>
+                    <td className="px-3 py-2">{r.section}</td>
+                    <td className="px-3 py-2">{r.code}</td>
+                    <td className="px-3 py-2">{r.name}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                  </tr>
+                ) : (
+                  <tr key={idx} className={("border-t border-zinc-100 " + (r.isTotal ? "bg-zinc-50 font-semibold" : "")).trim()}>
+                    <td className="px-3 py-2">{r.section}</td>
+                    <td className="px-3 py-2">{r.code}</td>
+                    <td className="px-3 py-2">{r.variance !== undefined ? `${r.name} (${Number(r.variance).toFixed(2)})` : r.name}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.debit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.credit ?? 0).toFixed(2)}</td>
                   </tr>
                 ),
               )}

@@ -31,58 +31,145 @@ router.get("/trial-balance", requireAuth, async (req: AuthedRequest, res: Respon
     return;
   }
   const sql = getSql();
+
   const costCenterId = q.data.costCenterId;
   const rows =
     costCenterId === undefined
       ? await sql`
+          WITH opening AS (
+            SELECT
+              l.account_id,
+              COALESCE(SUM(l.debit_base - l.credit_base), 0) as balance
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.entry_id
+            WHERE l.org_id = ${orgId}
+              AND e.status = 'posted'
+              AND e.entry_date < ${q.data.start}
+            GROUP BY l.account_id
+          ),
+          period AS (
+            SELECT
+              l.account_id,
+              COALESCE(SUM(l.debit_base), 0) as debit,
+              COALESCE(SUM(l.credit_base), 0) as credit
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.entry_id
+            WHERE l.org_id = ${orgId}
+              AND e.status = 'posted'
+              AND e.entry_date >= ${q.data.start}
+              AND e.entry_date <= ${q.data.end}
+            GROUP BY l.account_id
+          )
           SELECT
-            a.id as accountId,
+            a.id as "accountId",
             a.code,
             a.name,
             a.type,
-            COALESCE(SUM(CASE WHEN e.id IS NULL THEN 0 ELSE l.debit_base END), 0) as debit,
-            COALESCE(SUM(CASE WHEN e.id IS NULL THEN 0 ELSE l.credit_base END), 0) as credit
+            GREATEST(COALESCE(o.balance, 0), 0) as "openingDebit",
+            GREATEST(-COALESCE(o.balance, 0), 0) as "openingCredit",
+            COALESCE(p.debit, 0) as "periodDebit",
+            COALESCE(p.credit, 0) as "periodCredit",
+            GREATEST(COALESCE(o.balance, 0) + COALESCE(p.debit, 0) - COALESCE(p.credit, 0), 0) as "closingDebit",
+            GREATEST(-(COALESCE(o.balance, 0) + COALESCE(p.debit, 0) - COALESCE(p.credit, 0)), 0) as "closingCredit"
           FROM accounts a
-          LEFT JOIN journal_lines l ON l.account_id = a.id AND l.org_id = a.org_id
-          LEFT JOIN journal_entries e ON e.id = l.entry_id AND e.status = 'posted' AND e.entry_date >= ${q.data.start} AND e.entry_date <= ${q.data.end}
+          LEFT JOIN opening o ON o.account_id = a.id
+          LEFT JOIN period p ON p.account_id = a.id
           WHERE a.org_id = ${orgId}
             AND a.is_active = true
-          GROUP BY a.id, a.code, a.name, a.type
           ORDER BY a.code ASC
         `
       : costCenterId === "__none__"
         ? await sql`
+            WITH opening AS (
+              SELECT
+                l.account_id,
+                COALESCE(SUM(l.debit_base - l.credit_base), 0) as balance
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              WHERE l.org_id = ${orgId}
+                AND e.status = 'posted'
+                AND e.entry_date < ${q.data.start}
+                AND l.cost_center_id IS NULL
+              GROUP BY l.account_id
+            ),
+            period AS (
+              SELECT
+                l.account_id,
+                COALESCE(SUM(l.debit_base), 0) as debit,
+                COALESCE(SUM(l.credit_base), 0) as credit
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              WHERE l.org_id = ${orgId}
+                AND e.status = 'posted'
+                AND e.entry_date >= ${q.data.start}
+                AND e.entry_date <= ${q.data.end}
+                AND l.cost_center_id IS NULL
+              GROUP BY l.account_id
+            )
             SELECT
-              a.id as accountId,
+              a.id as "accountId",
               a.code,
               a.name,
               a.type,
-              COALESCE(SUM(CASE WHEN e.id IS NULL THEN 0 ELSE l.debit_base END), 0) as debit,
-              COALESCE(SUM(CASE WHEN e.id IS NULL THEN 0 ELSE l.credit_base END), 0) as credit
+              GREATEST(COALESCE(o.balance, 0), 0) as "openingDebit",
+              GREATEST(-COALESCE(o.balance, 0), 0) as "openingCredit",
+              COALESCE(p.debit, 0) as "periodDebit",
+              COALESCE(p.credit, 0) as "periodCredit",
+              GREATEST(COALESCE(o.balance, 0) + COALESCE(p.debit, 0) - COALESCE(p.credit, 0), 0) as "closingDebit",
+              GREATEST(-(COALESCE(o.balance, 0) + COALESCE(p.debit, 0) - COALESCE(p.credit, 0)), 0) as "closingCredit"
             FROM accounts a
-            LEFT JOIN journal_lines l ON l.account_id = a.id AND l.org_id = a.org_id AND l.cost_center_id IS NULL
-            LEFT JOIN journal_entries e ON e.id = l.entry_id AND e.status = 'posted' AND e.entry_date >= ${q.data.start} AND e.entry_date <= ${q.data.end}
+            LEFT JOIN opening o ON o.account_id = a.id
+            LEFT JOIN period p ON p.account_id = a.id
             WHERE a.org_id = ${orgId}
               AND a.is_active = true
-            GROUP BY a.id, a.code, a.name, a.type
             ORDER BY a.code ASC
           `
         : await sql`
+            WITH opening AS (
+              SELECT
+                l.account_id,
+                COALESCE(SUM(l.debit_base - l.credit_base), 0) as balance
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              WHERE l.org_id = ${orgId}
+                AND e.status = 'posted'
+                AND e.entry_date < ${q.data.start}
+                AND l.cost_center_id = ${costCenterId}
+              GROUP BY l.account_id
+            ),
+            period AS (
+              SELECT
+                l.account_id,
+                COALESCE(SUM(l.debit_base), 0) as debit,
+                COALESCE(SUM(l.credit_base), 0) as credit
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              WHERE l.org_id = ${orgId}
+                AND e.status = 'posted'
+                AND e.entry_date >= ${q.data.start}
+                AND e.entry_date <= ${q.data.end}
+                AND l.cost_center_id = ${costCenterId}
+              GROUP BY l.account_id
+            )
             SELECT
-              a.id as accountId,
+              a.id as "accountId",
               a.code,
               a.name,
               a.type,
-              COALESCE(SUM(CASE WHEN e.id IS NULL THEN 0 ELSE l.debit_base END), 0) as debit,
-              COALESCE(SUM(CASE WHEN e.id IS NULL THEN 0 ELSE l.credit_base END), 0) as credit
+              GREATEST(COALESCE(o.balance, 0), 0) as "openingDebit",
+              GREATEST(-COALESCE(o.balance, 0), 0) as "openingCredit",
+              COALESCE(p.debit, 0) as "periodDebit",
+              COALESCE(p.credit, 0) as "periodCredit",
+              GREATEST(COALESCE(o.balance, 0) + COALESCE(p.debit, 0) - COALESCE(p.credit, 0), 0) as "closingDebit",
+              GREATEST(-(COALESCE(o.balance, 0) + COALESCE(p.debit, 0) - COALESCE(p.credit, 0)), 0) as "closingCredit"
             FROM accounts a
-            LEFT JOIN journal_lines l ON l.account_id = a.id AND l.org_id = a.org_id AND l.cost_center_id = ${costCenterId}
-            LEFT JOIN journal_entries e ON e.id = l.entry_id AND e.status = 'posted' AND e.entry_date >= ${q.data.start} AND e.entry_date <= ${q.data.end}
+            LEFT JOIN opening o ON o.account_id = a.id
+            LEFT JOIN period p ON p.account_id = a.id
             WHERE a.org_id = ${orgId}
               AND a.is_active = true
-            GROUP BY a.id, a.code, a.name, a.type
             ORDER BY a.code ASC
           `;
+
   res.status(200).json({ success: true, data: { rows } });
 });
 
@@ -103,7 +190,8 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
   }
   const sql = getSql();
   const costCenterId = q.data.costCenterId;
-  const rows =
+
+  const baseRows =
     costCenterId === undefined
       ? await sql`
           SELECT
@@ -162,6 +250,37 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
             GROUP BY a.type, a.code, a.name
             ORDER BY a.type ASC, a.code ASC
           `;
+
+  const typed = (baseRows as any[]).map((r) => {
+    const debit = Number(r.debit || 0);
+    const credit = Number(r.credit || 0);
+    const type = String(r.type);
+    const amount = type === "income" ? credit - debit : debit - credit;
+    return { ...r, amount };
+  });
+
+  const revenue = typed.filter((r) => r.type === "income");
+  const cogs = typed.filter((r) => r.type === "cogs");
+  const expenses = typed.filter((r) => r.type === "expense");
+
+  const sum = (xs: any[]) => xs.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const totalRevenue = sum(revenue);
+  const totalCogs = sum(cogs);
+  const grossProfit = totalRevenue - totalCogs;
+  const totalExpenses = sum(expenses);
+  const netProfit = grossProfit - totalExpenses;
+
+  const rows = [
+    ...revenue.map((r) => ({ section: "Revenue", code: r.code, name: r.name, amount: r.amount })),
+    { section: "Revenue", code: "", name: "Total Revenue", amount: totalRevenue, isTotal: true },
+    ...cogs.map((r) => ({ section: "Cost of Sales", code: r.code, name: r.name, amount: r.amount })),
+    { section: "Cost of Sales", code: "", name: "Total Cost of Sales", amount: totalCogs, isTotal: true },
+    { section: "Summary", code: "", name: "Gross Profit", amount: grossProfit, isTotal: true },
+    ...expenses.map((r) => ({ section: "Expenses", code: r.code, name: r.name, amount: r.amount })),
+    { section: "Expenses", code: "", name: "Total Expenses", amount: totalExpenses, isTotal: true },
+    { section: "Summary", code: "", name: "Net Profit", amount: netProfit, isTotal: true },
+  ];
+
   res.status(200).json({ success: true, data: { rows } });
 });
 
@@ -181,7 +300,8 @@ router.get("/balance-sheet", requireAuth, async (req: AuthedRequest, res: Respon
   }
   const sql = getSql();
   const costCenterId = q.data.costCenterId;
-  const rows =
+
+  const baseRows =
     costCenterId === undefined
       ? await sql`
           SELECT
@@ -237,7 +357,47 @@ router.get("/balance-sheet", requireAuth, async (req: AuthedRequest, res: Respon
             GROUP BY a.type, a.code, a.name
             ORDER BY a.type ASC, a.code ASC
           `;
-  res.status(200).json({ success: true, data: { rows } });
+
+  const rows = (baseRows as any[]).map((r) => {
+    const debit = Number(r.debit || 0);
+    const credit = Number(r.credit || 0);
+    const balance = debit - credit;
+    return {
+      section: r.type === "asset" ? "Assets" : r.type === "liability" ? "Liabilities" : "Equity",
+      code: r.code,
+      name: r.name,
+      debit: Math.max(balance, 0),
+      credit: Math.max(-balance, 0),
+    };
+  });
+
+  const sum = (xs: any[], key: "debit" | "credit") => xs.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+  const assets = rows.filter((r) => r.section === "Assets");
+  const liabilities = rows.filter((r) => r.section === "Liabilities");
+  const equity = rows.filter((r) => r.section === "Equity");
+  const totalAssets = sum(assets, "debit") - sum(assets, "credit");
+  const totalLiab = sum(liabilities, "credit") - sum(liabilities, "debit");
+  const totalEq = sum(equity, "credit") - sum(equity, "debit");
+
+  const out = [
+    ...assets,
+    { section: "Assets", code: "", name: "Total Assets", debit: Math.max(totalAssets, 0), credit: Math.max(-totalAssets, 0), isTotal: true },
+    ...liabilities,
+    { section: "Liabilities", code: "", name: "Total Liabilities", debit: Math.max(-totalLiab, 0), credit: Math.max(totalLiab, 0), isTotal: true },
+    ...equity,
+    { section: "Equity", code: "", name: "Total Equity", debit: Math.max(-totalEq, 0), credit: Math.max(totalEq, 0), isTotal: true },
+    {
+      section: "Summary",
+      code: "",
+      name: "Assets - (Liabilities + Equity)",
+      debit: 0,
+      credit: 0,
+      variance: totalAssets - (totalLiab + totalEq),
+      isTotal: true,
+    },
+  ];
+
+  res.status(200).json({ success: true, data: { rows: out } });
 });
 
 router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
