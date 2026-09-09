@@ -121,6 +121,8 @@ export async function ensureMigrated(): Promise<void> {
       entry_date DATE NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft',
       voucher_no TEXT,
+      parent_entry_id UUID,
+      is_system BOOLEAN NOT NULL DEFAULT false,
       currency_code TEXT NOT NULL,
       fx_rate NUMERIC(18,8) NOT NULL DEFAULT 1,
       memo TEXT,
@@ -130,8 +132,11 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_parent ON journal_entries(org_id, parent_entry_id)`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS inventory_impact BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS voucher_no TEXT`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS parent_entry_id UUID`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_org_voucher_no_unique ON journal_entries(org_id, voucher_no) WHERE voucher_no IS NOT NULL AND voucher_no <> ''`;
 
   await sql`

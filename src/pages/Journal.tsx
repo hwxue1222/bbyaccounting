@@ -15,6 +15,8 @@ type EntryListRow = {
   entryDate: string;
   status: string;
   voucherNo?: string | null;
+  isSystem?: boolean;
+  parentEntryId?: string | null;
   currency: string;
   fxRate: number;
   memo: string | null;
@@ -880,7 +882,9 @@ export default function Journal() {
                 </tr>
               </thead>
               <tbody>
-                {entries.map((e) => (
+                {entries
+                  .filter((e) => !e.isSystem)
+                  .map((e) => (
                   <tr
                     key={e.id}
                     className={

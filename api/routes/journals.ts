@@ -44,6 +44,11 @@ function requireOrgId(req: AuthedRequest, res: Response): string | null {
   return orgId;
 }
 
+function isSystemAutoLine(desc: unknown): boolean {
+  const d = typeof desc === "string" ? desc.trim() : "";
+  return d === "COGS (FIFO)" || d === "Inventory (FIFO)";
+}
+
 async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: string) {
   const shipmentAgg = (await trx`
     SELECT
@@ -124,6 +129,81 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
   await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${entryId} AND status = 'posted'`;
 }
 
+async function upsertSystemCogsEntry(
+  trx: any,
+  orgId: string,
+  userId: string,
+  parentEntryId: string,
+  parentVoucherNo: string,
+  entryDate: string,
+  currency: string,
+  fxRate: number,
+  cogsAccId: string,
+  invAccId: string,
+  costTxn: number,
+  costBase: number,
+) {
+  const voucherNo = `${parentVoucherNo}A`;
+
+  const existing = await trx`
+    SELECT id
+    FROM journal_entries
+    WHERE org_id = ${orgId} AND parent_entry_id = ${parentEntryId} AND is_system = true
+    LIMIT 1
+  `;
+  if (existing.length) {
+    const sysId = String((existing[0] as any).id);
+    await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${sysId}`;
+    await trx`DELETE FROM attachments WHERE org_id = ${orgId} AND entry_id = ${sysId}`;
+    await trx`DELETE FROM journal_entries WHERE org_id = ${orgId} AND id = ${sysId}`;
+  }
+
+  const sysEntry = (
+    await trx`
+      INSERT INTO journal_entries (
+        org_id, entry_date, status, voucher_no, parent_entry_id, is_system,
+        currency_code, fx_rate, memo, created_by, inventory_impact, posted_at
+      ) VALUES (
+        ${orgId}, ${entryDate}, 'posted', ${voucherNo}, ${parentEntryId}, true,
+        ${currency.toUpperCase()}, ${fxRate}, ${`Auto COGS for ${parentVoucherNo}`}, ${userId}, false, now()
+      )
+      RETURNING id
+    `
+  )[0] as any;
+
+  await trx`
+    INSERT INTO journal_lines (
+      org_id, entry_id, line_no, account_id, description, cost_center_id,
+      debit_txn, credit_txn, debit_base, credit_base
+    ) VALUES (
+      ${orgId}, ${sysEntry.id}, 1, ${cogsAccId}, 'COGS (FIFO)', NULL,
+      ${costTxn}, 0, ${costBase}, 0
+    )
+  `;
+  await trx`
+    INSERT INTO journal_lines (
+      org_id, entry_id, line_no, account_id, description, cost_center_id,
+      debit_txn, credit_txn, debit_base, credit_base
+    ) VALUES (
+      ${orgId}, ${sysEntry.id}, 2, ${invAccId}, 'Inventory (FIFO)', NULL,
+      0, ${costTxn}, 0, ${costBase}
+    )
+  `;
+}
+
+async function deleteSystemEntriesForParent(trx: any, orgId: string, parentEntryId: string) {
+  const rows = (await trx`
+    SELECT id
+    FROM journal_entries
+    WHERE org_id = ${orgId} AND parent_entry_id = ${parentEntryId} AND is_system = true
+  `) as any[];
+  if (!rows.length) return;
+  const ids = rows.map((r) => String(r.id));
+  await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ANY(${ids}::uuid[])`;
+  await trx`DELETE FROM attachments WHERE org_id = ${orgId} AND entry_id = ANY(${ids}::uuid[])`;
+  await trx`DELETE FROM journal_entries WHERE org_id = ${orgId} AND id = ANY(${ids}::uuid[])`;
+}
+
 router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -135,6 +215,8 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
       e.status,
       e.voucher_no as "voucherNo",
+      e.parent_entry_id as "parentEntryId",
+      e.is_system as "isSystem",
       e.currency_code as "currency",
       e.fx_rate as "fxRate",
       e.memo,
@@ -188,7 +270,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sql = getSql();
   const id = req.params.id;
   const entries = await sql`
-    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
+    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
     FROM journal_entries
     WHERE id = ${id} AND org_id = ${orgId}
     LIMIT 1
@@ -198,21 +280,39 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     res.status(404).json({ success: false, error: "Not found" });
     return;
   }
-  const lines = await sql`
-    SELECT
-      id,
-      line_no as "lineNo",
-      account_id as "accountId",
-      description,
-      cost_center_id as "costCenterId",
-      debit_txn as "debitTxn",
-      credit_txn as "creditTxn",
-      debit_base as "debitBase",
-      credit_base as "creditBase"
-    FROM journal_lines
-    WHERE entry_id = ${id} AND org_id = ${orgId}
-    ORDER BY line_no ASC
-  `;
+  const isSystem = Boolean((entry as any).isSystem);
+  const lines =
+    isSystem
+      ? await sql`
+          SELECT
+            id,
+            line_no as "lineNo",
+            account_id as "accountId",
+            description,
+            cost_center_id as "costCenterId",
+            debit_txn as "debitTxn",
+            credit_txn as "creditTxn",
+            debit_base as "debitBase",
+            credit_base as "creditBase"
+          FROM journal_lines
+          WHERE entry_id = ${id} AND org_id = ${orgId}
+          ORDER BY line_no ASC
+        `
+      : await sql`
+          SELECT
+            id,
+            line_no as "lineNo",
+            account_id as "accountId",
+            description,
+            cost_center_id as "costCenterId",
+            debit_txn as "debitTxn",
+            credit_txn as "creditTxn",
+            debit_base as "debitBase",
+            credit_base as "creditBase"
+          FROM journal_lines
+          WHERE entry_id = ${id} AND org_id = ${orgId} AND (description IS NULL OR description NOT IN ('COGS (FIFO)', 'Inventory (FIFO)'))
+          ORDER BY line_no ASC
+        `;
   const atts = await sql`
     SELECT id, file_name as "fileName", mime_type as "mimeType", size_bytes as "sizeBytes", created_at as "createdAt"
     FROM attachments
@@ -276,7 +376,9 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
-  const normalizedLines = lines.map((l, idx) => {
+  const userLines = lines.filter((l) => !isSystemAutoLine(l.description));
+
+  const normalizedLines = userLines.map((l, idx) => {
     const debit = l.debitTxn || 0;
     const credit = l.creditTxn || 0;
     const debitBase = round2(debit * fxRate);
@@ -361,7 +463,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const updated = await sql.begin(async (trx) => {
       const existingRows = await trx`
-        SELECT status, voucher_no as "voucherNo", inventory_impact as "inventoryImpact"
+        SELECT status, voucher_no as "voucherNo", inventory_impact as "inventoryImpact", is_system as "isSystem"
         FROM journal_entries
         WHERE org_id = ${orgId} AND id = ${id}
         LIMIT 1
@@ -369,6 +471,9 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
       const existing = existingRows[0] as any;
       if (!existing) {
         throw new Error("Not found");
+      }
+      if (Boolean(existing.isSystem)) {
+        throw new Error("System entries cannot be edited directly");
       }
       if (String(existing.status) !== "posted") {
         throw new Error("Only posted entries can be edited currently");
@@ -546,30 +651,31 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             if (invAccId && cogsAccId) {
               const costBase = round2(totalBaseAll);
               const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
-              const nextLineNo = normalizedLines.length + 1;
-              await trx`
-                INSERT INTO journal_lines (
-                  org_id, entry_id, line_no, account_id, description, cost_center_id,
-                  debit_txn, credit_txn, debit_base, credit_base
-                ) VALUES (
-                  ${orgId}, ${id}, ${nextLineNo}, ${cogsAccId}, 'COGS (FIFO)', NULL,
-                  ${costTxn}, 0, ${costBase}, 0
-                )
-              `;
-              await trx`
-                INSERT INTO journal_lines (
-                  org_id, entry_id, line_no, account_id, description, cost_center_id,
-                  debit_txn, credit_txn, debit_base, credit_base
-                ) VALUES (
-                  ${orgId}, ${id}, ${nextLineNo + 1}, ${invAccId}, 'Inventory (FIFO)', NULL,
-                  0, ${costTxn}, 0, ${costBase}
-                )
-              `;
+              await upsertSystemCogsEntry(
+                trx,
+                orgId,
+                String(req.auth!.userId),
+                id,
+                voucherNo,
+                entryDate,
+                currency,
+                fxRate,
+                cogsAccId,
+                invAccId,
+                costTxn,
+                costBase,
+              );
+            } else {
+              await deleteSystemEntriesForParent(trx, orgId, id);
             }
           } catch {
             // ignore
           }
         }
+      }
+
+      if (!effectiveInventoryImpact) {
+        await deleteSystemEntriesForParent(trx, orgId, id);
       }
 
       const entry = (
@@ -659,7 +765,9 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
-  const normalizedLines = lines.map((l, idx) => {
+  const userLines = lines.filter((l) => !isSystemAutoLine(l.description));
+
+  const normalizedLines = userLines.map((l, idx) => {
     const debit = l.debitTxn || 0;
     const credit = l.creditTxn || 0;
     const debitBase = round2(debit * fxRate);
@@ -756,8 +864,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       const voucherNo = parsed.data.voucherNo?.trim() || (await issueVoucherNo(trx, orgId));
       const entry = (
         await trx`
-          INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-          VALUES (${orgId}, ${entryDate}, 'posted', ${voucherNo}, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+          INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+          VALUES (${orgId}, ${entryDate}, 'posted', ${voucherNo}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
           RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
         `
       )[0] as any;
@@ -923,25 +1031,20 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             if (invAccId && cogsAccId) {
               const costBase = round2(totalBaseAll);
               const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
-              const nextLineNo = normalizedLines.length + 1;
-              await trx`
-                INSERT INTO journal_lines (
-                  org_id, entry_id, line_no, account_id, description, cost_center_id,
-                  debit_txn, credit_txn, debit_base, credit_base
-                ) VALUES (
-                  ${orgId}, ${entry.id}, ${nextLineNo}, ${cogsAccId}, 'COGS (FIFO)', NULL,
-                  ${costTxn}, 0, ${costBase}, 0
-                )
-              `;
-              await trx`
-                INSERT INTO journal_lines (
-                  org_id, entry_id, line_no, account_id, description, cost_center_id,
-                  debit_txn, credit_txn, debit_base, credit_base
-                ) VALUES (
-                  ${orgId}, ${entry.id}, ${nextLineNo + 1}, ${invAccId}, 'Inventory (FIFO)', NULL,
-                  0, ${costTxn}, 0, ${costBase}
-                )
-              `;
+              await upsertSystemCogsEntry(
+                trx,
+                orgId,
+                String(req.auth!.userId),
+                entry.id,
+                voucherNo,
+                entryDate,
+                currency,
+                fxRate,
+                cogsAccId,
+                invAccId,
+                costTxn,
+                costBase,
+              );
             }
           } catch {
             // ignore
@@ -993,6 +1096,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
     await sql.begin(async (trx) => {
       if (status === "posted") {
         await rollbackInventoryByEntryId(trx, orgId, id);
+      await deleteSystemEntriesForParent(trx, orgId, id);
       } else {
         await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${id} AND status = 'draft'`;
       }
