@@ -229,6 +229,7 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_inventory_moves_item ON inventory_moves(org_id, item_id, move_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_inventory_moves_entry ON inventory_moves(org_id, entry_id, status, move_type)`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS unit_cost_txn NUMERIC(18,6)`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS currency_code TEXT`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,8)`;
