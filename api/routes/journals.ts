@@ -6,6 +6,7 @@ import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2, round6 } from "../lib/nums.js";
+import { issueVoucherNo } from "../lib/voucher.js";
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
@@ -53,6 +54,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       e.id,
       to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
       e.status,
+      e.voucher_no as "voucherNo",
       e.currency_code as "currency",
       e.fx_rate as "fxRate",
       e.memo,
@@ -68,6 +70,37 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { entries: rows } });
 });
 
+router.get("/voucher/next", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+
+  const counterRows = await sql`
+    SELECT next_int as "nextInt"
+    FROM org_counters
+    WHERE org_id = ${orgId} AND key = 'JV'
+    LIMIT 1
+  `;
+  const counterNextInt = counterRows.length ? Number((counterRows[0] as any).nextInt) : NaN;
+  let nextInt: number;
+  if (Number.isFinite(counterNextInt) && counterNextInt > 0) {
+    nextInt = counterNextInt;
+  } else {
+    const rows = await sql`
+      SELECT
+        COALESCE(MAX(CASE WHEN voucher_no ~ '^JV[0-9]+$' THEN substring(voucher_no from 3)::bigint ELSE 0 END), 0) as "maxInt"
+      FROM journal_entries
+      WHERE org_id = ${orgId}
+    `;
+    const maxInt = Number((rows[0] as any).maxInt) || 0;
+    nextInt = maxInt + 1;
+  }
+
+  const voucherNo = `JV${String(nextInt).padStart(5, "0")}`;
+  res.status(200).json({ success: true, data: { voucherNo, nextInt } });
+});
+
 router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -75,7 +108,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sql = getSql();
   const id = req.params.id;
   const entries = await sql`
-    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
+    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
     FROM journal_entries
     WHERE id = ${id} AND org_id = ${orgId}
     LIMIT 1
@@ -139,6 +172,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     entryDate: z.string().min(10),
     currency: z.string().min(3).max(3),
     fxRate: z.number().positive().default(1),
+    voucherNo: z.string().trim().min(1).max(32).optional(),
     memo: z.string().optional(),
     inventoryDetails: inventoryDetailsSchema,
     inventoryLinkLineNo: z.number().int().positive().optional(),
@@ -255,11 +289,12 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   try {
     const created = await sql.begin(async (trx) => {
+      const voucherNo = parsed.data.voucherNo?.trim() || (await issueVoucherNo(trx, orgId));
       const entry = (
         await trx`
-          INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-          VALUES (${orgId}, ${entryDate}, 'posted', ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
-          RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo
+          INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+          VALUES (${orgId}, ${entryDate}, 'posted', ${voucherNo}, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+          RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
         `
       )[0] as any;
 
@@ -307,49 +342,29 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
           const fx = Number(fxRate);
           let totalBaseAll = 0;
 
-          const moveRows: Array<{ id: string; itemId: string; qty: number }> = [];
           for (const d of inventoryDetails as any[]) {
-            const inserted = (
-              await trx`
-                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
-                VALUES (
-                  ${orgId},
-                  ${d.itemId},
-                  'shipment',
-                  ${entryDate},
-                  ${Number(d.qty)},
-                  NULL,
-                  NULL,
-                  ${currency.toUpperCase()},
-                  ${fxRate},
-                  'posted',
-                  ${entry.id},
-                  ${linkLineNo}
-                )
-                RETURNING id, item_id as "itemId", qty
-              `
-            )[0] as any;
-            moveRows.push({ id: inserted.id, itemId: inserted.itemId, qty: Number(inserted.qty) });
-          }
-
-          for (const m of moveRows) {
+            const itemId = String(d.itemId);
+            const qtyRequested = Number(d.qty);
+            if (!Number.isFinite(qtyRequested) || qtyRequested <= 0) {
+              throw new Error("Invalid shipment qty");
+            }
             const layers = await trx`
               SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
               FROM inventory_layers
-              WHERE org_id = ${orgId} AND item_id = ${m.itemId} AND qty_remaining > 0
+              WHERE org_id = ${orgId} AND item_id = ${itemId} AND qty_remaining > 0
               ORDER BY received_date ASC, id ASC
               FOR UPDATE
             `;
 
-            let remaining = Number(m.qty);
-            const breakdown: Array<{ layerId: string; qty: number; amountBase: number }> = [];
+            let remaining = qtyRequested;
+            const breakdown: Array<{ layerId: string; qty: number; unitCostBase: number; amountBase: number }> = [];
             for (const row of layers as any[]) {
               if (remaining <= 0) break;
               const qtyAvail = Number(row.qtyRemaining);
               const take = Math.min(remaining, qtyAvail);
-              const unitCostBase = Number(row.unitCostBase);
-              const amountBase = round2(take * unitCostBase);
-              breakdown.push({ layerId: row.id, qty: take, amountBase });
+              const layerUnitCostBase = Number(row.unitCostBase);
+              const amountBase = round2(take * layerUnitCostBase);
+              breakdown.push({ layerId: row.id, qty: take, unitCostBase: layerUnitCostBase, amountBase });
               remaining = round6(remaining - take);
             }
             if (remaining > 0) {
@@ -364,15 +379,30 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
                 SET qty_remaining = qty_remaining - ${b.qty}
                 WHERE id = ${b.layerId} AND org_id = ${orgId}
               `;
-            }
 
-            const unitCostBase = round6(totalBase / Number(m.qty));
-            const unitCostTxn = fx > 0 ? round6(unitCostBase / fx) : null;
-            await trx`
-              UPDATE inventory_moves
-              SET unit_cost_base = ${unitCostBase}, unit_cost_txn = ${unitCostTxn}
-              WHERE id = ${m.id} AND org_id = ${orgId}
-            `;
+              const unitCostTxn = fx > 0 ? round6(b.unitCostBase / fx) : null;
+              await trx`
+                INSERT INTO inventory_moves (
+                  org_id, item_id, move_type, move_date, qty,
+                  unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
+                  entry_id, entry_line_no, source_layer_id
+                ) VALUES (
+                  ${orgId},
+                  ${itemId},
+                  'shipment',
+                  ${entryDate},
+                  ${b.qty},
+                  ${b.unitCostBase},
+                  ${unitCostTxn},
+                  ${currency.toUpperCase()},
+                  ${fxRate},
+                  'posted',
+                  ${entry.id},
+                  ${linkLineNo},
+                  ${b.layerId}
+                )
+              `;
+            }
           }
 
           try {

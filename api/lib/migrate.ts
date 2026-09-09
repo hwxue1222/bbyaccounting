@@ -120,6 +120,7 @@ export async function ensureMigrated(): Promise<void> {
       org_id UUID NOT NULL,
       entry_date DATE NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft',
+      voucher_no TEXT,
       currency_code TEXT NOT NULL,
       fx_rate NUMERIC(18,8) NOT NULL DEFAULT 1,
       memo TEXT,
@@ -130,6 +131,17 @@ export async function ensureMigrated(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS inventory_impact BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS voucher_no TEXT`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_org_voucher_no_unique ON journal_entries(org_id, voucher_no) WHERE voucher_no IS NOT NULL AND voucher_no <> ''`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS org_counters (
+      org_id UUID NOT NULL,
+      key TEXT NOT NULL,
+      next_int BIGINT NOT NULL,
+      PRIMARY KEY (org_id, key)
+    )
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS journal_lines (
@@ -209,6 +221,7 @@ export async function ensureMigrated(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'posted',
       entry_id UUID,
       entry_line_no INT,
+      source_layer_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
@@ -218,6 +231,7 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,8)`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'posted'`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS entry_line_no INT`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS source_layer_id UUID`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS fixed_assets (

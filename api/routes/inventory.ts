@@ -4,6 +4,7 @@ import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2, round6 } from "../lib/nums.js";
+import { issueVoucherNo } from "../lib/voucher.js";
 
 const router = Router();
 
@@ -121,12 +122,14 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.status,
             m.entry_id as "entryId",
             m.entry_line_no as "entryLineNo",
+            e.voucher_no as "voucherNo",
             i.id as "itemId",
             i.sku as "itemSku",
             i.name as "itemName",
             i.uom as "uom"
           FROM inventory_moves m
           JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
+          LEFT JOIN journal_entries e ON e.id = m.entry_id AND e.org_id = m.org_id
           WHERE m.org_id = ${orgId} AND m.status = ${status} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``} ${dateCond}
           ORDER BY m.move_date DESC, m.created_at DESC
           LIMIT ${limit}
@@ -144,12 +147,14 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.status,
             m.entry_id as "entryId",
             m.entry_line_no as "entryLineNo",
+            e.voucher_no as "voucherNo",
             i.id as "itemId",
             i.sku as "itemSku",
             i.name as "itemName",
             i.uom as "uom"
           FROM inventory_moves m
           JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
+          LEFT JOIN journal_entries e ON e.id = m.entry_id AND e.org_id = m.org_id
           WHERE m.org_id = ${orgId} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``} ${dateCond}
           ORDER BY m.move_date DESC, m.created_at DESC
           LIMIT ${limit}
@@ -303,10 +308,11 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
   const totalBase = round2(unitCostBase * parsed.data.qty);
 
   const created = await sql.begin(async (trx) => {
+    const voucherNo = await issueVoucherNo(trx, orgId);
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo || 'Inventory receipt'}, ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, currency_code, fx_rate, memo, created_by, posted_at)
+        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${voucherNo}, ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo || 'Inventory receipt'}, ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;
@@ -406,6 +412,7 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
   const totalBase = round2(breakdown.reduce((s, x) => s + x.amountBase, 0));
 
   const created = await sql.begin(async (trx) => {
+    const voucherNo = await issueVoucherNo(trx, orgId);
     for (const b of breakdown) {
       await trx`
         UPDATE inventory_layers
@@ -416,8 +423,8 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
 
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.date}, 'posted', 'BASE', 1, ${parsed.data.memo || 'Inventory shipment (FIFO COGS)'}, ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, currency_code, fx_rate, memo, created_by, posted_at)
+        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${voucherNo}, 'BASE', 1, ${parsed.data.memo || 'Inventory shipment (FIFO COGS)'}, ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;
@@ -431,15 +438,28 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
       VALUES (${orgId}, ${entry.id}, 2, ${item.inventoryAccountId}, 'Inventory decrease (FIFO)', 0, 0, 0, ${totalBase}, ${parsed.data.itemId})
     `;
 
-    await trx`
-      INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id)
-      VALUES (${orgId}, ${parsed.data.itemId}, 'shipment', ${parsed.data.date}, ${parsed.data.qty}, ${round6(totalBase / parsed.data.qty)}, ${entry.id})
-    `;
-    await trx`
-      UPDATE inventory_moves
-      SET currency_code = 'BASE', fx_rate = 1, status = 'posted'
-      WHERE org_id = ${orgId} AND entry_id = ${entry.id} AND item_id = ${parsed.data.itemId} AND move_type = 'shipment'
-    `;
+    for (const b of breakdown) {
+      await trx`
+        INSERT INTO inventory_moves (
+          org_id, item_id, move_type, move_date, qty,
+          unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
+          entry_id, source_layer_id
+        ) VALUES (
+          ${orgId},
+          ${parsed.data.itemId},
+          'shipment',
+          ${parsed.data.date},
+          ${b.qty},
+          ${b.unitCostBase},
+          NULL,
+          'BASE',
+          1,
+          'posted',
+          ${entry.id},
+          ${b.layerId}
+        )
+      `;
+    }
 
     return { entryId: entry.id };
   });

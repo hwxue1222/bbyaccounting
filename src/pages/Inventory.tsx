@@ -17,6 +17,7 @@ type Move = {
   fxRate: string | null;
   status: string;
   entryId: string | null;
+  voucherNo?: string | null;
   itemId: string;
   itemSku?: string | null;
   itemName: string;
@@ -219,7 +220,7 @@ export default function Inventory() {
                 type="button"
                 onClick={() => setPanel("moves")}
               >
-                单据
+                流水
               </button>
             </div>
           </div>
@@ -336,7 +337,7 @@ export default function Inventory() {
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "moves" ? "" : "hidden")}>
             <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold">库存单据（含分录联动）</div>
+              <div className="text-sm font-semibold">库存流水（含分录联动）</div>
               <button
                 className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
                 disabled={busy}
@@ -380,7 +381,7 @@ export default function Inventory() {
                   />
                 </div>
               </div>
-              <div className="mt-5 text-xs text-zinc-500">draft=来自分录/未过账；posted=已过账并写入 FIFO</div>
+              
             </div>
 
             {balances ? (
@@ -421,6 +422,7 @@ export default function Inventory() {
                     <th className="w-24 px-3 py-2 text-right">单价</th>
                     <th className="w-24 px-3 py-2 text-right">金额</th>
                     <th className="hidden w-20 px-3 py-2 text-left md:table-cell">状态</th>
+                    <th className="hidden w-28 px-3 py-2 text-left lg:table-cell">分录号</th>
                     <th className="hidden w-16 px-3 py-2 text-left lg:table-cell">凭证</th>
                   </tr>
                 </thead>
@@ -457,6 +459,7 @@ export default function Inventory() {
                           )}
                         </td>
                         <td className="hidden px-3 py-2 whitespace-nowrap md:table-cell">{m.status}</td>
+                        <td className="hidden px-3 py-2 whitespace-nowrap lg:table-cell">{m.voucherNo || (m.entryId ? m.entryId.slice(0, 8) : "-")}</td>
                         <td className="hidden px-3 py-2 whitespace-nowrap lg:table-cell">
                           {m.entryId ? <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(m.entryId)}`}>打开</a> : "-"}
                         </td>
@@ -465,7 +468,7 @@ export default function Inventory() {
                   })}
                   {!moves.length ? (
                     <tr>
-                      <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={8}>
+                      <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={9}>
                         暂无数据
                       </td>
                     </tr>

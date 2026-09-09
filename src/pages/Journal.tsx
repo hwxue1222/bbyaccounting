@@ -14,6 +14,7 @@ type EntryListRow = {
   id: string;
   entryDate: string;
   status: string;
+  voucherNo?: string | null;
   currency: string;
   fxRate: number;
   memo: string | null;
@@ -23,7 +24,7 @@ type EntryListRow = {
 };
 
 type EntryDetail = {
-  entry: { id: string; entryDate: string; status: string; currency: string; fxRate: number; memo: string | null };
+  entry: { id: string; entryDate: string; status: string; voucherNo?: string | null; currency: string; fxRate: number; memo: string | null };
   lines: Array<{
     id: string;
     lineNo: number;
@@ -69,6 +70,8 @@ export default function Journal() {
   const [draftCurrency, setDraftCurrency] = useState("SGD");
   const [draftFx, setDraftFx] = useState(1);
   const [draftMemo, setDraftMemo] = useState("");
+  const [draftVoucherNo, setDraftVoucherNo] = useState("");
+  const [voucherTouched, setVoucherTouched] = useState(false);
 
   const [invModalOpen, setInvModalOpen] = useState(false);
   const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
@@ -105,6 +108,8 @@ export default function Journal() {
       { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
     ]);
     setDraftMemo("");
+    setDraftVoucherNo("");
+    setVoucherTouched(false);
     setInvDetails([]);
     setInvConfirmed(null);
     setInvLineIdx(null);
@@ -112,6 +117,11 @@ export default function Journal() {
     setInvEditingDetails([]);
     setInvQuoteByRow({});
     setInvModalOpen(false);
+  }
+
+  async function refreshNextVoucherNo() {
+    const r = await api<{ voucherNo: string }>("/api/journals/voucher/next");
+    setDraftVoucherNo((prev) => (voucherTouched ? prev : prev || r.voucherNo));
   }
 
   const invLine = useMemo(() => {
@@ -132,6 +142,7 @@ export default function Journal() {
     setCurrencies(currencies as any);
     setEntries(entries as any);
     setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
+    await refreshNextVoucherNo();
   }
 
   async function deleteEntry(id: string) {
@@ -311,6 +322,18 @@ export default function Journal() {
               <div>
                 <label className="text-xs text-zinc-600">日期</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-600">分录号</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={draftVoucherNo}
+                  onChange={(e) => {
+                    setVoucherTouched(true);
+                    setDraftVoucherNo(e.target.value.toUpperCase());
+                  }}
+                  placeholder="自动生成，可修改"
+                />
               </div>
               <div>
                 <label className="text-xs text-zinc-600">币种</label>
@@ -680,6 +703,7 @@ export default function Journal() {
                         method: "POST",
                         json: {
                           entryDate: draftDate,
+                          voucherNo: draftVoucherNo.trim() || undefined,
                           currency: draftCurrency,
                           fxRate: draftFx,
                           memo: draftMemo,
@@ -694,9 +718,9 @@ export default function Journal() {
                           })),
                         },
                       });
+                      resetDraftEntry();
                       await refresh();
                       setSelectedId(resp.entry.id);
-                      resetDraftEntry();
                     } catch (e: any) {
                       setErr(e.message);
                     } finally {
@@ -726,6 +750,7 @@ export default function Journal() {
               <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
                 <tr>
                   <th className="px-3 py-2 text-left">日期</th>
+                  <th className="px-3 py-2 text-left">分录号</th>
                   <th className="px-3 py-2 text-left">状态</th>
                   <th className="px-3 py-2 text-left">库存</th>
                   <th className="px-3 py-2 text-left">币种</th>
@@ -744,6 +769,7 @@ export default function Journal() {
                     onClick={() => setSelectedId(e.id)}
                   >
                     <td className="px-3 py-2">{e.entryDate}</td>
+                    <td className="px-3 py-2 text-sm">{e.voucherNo || "-"}</td>
                     <td className="px-3 py-2">
                       <span
                         className={
@@ -803,7 +829,7 @@ export default function Journal() {
               <div className="mt-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-zinc-600">
-                    {detail.entry.entryDate} · {detail.entry.status} · {detail.entry.currency} @ {detail.entry.fxRate}
+                    {detail.entry.entryDate} · {detail.entry.voucherNo || "-"} · {detail.entry.status} · {detail.entry.currency} @ {detail.entry.fxRate}
                   </div>
                   {detail.entry.status === "draft" ? (
                     <div className="flex items-center gap-2">
