@@ -62,6 +62,17 @@ export default function Reports() {
     }
   }
 
+  const exportUrl = useMemo(() => {
+    const ccParam = costCenterId ? `&costCenterId=${encodeURIComponent(costCenterId)}` : "";
+    if (tab === "pl") {
+      return `/api/reports/profit-loss.xlsx?start=${start}&end=${end}${ccParam}`;
+    }
+    if (tab === "bs") {
+      return `/api/reports/balance-sheet.xlsx?asOf=${asOf}${ccParam}`;
+    }
+    return null;
+  }, [tab, start, end, asOf, costCenterId]);
+
   return (
     <AppShell title="报表">
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -85,13 +96,23 @@ export default function Reports() {
               </button>
             ))}
           </div>
-          <button
-            className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
-            disabled={busy}
-            onClick={run}
-          >
-            {busy ? "生成中..." : "生成"}
-          </button>
+          <div className="flex items-center gap-2">
+            {exportUrl ? (
+              <a
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                href={exportUrl}
+              >
+                导出XLSX
+              </a>
+            ) : null}
+            <button
+              className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
+              disabled={busy}
+              onClick={run}
+            >
+              {busy ? "生成中..." : "生成"}
+            </button>
+          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -164,8 +185,7 @@ export default function Reports() {
                   <th className="px-3 py-2 text-left">Section</th>
                   <th className="px-3 py-2 text-left">Code</th>
                   <th className="px-3 py-2 text-left">Name</th>
-                  <th className="px-3 py-2 text-right">Debit</th>
-                  <th className="px-3 py-2 text-right">Credit</th>
+                  <th className="px-3 py-2 text-right">Amount</th>
                 </tr>
               )}
             </thead>
@@ -191,19 +211,30 @@ export default function Reports() {
                     <td className="px-3 py-2 text-right">{Number(r.closingCredit ?? 0).toFixed(2)}</td>
                   </tr>
                 ) : tab === "pl" ? (
-                  <tr key={idx} className={("border-t border-zinc-100 " + (r.isTotal ? "bg-zinc-50 font-semibold" : "")).trim()}>
+                  <tr
+                    key={idx}
+                    className={
+                      ("border-t border-zinc-100 " +
+                        (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
+                    }
+                  >
                     <td className="px-3 py-2">{r.section}</td>
-                    <td className="px-3 py-2">{r.code}</td>
-                    <td className="px-3 py-2">{r.name}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2">{r.code || ""}</td>
+                    <td className="px-3 py-2">{r.name || ""}</td>
+                    <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
                   </tr>
                 ) : (
-                  <tr key={idx} className={("border-t border-zinc-100 " + (r.isTotal ? "bg-zinc-50 font-semibold" : "")).trim()}>
+                  <tr
+                    key={idx}
+                    className={
+                      ("border-t border-zinc-100 " +
+                        (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
+                    }
+                  >
                     <td className="px-3 py-2">{r.section}</td>
-                    <td className="px-3 py-2">{r.code}</td>
-                    <td className="px-3 py-2">{r.variance !== undefined ? `${r.name} (${Number(r.variance).toFixed(2)})` : r.name}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.debit ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.credit ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2">{r.code || ""}</td>
+                    <td className="px-3 py-2">{r.label || r.name || ""}</td>
+                    <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
                   </tr>
                 ),
               )}
