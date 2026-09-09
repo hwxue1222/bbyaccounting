@@ -1,0 +1,244 @@
+import crypto from "crypto";
+import { getSql } from "./db.js";
+
+let migrated = false;
+
+export async function ensureMigrated(): Promise<void> {
+  if (migrated) return;
+  const sql = getSql();
+
+  await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      base_currency TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS memberships (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      user_id UUID NOT NULL,
+      role TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (org_id, user_id)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS invitations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      accepted_at TIMESTAMPTZ,
+      created_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_invitations_org ON invitations(org_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      normal_balance TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (org_id, code)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_accounts_org ON accounts(org_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS cost_centers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      UNIQUE (org_id, code)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS currencies (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      code TEXT NOT NULL,
+      is_enabled BOOLEAN NOT NULL DEFAULT true,
+      UNIQUE (org_id, code)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS fx_rates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      rate_date DATE NOT NULL,
+      currency_code TEXT NOT NULL,
+      fx_rate NUMERIC(18,8) NOT NULL,
+      UNIQUE (org_id, rate_date, currency_code)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS journal_entries (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      entry_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      currency_code TEXT NOT NULL,
+      fx_rate NUMERIC(18,8) NOT NULL DEFAULT 1,
+      memo TEXT,
+      created_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      posted_at TIMESTAMPTZ
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS journal_lines (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      entry_id UUID NOT NULL,
+      line_no INT NOT NULL,
+      account_id UUID NOT NULL,
+      description TEXT,
+      cost_center_id UUID,
+      inventory_item_id UUID,
+      fixed_asset_id UUID,
+      debit_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+      credit_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+      debit_base NUMERIC(18,2) NOT NULL DEFAULT 0,
+      credit_base NUMERIC(18,2) NOT NULL DEFAULT 0
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(org_id, account_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS attachments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      entry_id UUID NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT,
+      size_bytes INT,
+      data_base64 TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS inventory_items (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      sku TEXT,
+      name TEXT NOT NULL,
+      uom TEXT NOT NULL DEFAULT 'EA',
+      inventory_account_id UUID,
+      cogs_account_id UUID,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_inventory_items_org ON inventory_items(org_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS inventory_layers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      item_id UUID NOT NULL,
+      received_date DATE NOT NULL,
+      qty_remaining NUMERIC(18,4) NOT NULL,
+      unit_cost_base NUMERIC(18,6) NOT NULL,
+      source_entry_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_inventory_layers_item ON inventory_layers(org_id, item_id, received_date)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS inventory_moves (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      item_id UUID NOT NULL,
+      move_type TEXT NOT NULL,
+      move_date DATE NOT NULL,
+      qty NUMERIC(18,4) NOT NULL,
+      unit_cost_base NUMERIC(18,6),
+      entry_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_inventory_moves_item ON inventory_moves(org_id, item_id, move_date)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS fixed_assets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      acquisition_date DATE NOT NULL,
+      cost_base NUMERIC(18,2) NOT NULL,
+      useful_life_months INT NOT NULL,
+      salvage_value_base NUMERIC(18,2) NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      asset_account_id UUID,
+      accum_dep_account_id UUID,
+      dep_expense_account_id UUID,
+      disposed_at DATE
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS depreciation_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      period TEXT NOT NULL,
+      created_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (org_id, period)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS depreciation_lines (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      run_id UUID NOT NULL,
+      asset_id UUID NOT NULL,
+      amount_base NUMERIC(18,2) NOT NULL,
+      entry_id UUID NOT NULL,
+      UNIQUE (org_id, asset_id, run_id)
+    )
+  `;
+
+  migrated = true;
+}
+
+export function sha256(input: string): string {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
+
