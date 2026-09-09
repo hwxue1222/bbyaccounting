@@ -71,7 +71,7 @@ export default function Reports() {
               { k: "tb", t: "Trial Balance" },
               { k: "pl", t: "Profit & Loss" },
               { k: "bs", t: "Balance Sheet" },
-              { k: "gl", t: "GL" },
+              { k: "gl", t: "General Ledger" },
             ] as const).map((x) => (
               <button
                 key={x.k}

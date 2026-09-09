@@ -1,6 +1,6 @@
 import type React from "react";
 import { NavLink } from "react-router-dom";
-import { Building2, FileText, LayoutDashboard, Package, Settings, Warehouse, LogOut } from "lucide-react";
+import { Building2, FileText, LayoutDashboard, Package, Settings, Warehouse, LogOut, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -70,6 +70,7 @@ export default function AppShell({ title, children }: { title: string; children:
             <SideLink to="/inventory" label="库存 FIFO" icon={<Package className="h-4 w-4" />} />
             <SideLink to="/fixed-assets" label="固定资产" icon={<Warehouse className="h-4 w-4" />} />
             <SideLink to="/reports" label="报表" icon={<FileText className="h-4 w-4" />} />
+            <SideLink to="/users" label="用户" icon={<Users className="h-4 w-4" />} />
             <SideLink to="/settings" label="设置" icon={<Settings className="h-4 w-4" />} />
           </nav>
 
@@ -100,4 +101,3 @@ export default function AppShell({ title, children }: { title: string; children:
     </div>
   );
 }
-

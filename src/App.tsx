@@ -10,6 +10,7 @@ import Inventory from "@/pages/Inventory";
 import FixedAssets from "@/pages/FixedAssets";
 import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
+import Users from "@/pages/Users";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { status, bootstrap } = useAuthStore();
@@ -79,6 +80,14 @@ export default function App() {
           element={
             <RequireAuth>
               <Settings />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <RequireAuth>
+              <Users />
             </RequireAuth>
           }
         />

@@ -18,6 +18,7 @@ import journalRoutes from './routes/journals.js'
 import inventoryRoutes from './routes/inventory.js'
 import fixedAssetsRoutes from './routes/fixedAssets.js'
 import reportRoutes from './routes/reports.js'
+import usersRoutes from './routes/users.js'
 
 // load env
 dotenv.config()
@@ -69,6 +70,7 @@ app.use('/api/journals', journalRoutes)
 app.use('/api/inventory', inventoryRoutes)
 app.use('/api/fixed-assets', fixedAssetsRoutes)
 app.use('/api/reports', reportRoutes)
+app.use('/api/users', usersRoutes)
 
 /**
  * readiness (depends on DB)
