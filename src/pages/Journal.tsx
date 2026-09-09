@@ -434,6 +434,27 @@ export default function Journal() {
                             }
                             onClick={() => {
                               setErr(null);
+                              const acc = accounts.find((a) => a.id === l.accountId);
+                              const code = acc?.code ? String(acc.code) : "";
+                              if (code.startsWith("16")) {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const amount = Number(l.debitTxn) || 0;
+                                navigate(
+                                  `/fixed-assets?mode=purchase&date=${encodeURIComponent(draftDate)}&amount=${encodeURIComponent(String(amount))}&currency=${encodeURIComponent(draftCurrency)}&fx=${encodeURIComponent(String(draftFx))}`,
+                                );
+                                return;
+                              }
+                              if (code.startsWith("61")) {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const p = draftDate.slice(0, 7);
+                                navigate(`/fixed-assets?mode=depreciate&period=${encodeURIComponent(p)}`);
+                                return;
+                              }
+
                               if (invLineIdx != null && invLineIdx !== idx) {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
@@ -447,7 +468,13 @@ export default function Journal() {
                             disabled={busy}
                             type="button"
                           >
-                            库存
+                            {(() => {
+                              const acc = accounts.find((a) => a.id === l.accountId);
+                              const code = acc?.code ? String(acc.code) : "";
+                              if (code.startsWith("16")) return "购买";
+                              if (code.startsWith("61")) return "折旧";
+                              return "库存";
+                            })()}
                           </button>
                         </div>
                       </td>
@@ -471,6 +498,24 @@ export default function Journal() {
                             }
                             onClick={() => {
                               setErr(null);
+                              const acc = accounts.find((a) => a.id === l.accountId);
+                              const code = acc?.code ? String(acc.code) : "";
+                              if (code.startsWith("16")) {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                navigate(`/fixed-assets?mode=dispose&date=${encodeURIComponent(draftDate)}`);
+                                return;
+                              }
+                              if (code.startsWith("61")) {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const p = draftDate.slice(0, 7);
+                                navigate(`/fixed-assets?mode=depreciate&period=${encodeURIComponent(p)}`);
+                                return;
+                              }
+
                               if (invLineIdx != null && invLineIdx !== idx) {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
@@ -484,7 +529,13 @@ export default function Journal() {
                             disabled={busy}
                             type="button"
                           >
-                            库存
+                            {(() => {
+                              const acc = accounts.find((a) => a.id === l.accountId);
+                              const code = acc?.code ? String(acc.code) : "";
+                              if (code.startsWith("16")) return "处置";
+                              if (code.startsWith("61")) return "折旧";
+                              return "库存";
+                            })()}
                           </button>
                         </div>
                       </td>

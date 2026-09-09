@@ -271,6 +271,184 @@ router.get("/trial-balance", requireAuth, async (req: AuthedRequest, res: Respon
   res.status(200).json({ success: true, data: { rows } });
 });
 
+router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const q = z
+    .object({
+      start: z.string().min(10),
+      end: z.string().min(10),
+    })
+    .safeParse({ start: req.query.start, end: req.query.end });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Missing start/end" });
+    return;
+  }
+
+  const sql = getSql();
+
+  const rows = await sql`
+    WITH assets AS (
+      SELECT
+        id,
+        name,
+        acquisition_date,
+        status,
+        disposed_at,
+        asset_account_id,
+        accum_dep_account_id,
+        dep_expense_account_id
+      FROM fixed_assets
+      WHERE org_id = ${orgId}
+        AND acquisition_date <= ${q.data.end}
+        AND (disposed_at IS NULL OR disposed_at >= ${q.data.start})
+    ),
+    cost_open AS (
+      SELECT
+        l.fixed_asset_id as asset_id,
+        COALESCE(SUM(l.debit_base - l.credit_base), 0) as amount
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id
+      JOIN assets a ON a.id = l.fixed_asset_id
+      WHERE l.org_id = ${orgId}
+        AND e.status = 'posted'
+        AND e.entry_date < ${q.data.start}
+        AND l.account_id = a.asset_account_id
+      GROUP BY l.fixed_asset_id
+    ),
+    cost_period AS (
+      SELECT
+        l.fixed_asset_id as asset_id,
+        COALESCE(SUM(l.debit_base - l.credit_base), 0) as amount
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id
+      JOIN assets a ON a.id = l.fixed_asset_id
+      WHERE l.org_id = ${orgId}
+        AND e.status = 'posted'
+        AND e.entry_date >= ${q.data.start}
+        AND e.entry_date <= ${q.data.end}
+        AND l.account_id = a.asset_account_id
+      GROUP BY l.fixed_asset_id
+    ),
+    ad_open AS (
+      SELECT
+        l.fixed_asset_id as asset_id,
+        COALESCE(SUM(l.credit_base - l.debit_base), 0) as amount
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id
+      JOIN assets a ON a.id = l.fixed_asset_id
+      WHERE l.org_id = ${orgId}
+        AND e.status = 'posted'
+        AND e.entry_date < ${q.data.start}
+        AND l.account_id = a.accum_dep_account_id
+      GROUP BY l.fixed_asset_id
+    ),
+    ad_disposal_period AS (
+      SELECT
+        l.fixed_asset_id as asset_id,
+        COALESCE(SUM(l.debit_base), 0) as amount
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id
+      JOIN assets a ON a.id = l.fixed_asset_id
+      WHERE l.org_id = ${orgId}
+        AND e.status = 'posted'
+        AND e.entry_date >= ${q.data.start}
+        AND e.entry_date <= ${q.data.end}
+        AND l.account_id = a.accum_dep_account_id
+      GROUP BY l.fixed_asset_id
+    ),
+    dep_period AS (
+      SELECT
+        l.fixed_asset_id as asset_id,
+        COALESCE(SUM(l.debit_base - l.credit_base), 0) as amount
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id
+      JOIN assets a ON a.id = l.fixed_asset_id
+      WHERE l.org_id = ${orgId}
+        AND e.status = 'posted'
+        AND e.entry_date >= ${q.data.start}
+        AND e.entry_date <= ${q.data.end}
+        AND l.account_id = a.dep_expense_account_id
+      GROUP BY l.fixed_asset_id
+    )
+    SELECT
+      a.id as "assetId",
+      a.name,
+      to_char(a.acquisition_date, 'YYYY-MM-DD') as "acquisitionDate",
+      a.status,
+      COALESCE(co.amount, 0) as "openingCost",
+      GREATEST(COALESCE(cp.amount, 0), 0) as "additions",
+      GREATEST(-COALESCE(cp.amount, 0), 0) as "disposals",
+      (COALESCE(co.amount, 0) + GREATEST(COALESCE(cp.amount, 0), 0) - GREATEST(-COALESCE(cp.amount, 0), 0)) as "closingCost",
+      COALESCE(ao.amount, 0) as "openingAccumDep",
+      COALESCE(dp.amount, 0) as "depExpense",
+      COALESCE(adp.amount, 0) as "accumDepDisposed",
+      (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0)) as "closingAccumDep",
+      ((COALESCE(co.amount, 0) + GREATEST(COALESCE(cp.amount, 0), 0) - GREATEST(-COALESCE(cp.amount, 0), 0)) - (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0))) as "netBookValue"
+    FROM assets a
+    LEFT JOIN cost_open co ON co.asset_id = a.id
+    LEFT JOIN cost_period cp ON cp.asset_id = a.id
+    LEFT JOIN ad_open ao ON ao.asset_id = a.id
+    LEFT JOIN dep_period dp ON dp.asset_id = a.id
+    LEFT JOIN ad_disposal_period adp ON adp.asset_id = a.id
+    ORDER BY a.acquisition_date ASC, a.name ASC
+  `;
+
+  const items = (rows as any[]).map((r) => ({
+    assetId: String(r.assetId),
+    name: String(r.name || ""),
+    acquisitionDate: String(r.acquisitionDate || ""),
+    status: String(r.status || ""),
+    openingCost: Number(r.openingCost || 0),
+    additions: Number(r.additions || 0),
+    disposals: Number(r.disposals || 0),
+    closingCost: Number(r.closingCost || 0),
+    openingAccumDep: Number(r.openingAccumDep || 0),
+    depExpense: Number(r.depExpense || 0),
+    accumDepDisposed: Number(r.accumDepDisposed || 0),
+    closingAccumDep: Number(r.closingAccumDep || 0),
+    netBookValue: Number(r.netBookValue || 0),
+  }));
+
+  const totals = items.reduce(
+    (acc, it) => {
+      acc.openingCost += it.openingCost;
+      acc.additions += it.additions;
+      acc.disposals += it.disposals;
+      acc.closingCost += it.closingCost;
+      acc.openingAccumDep += it.openingAccumDep;
+      acc.depExpense += it.depExpense;
+      acc.accumDepDisposed += it.accumDepDisposed;
+      acc.closingAccumDep += it.closingAccumDep;
+      acc.netBookValue += it.netBookValue;
+      return acc;
+    },
+    {
+      openingCost: 0,
+      additions: 0,
+      disposals: 0,
+      closingCost: 0,
+      openingAccumDep: 0,
+      depExpense: 0,
+      accumDepDisposed: 0,
+      closingAccumDep: 0,
+      netBookValue: 0,
+    },
+  );
+
+  res.status(200).json({
+    success: true,
+    data: {
+      start: q.data.start,
+      end: q.data.end,
+      items,
+      totals,
+    },
+  });
+});
+
 router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
