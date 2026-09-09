@@ -1,6 +1,7 @@
 import { Router, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
+import crypto from "crypto";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
@@ -8,6 +9,29 @@ import { round2, round6 } from "../lib/nums.js";
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
+
+function makeErrorId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return crypto.randomBytes(16).toString("hex");
+  }
+}
+
+function mapPgError(e: any): { status: number; message: string } | null {
+  const code = typeof e?.code === "string" ? e.code : null;
+  if (!code) return null;
+
+  const id = makeErrorId();
+
+  if (code === "22P02") return { status: 400, message: `字段格式不正确（ID ${id}）` };
+  if (code === "23502") return { status: 400, message: `缺少必填字段（ID ${id}）` };
+  if (code === "23505") return { status: 409, message: `数据重复（唯一约束冲突，ID ${id}）` };
+  if (code === "40001") return { status: 409, message: `并发冲突，请重试（ID ${id}）` };
+  if (code === "42P01") return { status: 500, message: `数据库表缺失（可能迁移未完成，ID ${id}）` };
+  if (code === "42703") return { status: 500, message: `数据库字段缺失（可能迁移未完成，ID ${id}）` };
+  return { status: 500, message: `数据库错误 ${code}（ID ${id}）` };
+}
 
 function requireOrgId(req: AuthedRequest, res: Response): string | null {
   const orgId = req.auth!.orgId;
@@ -407,7 +431,15 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       res.status(400).json({ success: false, error: msg });
       return;
     }
-    res.status(500).json({ success: false, error: "Server internal error" });
+    const mapped = mapPgError(e);
+    if (mapped) {
+      console.error("[journals/post]", { orgId, userId: req.auth?.userId, pgCode: e?.code, message: msg });
+      res.status(mapped.status).json({ success: false, error: mapped.message });
+      return;
+    }
+    const errorId = makeErrorId();
+    console.error("[journals/post]", { orgId, userId: req.auth?.userId, errorId, message: msg });
+    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
   }
 });
 
