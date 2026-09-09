@@ -22,6 +22,10 @@ type UiState = {
   lang: Lang;
   setLang: (lang: Lang) => void;
   toggleLang: () => void;
+  inflight: number;
+  inflightStartedAt: number | null;
+  beginNetwork: () => void;
+  endNetwork: () => void;
 };
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -38,5 +42,19 @@ export const useUiStore = create<UiState>((set, get) => ({
     const next: Lang = get().lang === "zh" ? "en" : "zh";
     get().setLang(next);
   },
+  inflight: 0,
+  inflightStartedAt: null,
+  beginNetwork: () => {
+    const cur = get().inflight;
+    if (cur <= 0) {
+      set({ inflight: 1, inflightStartedAt: Date.now() });
+      return;
+    }
+    set({ inflight: cur + 1 });
+  },
+  endNetwork: () => {
+    const cur = get().inflight;
+    const next = Math.max(0, cur - 1);
+    set({ inflight: next, inflightStartedAt: next === 0 ? null : get().inflightStartedAt });
+  },
 }));
-

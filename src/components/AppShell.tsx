@@ -1,4 +1,5 @@
 import type React from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { Building2, FileText, LayoutDashboard, Package, Settings, Warehouse, LogOut, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,22 @@ export default function AppShell({ title, children }: { title: string; children:
   const active = orgs.find((o) => o.orgId === activeOrgId) || null;
   const { lang, setLang } = useUiStore();
   const tr = useTr();
+  const inflight = useUiStore((s) => s.inflight);
+  const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!inflight) return;
+    const id = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(id);
+  }, [inflight]);
+
+  const inflightText = useMemo(() => {
+    if (!inflight || !inflightStartedAt) return null;
+    const ms = Math.max(0, now - inflightStartedAt);
+    const sec = (ms / 1000).toFixed(1);
+    return tr(`刷新中 ${sec}s`, `Refreshing ${sec}s`);
+  }, [inflight, inflightStartedAt, now, tr]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -136,6 +153,9 @@ export default function AppShell({ title, children }: { title: string; children:
               <div className="min-w-0">
                 <div className="truncate text-base font-semibold">{title}</div>
               </div>
+              {inflightText ? (
+                <div className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700">{inflightText}</div>
+              ) : null}
             </div>
           </header>
 

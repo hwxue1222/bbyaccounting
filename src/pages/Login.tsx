@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTr } from "@/lib/tr";
+import { api } from "@/lib/api";
 
 export default function Login() {
   const { status, error, login, register } = useAuthStore();
@@ -26,14 +27,8 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/ready", { credentials: "include" });
-        const json = (await res.json().catch(() => null)) as any;
+        await api("/api/ready");
         if (cancelled) return;
-        if (!res.ok || json?.success === false) {
-          const msg = typeof json?.error === "string" ? json.error : `HTTP ${res.status}`;
-          setBackendReady({ ok: false, message: msg });
-          return;
-        }
         setBackendReady({ ok: true });
       } catch (e: any) {
         if (cancelled) return;
