@@ -13,6 +13,8 @@ type AuthState = {
   user: { id: string; email: string } | null;
   orgs: OrgRow[];
   activeOrgId: string | null;
+  pendingOrgId: string | null;
+  orgSwitching: boolean;
   error: string | null;
   bootstrap: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
@@ -29,13 +31,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   orgs: [],
   activeOrgId: null,
+  pendingOrgId: null,
+  orgSwitching: false,
   error: null,
   bootstrap: async () => {
     set({ status: "loading", error: null });
     try {
-      const me = await api<{ user: { id: string; email: string }; orgId: string | null }>("/api/auth/me");
-      const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
-      set({ status: "authed", user: me.user, activeOrgId: me.orgId, orgs: orgsResp.orgs, error: null });
+      const [me, orgsResp] = await Promise.all([
+        api<{ user: { id: string; email: string }; orgId: string | null }>("/api/auth/me"),
+        api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs"),
+      ]);
+
+      set({
+        status: "authed",
+        user: me.user,
+        activeOrgId: orgsResp.activeOrgId ?? me.orgId,
+        orgs: orgsResp.orgs,
+        error: null,
+      });
     } catch (_e: any) {
       set({ status: "anon", user: null, activeOrgId: null, orgs: [], error: null });
     }
@@ -71,12 +84,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ status: "anon", user: null, orgs: [], activeOrgId: null });
   },
   switchOrg: async (orgId: string) => {
-    await api("/api/orgs/switch", { method: "POST", json: { orgId } });
-    await get().bootstrap();
+    const cur = get().activeOrgId;
+    if (cur === orgId) return;
+    set({ orgSwitching: true, pendingOrgId: orgId });
+    try {
+      await api("/api/orgs/switch", { method: "POST", json: { orgId } });
+      set({ activeOrgId: orgId, pendingOrgId: null, orgSwitching: false, error: null });
+    } catch (e: any) {
+      set({ pendingOrgId: null, orgSwitching: false, error: e?.message || "切换组织失败" });
+    }
   },
   createOrg: async (name: string, baseCurrency: string) => {
     await api("/api/orgs/create", { method: "POST", json: { name, baseCurrency } });
-    await get().bootstrap();
+    const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
+    set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId });
   },
   acceptInvite: async (token: string, password: string) => {
     set({ status: "loading", error: null });

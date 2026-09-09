@@ -15,6 +15,7 @@ type EntryListRow = {
   fxRate: number;
   memo: string | null;
   totalDebitBase: string;
+  inventoryImpact?: boolean;
 };
 
 type EntryDetail = {
@@ -34,7 +35,7 @@ type EntryDetail = {
 };
 
 export default function Journal() {
-  const { orgs, activeOrgId } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -111,8 +112,13 @@ export default function Journal() {
   }
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    setErr(null);
+    setEntries([]);
+    setSelectedId(null);
+    setDetail(null);
     refresh().catch((e) => setErr(e.message));
-  }, []);
+  }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -124,7 +130,7 @@ export default function Journal() {
 
   return (
     <AppShell title="分录">
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
+      <div className="space-y-4">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold">凭证列表</div>
@@ -141,6 +147,7 @@ export default function Journal() {
                 <tr>
                   <th className="px-3 py-2 text-left">日期</th>
                   <th className="px-3 py-2 text-left">状态</th>
+                  <th className="px-3 py-2 text-left">库存</th>
                   <th className="px-3 py-2 text-right">金额(本位)</th>
                 </tr>
               </thead>
@@ -165,6 +172,7 @@ export default function Journal() {
                         {e.status}
                       </span>
                     </td>
+                    <td className="px-3 py-2 text-sm">{e.inventoryImpact ? "Yes" : ""}</td>
                     <td className="px-3 py-2 text-right">{Number(e.totalDebitBase).toFixed(2)}</td>
                   </tr>
                 ))}
@@ -174,16 +182,26 @@ export default function Journal() {
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>
 
-        <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold">新建草稿凭证</div>
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold">新建草稿凭证</div>
           <div className="mt-3 flex items-center gap-2">
-            <input id="inventoryImpact" type="checkbox" checked={inventoryImpact} onChange={(e) => setInventoryImpact(e.target.checked)} />
-            <label htmlFor="inventoryImpact" className="text-sm text-zinc-700">影响库存（勾选后请到库存模块做入库/出库）</label>
+            <input
+              id="inventoryImpact"
+              type="checkbox"
+              className="h-4 w-4"
+              checked={inventoryImpact}
+              onChange={(e) => setInventoryImpact(e.target.checked)}
+            />
+            <label htmlFor="inventoryImpact" className="text-sm text-zinc-700">
+              影响库存（勾选后请到库存模块做入库/出库）
+            </label>
           </div>
           {inventoryImpact ? (
-            <div className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              该凭证与库存成本联动，建议在“库存 FIFO”中完成入库/出库，系统会自动生成对应分录。
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <div>该凭证与库存成本联动，建议在“库存 FIFO”中完成入库/出库，系统会自动生成对应分录。</div>
+              <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
+                去库存 FIFO
+              </a>
             </div>
           ) : null}
             <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -346,6 +364,7 @@ export default function Journal() {
                           currency: draftCurrency,
                           fxRate: draftFx,
                           memo: draftMemo,
+                          inventoryImpact,
                           lines: draftLines.map((l) => ({
                             accountId: l.accountId,
                             description: l.description || undefined,
@@ -470,7 +489,6 @@ export default function Journal() {
               <div className="mt-2 text-sm text-zinc-500">选择左侧一条凭证查看详情</div>
             )}
           </div>
-        </div>
       </div>
     </AppShell>
   );

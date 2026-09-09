@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
 type Account = { id: string; code: string; name: string; type: string };
 type CostCenter = { id: string; code: string; name: string };
 
 export default function Reports() {
+  const { activeOrgId, orgSwitching } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [tab, setTab] = useState<"tb" | "pl" | "bs" | "gl">("tb");
@@ -25,6 +27,11 @@ export default function Reports() {
   const accountOptions = useMemo(() => accounts.slice().sort((a, b) => a.code.localeCompare(b.code)), [accounts]);
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    setErr(null);
+    setRows([]);
+    setAccountId("");
+    setCostCenterId("");
     Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
@@ -34,7 +41,7 @@ export default function Reports() {
         setCostCenters(c.costCenters as any);
       })
       .catch((e) => setErr(e.message));
-  }, []);
+  }, [activeOrgId, orgSwitching]);
 
   async function run() {
     setBusy(true);

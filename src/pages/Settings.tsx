@@ -9,7 +9,7 @@ type Currency = { id: string; code: string; isEnabled: boolean };
 type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: number };
 
 export default function Settings() {
-  const { orgs, activeOrgId, switchOrg, createInvite } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -63,8 +63,11 @@ export default function Settings() {
   }
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    setErr(null);
+    setInviteUrl(null);
     refresh().catch((e) => setErr(e.message));
-  }, []);
+  }, [activeOrgId, orgSwitching]);
 
   return (
     <AppShell title="设置">

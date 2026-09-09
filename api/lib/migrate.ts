@@ -126,6 +126,7 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS inventory_impact BOOLEAN NOT NULL DEFAULT false`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS journal_lines (

@@ -13,7 +13,7 @@ type MemberRow = {
 };
 
 export default function Users() {
-  const { orgs, activeOrgId, createInvite } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching, createInvite } = useAuthStore();
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
   const canManage = active?.role === "owner" || active?.role === "admin";
 
@@ -30,8 +30,11 @@ export default function Users() {
   }
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    setErr(null);
+    setInviteUrl(null);
     refresh().catch((e) => setErr(e.message));
-  }, []);
+  }, [activeOrgId, orgSwitching]);
 
   return (
     <AppShell title="用户管理">
@@ -161,4 +164,3 @@ export default function Users() {
     </AppShell>
   );
 }
-

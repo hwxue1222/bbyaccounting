@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
 type Account = { id: string; code: string; name: string };
 type Item = { id: string; sku: string | null; name: string; uom: string; inventoryAccountId: string | null; cogsAccountId: string | null };
 
 export default function Inventory() {
+  const { activeOrgId, orgSwitching } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [itemName, setItemName] = useState("");
@@ -35,8 +37,12 @@ export default function Inventory() {
   }
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    setErr(null);
+    setSelectedItemId("");
+    setStock(null);
     refresh().catch((e) => setErr(e.message));
-  }, []);
+  }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
     if (selectedItemId) {
@@ -197,4 +203,3 @@ export default function Inventory() {
     </AppShell>
   );
 }
-

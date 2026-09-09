@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
 type Account = { id: string; code: string; name: string };
 type Asset = {
@@ -15,6 +16,7 @@ type Asset = {
 };
 
 export default function FixedAssets() {
+  const { activeOrgId, orgSwitching } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -48,8 +50,11 @@ export default function FixedAssets() {
   }
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    setErr(null);
+    setAssets([]);
     refresh().catch((e) => setErr(e.message));
-  }, []);
+  }, [activeOrgId, orgSwitching]);
 
   return (
     <AppShell title="固定资产">
@@ -173,4 +178,3 @@ export default function FixedAssets() {
     </AppShell>
   );
 }
-

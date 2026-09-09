@@ -22,7 +22,7 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
 }
 
 export default function AppShell({ title, children }: { title: string; children: React.ReactNode }) {
-  const { orgs, activeOrgId, switchOrg, createOrg, user, logout } = useAuthStore();
+  const { orgs, activeOrgId, pendingOrgId, orgSwitching, switchOrg, createOrg, user, logout } = useAuthStore();
   const active = orgs.find((o) => o.orgId === activeOrgId) || null;
 
   return (
@@ -43,8 +43,9 @@ export default function AppShell({ title, children }: { title: string; children:
                 <Building2 className="h-4 w-4 text-zinc-500" />
                 <select
                   className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
-                  value={activeOrgId || ""}
+                  value={(pendingOrgId || activeOrgId) || ""}
                   onChange={(e) => switchOrg(e.target.value)}
+                  disabled={orgSwitching}
                 >
                   <option value="" disabled>
                     请选择
@@ -56,6 +57,7 @@ export default function AppShell({ title, children }: { title: string; children:
                   ))}
                 </select>
               </div>
+              {orgSwitching ? <div className="mt-1 text-xs text-zinc-500">切换中...</div> : null}
               <button
                 className="mt-2 w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm hover:bg-zinc-50"
                 onClick={async () => {
@@ -64,6 +66,7 @@ export default function AppShell({ title, children }: { title: string; children:
                   const base = (window.prompt("本位币（默认 SGD）", active?.baseCurrency || "SGD") || "SGD").toUpperCase();
                   await createOrg(name.trim(), base);
                 }}
+                disabled={orgSwitching}
               >
                 新增组织
               </button>

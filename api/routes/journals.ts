@@ -26,11 +26,12 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const rows = await sql`
     SELECT
       e.id,
-      e.entry_date as "entryDate",
+      to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
       e.status,
       e.currency_code as "currency",
       e.fx_rate as "fxRate",
       e.memo,
+      e.inventory_impact as "inventoryImpact",
       e.created_at as "createdAt",
       (SELECT COALESCE(SUM(debit_base),0) FROM journal_lines l WHERE l.entry_id = e.id) as totalDebitBase
     FROM journal_entries e
@@ -48,7 +49,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sql = getSql();
   const id = req.params.id;
   const entries = await sql`
-    SELECT id, entry_date as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo
+    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
     FROM journal_entries
     WHERE id = ${id} AND org_id = ${orgId}
     LIMIT 1
@@ -99,6 +100,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
     currency: z.string().min(3).max(3),
     fxRate: z.number().positive().default(1),
     memo: z.string().optional(),
+    inventoryImpact: z.boolean().optional().default(false),
     lines: z.array(lineSchema).min(2),
   });
   const parsed = bodySchema.safeParse(req.body);
@@ -108,7 +110,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   }
 
   const sql = getSql();
-  const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const { entryDate, currency, fxRate, memo, lines, inventoryImpact } = parsed.data;
 
   const normalizedLines = lines.map((l, idx) => {
     const debit = l.debitTxn || 0;
@@ -132,9 +134,10 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       await trx`
         INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by)
         VALUES (${orgId}, ${entryDate}, 'draft', ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId})
-        RETURNING id, entry_date as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo
+        RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo
       `
     )[0];
+    await trx`UPDATE journal_entries SET inventory_impact = ${inventoryImpact} WHERE id = ${entry.id} AND org_id = ${orgId}`;
     for (const l of normalizedLines) {
       await trx`
         INSERT INTO journal_lines (
