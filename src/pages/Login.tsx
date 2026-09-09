@@ -111,7 +111,7 @@ export default function Login() {
             {mode === "register" ? (
               <>
                 <div>
-                  <label className="text-xs text-zinc-600">组织名称</label>
+                  <label className="text-xs text-zinc-600">公司名称</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={orgName}
@@ -143,7 +143,7 @@ export default function Login() {
                 }
               }}
             >
-              {status === "loading" ? "处理中..." : mode === "login" ? "登录" : "创建组织并注册"}
+              {status === "loading" ? "处理中..." : mode === "login" ? "登录" : "创建公司并注册"}
             </button>
           </div>
 

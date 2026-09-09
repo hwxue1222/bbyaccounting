@@ -38,7 +38,7 @@ export default function AppShell({ title, children }: { title: string; children:
               </div>
             </div>
             <div className="mt-3">
-              <div className="text-xs text-zinc-500">当前组织</div>
+              <div className="text-xs text-zinc-500">当前公司</div>
               <div className="mt-1 flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-zinc-500" />
                 <select
@@ -61,14 +61,14 @@ export default function AppShell({ title, children }: { title: string; children:
               <button
                 className="mt-2 w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm hover:bg-zinc-50"
                 onClick={async () => {
-                  const name = window.prompt("组织名称");
+                  const name = window.prompt("公司名称");
                   if (!name || !name.trim()) return;
                   const base = (window.prompt("本位币（默认 SGD）", active?.baseCurrency || "SGD") || "SGD").toUpperCase();
                   await createOrg(name.trim(), base);
                 }}
                 disabled={orgSwitching}
               >
-                新增组织
+                新增公司
               </button>
               {active ? (
                 <div className="mt-1 text-xs text-zinc-500">

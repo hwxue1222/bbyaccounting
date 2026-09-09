@@ -22,10 +22,13 @@ export async function ensureMigrated(): Promise<void> {
     CREATE TABLE IF NOT EXISTS organizations (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name TEXT NOT NULL,
+      registration_no TEXT,
       base_currency TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS registration_no TEXT`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS user_default_org (

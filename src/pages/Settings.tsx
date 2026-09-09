@@ -9,7 +9,7 @@ type Currency = { id: string; code: string; isEnabled: boolean };
 type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: number };
 
 export default function Settings() {
-  const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -43,6 +43,14 @@ export default function Settings() {
 
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
 
+  const [companyName, setCompanyName] = useState("");
+  const [companyRegNo, setCompanyRegNo] = useState("");
+
+  useEffect(() => {
+    setCompanyName(active?.orgName || "");
+    setCompanyRegNo(active?.registrationNo || "");
+  }, [active?.orgId, active?.orgName, active?.registrationNo]);
+
   useEffect(() => {
     if (active?.baseCurrency) {
       setFxCurrency(active.baseCurrency.toUpperCase());
@@ -74,7 +82,7 @@ export default function Settings() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold">组织与切换</div>
+            <div className="text-sm font-semibold">公司与切换</div>
             <div className="mt-3 flex items-center gap-2">
               <select
                 className="w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
@@ -92,6 +100,38 @@ export default function Settings() {
               </select>
             </div>
             {active ? <div className="mt-2 text-sm text-zinc-600">Base currency: {active.baseCurrency}</div> : null}
+          </div>
+
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold">公司资料</div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">公司名称</label>
+                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">公司注册号</label>
+                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={companyRegNo} onChange={(e) => setCompanyRegNo(e.target.value)} placeholder="例如：201901234567" />
+              </div>
+            </div>
+            <button
+              className="mt-3 rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+              disabled={busy || !activeOrgId || !companyName.trim()}
+              onClick={async () => {
+                if (!activeOrgId) return;
+                setBusy(true);
+                setErr(null);
+                try {
+                  await updateOrg(activeOrgId, companyName.trim(), companyRegNo.trim() ? companyRegNo.trim() : null);
+                } catch (e: any) {
+                  setErr(e.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              保存
+            </button>
           </div>
 
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">

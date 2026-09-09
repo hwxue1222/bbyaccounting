@@ -24,7 +24,7 @@ export default function InviteAccept() {
       <div className="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-4">
         <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
           <div className="text-lg font-semibold">接受邀请</div>
-          <div className="mt-1 text-sm text-zinc-500">设置密码后将自动加入组织。</div>
+          <div className="mt-1 text-sm text-zinc-500">设置密码后将自动加入公司。</div>
 
           <div className="mt-4 space-y-3">
             <div>
@@ -55,4 +55,3 @@ export default function InviteAccept() {
     </div>
   );
 }
-

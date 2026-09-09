@@ -135,7 +135,7 @@ export default function Journal() {
     if (debit > 0 && credit > 0) {
       throw new Error("该行不能同时有借和贷。");
     }
-    const amountTxn = mode === "receipt" ? debit : credit;
+    const amountTxn = defaultSide === "debit" ? debit : credit;
     const info = {
       mode,
       expectedTxn: amountTxn,
@@ -753,61 +753,114 @@ export default function Journal() {
       {invModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-xl">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <div className="text-sm font-semibold">库存明细</div>
-                <div className="inline-flex overflow-hidden rounded-md border border-zinc-200">
-                  <button
-                    className={"px-3 py-1 text-sm " + (invMode === "receipt" ? "bg-blue-700 text-white" : "bg-white text-zinc-700 hover:bg-zinc-50")}
-                    type="button"
-                    onClick={() => {
-                      setErr(null);
-                      if (invLineIdx == null) {
-                        setErr("未绑定分录行，请关闭后重新从借方/贷方的“库存”按钮进入。");
-                        return;
-                      }
-                      try {
-                        const line = draftLines[invLineIdx];
-                        const debit = Number(line?.debitTxn) || 0;
-                        setInvMode("receipt");
-                        setInvExpectedTxn(debit);
-                        setInvExpectedBase(Math.round(debit * draftFx * 100) / 100);
-                        setInvConfirmed(null);
-                        setInvQuoteByRow({});
-                      } catch (e: any) {
-                        setErr(e.message);
-                      }
-                    }}
-                  >
-                    入库
-                  </button>
-                  <button
-                    className={"px-3 py-1 text-sm " + (invMode === "shipment" ? "bg-blue-700 text-white" : "bg-white text-zinc-700 hover:bg-zinc-50")}
-                    type="button"
-                    onClick={() => {
-                      setErr(null);
-                      if (invLineIdx == null) {
-                        setErr("未绑定分录行，请关闭后重新从借方/贷方的“库存”按钮进入。");
-                        return;
-                      }
-                      try {
-                        const line = draftLines[invLineIdx];
-                        const credit = Number(line?.creditTxn) || 0;
-                        setInvMode("shipment");
-                        setInvExpectedTxn(credit);
-                        setInvExpectedBase(Math.round(credit * draftFx * 100) / 100);
-                        setInvConfirmed(null);
-                        setInvQuoteByRow({});
-                      } catch (e: any) {
-                        setErr(e.message);
-                      }
-                    }}
-                  >
-                    出库
-                  </button>
-                </div>
+                <button
+                  className={
+                    "rounded-full px-3 py-1 text-sm " +
+                    (invMode === "receipt" ? "bg-blue-700 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
+                  }
+                  type="button"
+                  onClick={() => {
+                    setInvMode("receipt");
+                    setInvConfirmed(null);
+                    setInvQuoteByRow({});
+                  }}
+                >
+                  入库
+                </button>
+                <button
+                  className={
+                    "rounded-full px-3 py-1 text-sm " +
+                    (invMode === "shipment" ? "bg-blue-700 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
+                  }
+                  type="button"
+                  onClick={() => {
+                    setInvMode("shipment");
+                    setInvConfirmed(null);
+                    setInvQuoteByRow({});
+                  }}
+                >
+                  出库
+                </button>
               </div>
-              <div className="text-xs text-zinc-500">分录存货金额：{invMode === "receipt" ? invExpectedTxn.toFixed(2) : invExpectedBase.toFixed(2) + "(本位)"}</div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={invLineIdx == null ? "" : `line:${invLineIdx}`}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setInvConfirmed(null);
+                    setInvQuoteByRow({});
+                    if (!v) {
+                      setInvLineIdx(null);
+                      setInvExpectedTxn(0);
+                      setInvExpectedBase(0);
+                      return;
+                    }
+
+                    let nextIdx: number | null = null;
+                    if (v.startsWith("line:")) {
+                      nextIdx = Number(v.slice("line:".length));
+                    }
+                    if (v.startsWith("acc:")) {
+                      const accId = v.slice("acc:".length);
+                      const idx = draftLines.findIndex((l) => l.accountId === accId);
+                      nextIdx = idx >= 0 ? idx : null;
+                    }
+
+                    setInvLineIdx(nextIdx);
+                    if (nextIdx == null) return;
+
+                    const line = draftLines[nextIdx];
+                    const debit = Number(line?.debitTxn) || 0;
+                    const credit = Number(line?.creditTxn) || 0;
+                    if (debit > 0 && credit <= 0) setInvDefaultSide("debit");
+                    if (credit > 0 && debit <= 0) setInvDefaultSide("credit");
+                    const side = debit > 0 && credit <= 0 ? "debit" : credit > 0 && debit <= 0 ? "credit" : invDefaultSide;
+                    const amt = side === "debit" ? debit : credit;
+                    setInvExpectedTxn(amt);
+                    setInvExpectedBase(Math.round(amt * draftFx * 100) / 100);
+                  }}
+                >
+                  <option value="">绑定分录行/科目</option>
+                  <optgroup label="分录行">
+                    {draftLines.map((l, idx) => {
+                      const acc = accounts.find((a) => a.id === l.accountId);
+                      const debit = Number(l.debitTxn) || 0;
+                      const credit = Number(l.creditTxn) || 0;
+                      const label = acc ? `${acc.code} ${acc.name}` : "(未选择科目)";
+                      const amt = debit > 0 ? `借 ${debit}` : credit > 0 ? `贷 ${credit}` : "金额 0";
+                      return (
+                        <option key={`line-${idx}`} value={`line:${idx}`}>
+                          {idx + 1}. {label} · {amt}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                  <optgroup label="科目 (Account)">
+                    {Array.from(
+                      new Set(
+                        draftLines
+                          .map((l) => l.accountId)
+                          .filter((x): x is string => typeof x === "string" && x.trim().length > 0),
+                      ),
+                    ).map((accId) => {
+                      const acc = accounts.find((a) => a.id === accId);
+                      const label = acc ? `${acc.code} ${acc.name}` : accId;
+                      return (
+                        <option key={`acc-${accId}`} value={`acc:${accId}`}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                </select>
+
+                <div className="text-xs text-zinc-500">分录金额：{invExpectedTxn.toFixed(2)} {draftCurrency}</div>
+              </div>
             </div>
 
             <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">

@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 export type OrgRow = {
   orgId: string;
   orgName: string;
+  registrationNo?: string | null;
   baseCurrency: string;
   role: string;
 };
@@ -22,6 +23,7 @@ type AuthState = {
   logout: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   createOrg: (name: string, baseCurrency: string) => Promise<void>;
+  updateOrg: (orgId: string, name: string, registrationNo: string | null) => Promise<void>;
   acceptInvite: (token: string, password: string) => Promise<void>;
   createInvite: (email: string, role: string) => Promise<{ inviteUrl: string }>
 };
@@ -91,13 +93,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await api("/api/orgs/switch", { method: "POST", json: { orgId } });
       set({ activeOrgId: orgId, pendingOrgId: null, orgSwitching: false, error: null });
     } catch (e: any) {
-      set({ pendingOrgId: null, orgSwitching: false, error: e?.message || "切换组织失败" });
+      set({ pendingOrgId: null, orgSwitching: false, error: e?.message || "切换公司失败" });
     }
   },
   createOrg: async (name: string, baseCurrency: string) => {
     await api("/api/orgs/create", { method: "POST", json: { name, baseCurrency } });
     const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
     set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId });
+  },
+  updateOrg: async (orgId: string, name: string, registrationNo: string | null) => {
+    const resp = await api<{ org: OrgRow }>("/api/orgs/update", {
+      method: "POST",
+      json: { orgId, name, registrationNo },
+    });
+    set({
+      orgs: get().orgs.map((o) => (o.orgId === orgId ? { ...o, orgName: resp.org.orgName, registrationNo: resp.org.registrationNo } : o)),
+    });
   },
   acceptInvite: async (token: string, password: string) => {
     set({ status: "loading", error: null });
