@@ -33,7 +33,8 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       e.memo,
       e.inventory_impact as "inventoryImpact",
       e.created_at as "createdAt",
-      (SELECT COALESCE(SUM(debit_base),0) FROM journal_lines l WHERE l.entry_id = e.id) as totalDebitBase
+      (SELECT COALESCE(SUM(debit_txn),0) FROM journal_lines l WHERE l.entry_id = e.id) as "totalDebitTxn",
+      (SELECT COALESCE(SUM(debit_base),0) FROM journal_lines l WHERE l.entry_id = e.id) as "totalDebitBase"
     FROM journal_entries e
     WHERE e.org_id = ${orgId}
     ORDER BY e.entry_date DESC, e.created_at DESC
@@ -81,6 +82,39 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     ORDER BY created_at DESC
   `;
   res.status(200).json({ success: true, data: { entry, lines, attachments: atts } });
+});
+
+router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const id = req.params.id;
+  const sql = getSql();
+
+  const entryRows = await sql`
+    SELECT status
+    FROM journal_entries
+    WHERE id = ${id} AND org_id = ${orgId}
+    LIMIT 1
+  `;
+  const status = entryRows.length ? String((entryRows[0] as any).status) : null;
+  if (!status) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+  if (status !== "draft") {
+    res.status(400).json({ success: false, error: "Only draft entries can be deleted" });
+    return;
+  }
+
+  await sql.begin(async (trx) => {
+    await trx`DELETE FROM attachments WHERE org_id = ${orgId} AND entry_id = ${id}`;
+    await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${id} AND status = 'draft'`;
+    await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${id}`;
+    await trx`DELETE FROM journal_entries WHERE org_id = ${orgId} AND id = ${id}`;
+  });
+
+  res.status(200).json({ success: true, data: { id } });
 });
 
 router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {

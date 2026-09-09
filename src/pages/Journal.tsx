@@ -16,6 +16,7 @@ type EntryListRow = {
   currency: string;
   fxRate: number;
   memo: string | null;
+  totalDebitTxn: string;
   totalDebitBase: string;
   inventoryImpact?: boolean;
 };
@@ -81,11 +82,11 @@ export default function Journal() {
     { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
   ]);
 
-  const baseDiff = useMemo(() => {
-    const debit = draftLines.reduce((s, l) => s + (Number(l.debitTxn) || 0) * draftFx, 0);
-    const credit = draftLines.reduce((s, l) => s + (Number(l.creditTxn) || 0) * draftFx, 0);
+  const txnDiff = useMemo(() => {
+    const debit = draftLines.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
+    const credit = draftLines.reduce((s, l) => s + (Number(l.creditTxn) || 0), 0);
     return Math.round((debit - credit) * 100) / 100;
-  }, [draftLines, draftFx]);
+  }, [draftLines]);
 
   const invLine = useMemo(() => {
     if (invLineIdx == null) return null;
@@ -105,6 +106,14 @@ export default function Journal() {
     setCurrencies(currencies as any);
     setEntries(entries as any);
     setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
+  }
+
+  async function deleteEntry(id: string) {
+    await api(`/api/journals/${id}` as any, { method: "DELETE" });
+    if (selectedId === id) {
+      setSelectedId(null);
+    }
+    await refresh();
   }
 
   function getInventoryLinkInfoByLine(line: { debitTxn: number; creditTxn: number }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
@@ -264,7 +273,9 @@ export default function Journal() {
                   <th className="px-3 py-2 text-left">日期</th>
                   <th className="px-3 py-2 text-left">状态</th>
                   <th className="px-3 py-2 text-left">库存</th>
-                  <th className="px-3 py-2 text-right">金额(本位)</th>
+                  <th className="px-3 py-2 text-left">币种</th>
+                  <th className="px-3 py-2 text-right">金额</th>
+                  <th className="px-3 py-2 text-right">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -289,7 +300,41 @@ export default function Journal() {
                       </span>
                     </td>
                     <td className="px-3 py-2 text-sm">{e.inventoryImpact ? "Yes" : ""}</td>
-                    <td className="px-3 py-2 text-right">{Number(e.totalDebitBase).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-sm">{e.currency}</td>
+                    <td className="px-3 py-2 text-right">
+                      {(() => {
+                        const amt = Number(e.totalDebitTxn);
+                        return Number.isFinite(amt) ? amt.toFixed(2) : "-";
+                      })()}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {e.status === "draft" ? (
+                        <button
+                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                          disabled={busy}
+                          type="button"
+                          onClick={async (ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            const ok = window.confirm("确认删除该草稿凭证？");
+                            if (!ok) return;
+                            setBusy(true);
+                            setErr(null);
+                            try {
+                              await deleteEntry(e.id);
+                            } catch (err: any) {
+                              setErr(err.message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          删除
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -546,8 +591,8 @@ export default function Journal() {
             </div>
 
             <div className="mt-4 flex items-center justify-between">
-              <div className={"text-sm " + (baseDiff === 0 ? "text-green-700" : "text-amber-700")}>
-                本位差额：{baseDiff.toFixed(2)}
+              <div className={"text-sm " + (txnDiff === 0 ? "text-green-700" : "text-amber-700")}>
+                差额：{txnDiff.toFixed(2)} {draftCurrency}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -558,7 +603,7 @@ export default function Journal() {
                 </button>
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-                  disabled={busy || baseDiff !== 0 || draftLines.some((l) => !l.accountId)}
+                  disabled={busy || txnDiff !== 0 || draftLines.some((l) => !l.accountId)}
                   onClick={async () => {
                     setErr(null);
                     if (invDetails.length) {
@@ -715,24 +760,46 @@ export default function Journal() {
                     {detail.entry.entryDate} · {detail.entry.status} · {detail.entry.currency} @ {detail.entry.fxRate}
                   </div>
                   {detail.entry.status === "draft" ? (
-                    <button
-                      className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800"
-                      onClick={async () => {
-                        setBusy(true);
-                        setErr(null);
-                        try {
-                          await api(`/api/journals/${detail.entry.id}/post`, { method: "POST" });
-                          await loadDetail(detail.entry.id);
-                          await refresh();
-                        } catch (e: any) {
-                          setErr(e.message);
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      过账
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={async () => {
+                          const ok = window.confirm("确认删除该草稿凭证？");
+                          if (!ok) return;
+                          setBusy(true);
+                          setErr(null);
+                          try {
+                            await deleteEntry(detail.entry.id);
+                          } catch (e: any) {
+                            setErr(e.message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        删除
+                      </button>
+                      <button
+                        className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          setErr(null);
+                          try {
+                            await api(`/api/journals/${detail.entry.id}/post`, { method: "POST" });
+                            await loadDetail(detail.entry.id);
+                            await refresh();
+                          } catch (e: any) {
+                            setErr(e.message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        过账
+                      </button>
+                    </div>
                   ) : null}
                 </div>
 
@@ -742,8 +809,8 @@ export default function Journal() {
                       <tr>
                         <th className="px-3 py-2 text-left">行</th>
                         <th className="px-3 py-2 text-left">科目</th>
-                        <th className="px-3 py-2 text-right">借(本位)</th>
-                        <th className="px-3 py-2 text-right">贷(本位)</th>
+                        <th className="px-3 py-2 text-right">借</th>
+                        <th className="px-3 py-2 text-right">贷</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -753,8 +820,8 @@ export default function Journal() {
                           <tr key={l.id} className="border-t border-zinc-100">
                             <td className="px-3 py-2">{l.lineNo}</td>
                             <td className="px-3 py-2">{acc ? `${acc.code} ${acc.name}` : l.accountId}</td>
-                            <td className="px-3 py-2 text-right">{Number(l.debitBase).toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right">{Number(l.creditBase).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{Number(l.debitTxn).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{Number(l.creditTxn).toFixed(2)}</td>
                           </tr>
                         );
                       })}
