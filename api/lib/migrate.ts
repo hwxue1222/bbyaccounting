@@ -204,6 +204,7 @@ export async function ensureMigrated(): Promise<void> {
       fx_rate NUMERIC(18,8),
       status TEXT NOT NULL DEFAULT 'posted',
       entry_id UUID,
+      entry_line_no INT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
@@ -212,6 +213,7 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS currency_code TEXT`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,8)`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'posted'`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS entry_line_no INT`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS fixed_assets (

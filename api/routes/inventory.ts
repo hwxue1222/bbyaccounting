@@ -109,6 +109,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.fx_rate as "fxRate",
             m.status,
             m.entry_id as "entryId",
+            m.entry_line_no as "entryLineNo",
             i.id as "itemId",
             i.name as "itemName",
             i.uom as "uom"
@@ -130,6 +131,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.fx_rate as "fxRate",
             m.status,
             m.entry_id as "entryId",
+            m.entry_line_no as "entryLineNo",
             i.id as "itemId",
             i.name as "itemName",
             i.uom as "uom"
