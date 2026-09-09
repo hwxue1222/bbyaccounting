@@ -25,7 +25,7 @@ router.get("/items", requireAuth, async (req: AuthedRequest, res: Response) => {
     SELECT id, sku, name, uom as "uom", inventory_account_id as "inventoryAccountId", cogs_account_id as "cogsAccountId"
     FROM inventory_items
     WHERE org_id = ${orgId} AND is_active = true
-    ORDER BY name ASC
+    ORDER BY sku ASC NULLS LAST, name ASC
   `;
   res.status(200).json({ success: true, data: { items: rows } });
 });
@@ -35,7 +35,7 @@ router.post("/items", requireAuth, async (req: AuthedRequest, res: Response) => 
   const orgId = requireOrgId(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
-    sku: z.string().optional(),
+    sku: z.string().trim().min(1),
     name: z.string().min(1),
     uom: z.string().min(1).default("EA"),
     inventoryAccountId: z.string().uuid().optional(),
@@ -52,7 +52,7 @@ router.post("/items", requireAuth, async (req: AuthedRequest, res: Response) => 
       INSERT INTO inventory_items (org_id, sku, name, uom, inventory_account_id, cogs_account_id)
       VALUES (
         ${orgId},
-        ${parsed.data.sku || null},
+        ${parsed.data.sku.trim()},
         ${parsed.data.name.trim()},
         ${parsed.data.uom.trim()},
         ${parsed.data.inventoryAccountId || null},
@@ -111,6 +111,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.entry_id as "entryId",
             m.entry_line_no as "entryLineNo",
             i.id as "itemId",
+            i.sku as "itemSku",
             i.name as "itemName",
             i.uom as "uom"
           FROM inventory_moves m
@@ -133,6 +134,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.entry_id as "entryId",
             m.entry_line_no as "entryLineNo",
             i.id as "itemId",
+            i.sku as "itemSku",
             i.name as "itemName",
             i.uom as "uom"
           FROM inventory_moves m

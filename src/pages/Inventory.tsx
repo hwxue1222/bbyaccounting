@@ -17,6 +17,7 @@ type Move = {
   status: string;
   entryId: string | null;
   itemId: string;
+  itemSku?: string | null;
   itemName: string;
   uom: string;
 };
@@ -25,6 +26,7 @@ export default function Inventory() {
   const { activeOrgId, orgSwitching } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [items, setItems] = useState<Item[]>([]);
+  const [itemSku, setItemSku] = useState("");
   const [itemName, setItemName] = useState("");
   const [selectedItemId, setSelectedItemId] = useState<string>("");
   const [stock, setStock] = useState<{ qty: number; valueBase: number } | null>(null);
@@ -93,15 +95,17 @@ export default function Inventory() {
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold">库存商品</div>
           <div className="mt-3 flex gap-2">
+            <input className="w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemSku} onChange={(e) => setItemSku(e.target.value)} placeholder="编号" />
             <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="商品名称" />
             <button
               className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-              disabled={busy || !itemName.trim()}
+              disabled={busy || !itemSku.trim() || !itemName.trim()}
               onClick={async () => {
                 setBusy(true);
                 setErr(null);
                 try {
-                  await api("/api/inventory/items", { method: "POST", json: { name: itemName, uom: "EA" } });
+                  await api("/api/inventory/items", { method: "POST", json: { sku: itemSku, name: itemName, uom: "EA" } });
+                  setItemSku("");
                   setItemName("");
                   await refresh();
                 } catch (e: any) {
@@ -120,7 +124,7 @@ export default function Inventory() {
               <option value="">请选择</option>
               {items.map((it) => (
                 <option key={it.id} value={it.id}>
-                  {it.name}
+                  {(it.sku ? `${it.sku} ` : "") + it.name}
                 </option>
               ))}
             </select>
@@ -282,7 +286,7 @@ export default function Inventory() {
                       <tr key={m.id} className="border-t border-zinc-100">
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveDate}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveType}</td>
-                        <td className="px-3 py-2">{m.itemName}</td>
+                        <td className="px-3 py-2">{(m.itemSku ? `${m.itemSku} ` : "") + m.itemName}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{Number.isFinite(qty) ? qty.toFixed(4) : m.qty}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{unitTxn == null ? "-" : `${unitTxn.toFixed(6)} ${m.currency || ""}`}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{amountTxn == null ? "-" : `${amountTxn.toFixed(2)} ${m.currency || ""}`}</td>

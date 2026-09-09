@@ -7,7 +7,7 @@ import { useAuthStore } from "@/stores/authStore";
 type Account = { id: string; code: string; name: string };
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
-type InventoryItem = { id: string; name: string; uom: string };
+type InventoryItem = { id: string; sku: string | null; name: string; uom: string };
 
 type EntryListRow = {
   id: string;
@@ -104,7 +104,7 @@ export default function Journal() {
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setEntries(entries as any);
-    setInventoryItems((items as any[]).map((it) => ({ id: it.id, name: it.name, uom: it.uom })));
+    setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
   }
 
   function getInventoryLinkInfoByLine(line: { debitTxn: number; creditTxn: number }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
@@ -954,7 +954,7 @@ export default function Journal() {
                             <option value="">请选择</option>
                             {inventoryItems.map((it) => (
                               <option key={it.id} value={it.id}>
-                                {it.name}
+                                {(it.sku ? `${it.sku} ` : "") + it.name}
                               </option>
                             ))}
                           </select>

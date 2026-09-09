@@ -178,6 +178,7 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_inventory_items_org ON inventory_items(org_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_items_org_sku_unique ON inventory_items(org_id, sku) WHERE sku IS NOT NULL AND sku <> ''`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS inventory_layers (
