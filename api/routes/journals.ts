@@ -25,6 +25,7 @@ function mapPgError(e: any): { status: number; message: string } | null {
   const id = makeErrorId();
 
   if (code === "22P02") return { status: 400, message: `字段格式不正确（ID ${id}）` };
+  if (code === "22023") return { status: 400, message: `参数不合法（ID ${id}）` };
   if (code === "23502") return { status: 400, message: `缺少必填字段（ID ${id}）` };
   if (code === "23505") return { status: 409, message: `数据重复（唯一约束冲突，ID ${id}）` };
   if (code === "40001") return { status: 409, message: `并发冲突，请重试（ID ${id}）` };
@@ -124,13 +125,13 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const inventoryDetailReceiptSchema = z.object({
     moveType: z.literal("receipt"),
     itemId: z.string().uuid(),
-    qty: z.number().positive(),
-    unitCostTxn: z.number().positive(),
+    qty: z.number().positive().finite(),
+    unitCostTxn: z.number().positive().finite(),
   });
   const inventoryDetailShipmentSchema = z.object({
     moveType: z.literal("shipment"),
     itemId: z.string().uuid(),
-    qty: z.number().positive(),
+    qty: z.number().positive().finite(),
   });
   const inventoryDetailsSchema = z.array(z.union([inventoryDetailReceiptSchema, inventoryDetailShipmentSchema])).min(1).optional();
 
@@ -306,26 +307,30 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
           const fx = Number(fxRate);
           let totalBaseAll = 0;
 
-          const moveRows = (
-            await trx`
-              INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
-              SELECT
-                ${orgId},
-                (d->>'itemId')::uuid,
-                'shipment',
-                ${entryDate},
-                (d->>'qty')::numeric,
-                NULL,
-                NULL,
-                ${currency.toUpperCase()},
-                ${fxRate},
-                'posted',
-                ${entry.id},
-                ${linkLineNo}
-              FROM jsonb_array_elements(${JSON.stringify(inventoryDetails)}::jsonb) d
-              RETURNING id, item_id as "itemId", qty
-            `
-          ) as any[];
+          const moveRows: Array<{ id: string; itemId: string; qty: number }> = [];
+          for (const d of inventoryDetails as any[]) {
+            const inserted = (
+              await trx`
+                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+                VALUES (
+                  ${orgId},
+                  ${d.itemId},
+                  'shipment',
+                  ${entryDate},
+                  ${Number(d.qty)},
+                  NULL,
+                  NULL,
+                  ${currency.toUpperCase()},
+                  ${fxRate},
+                  'posted',
+                  ${entry.id},
+                  ${linkLineNo}
+                )
+                RETURNING id, item_id as "itemId", qty
+              `
+            )[0] as any;
+            moveRows.push({ id: inserted.id, itemId: inserted.itemId, qty: Number(inserted.qty) });
+          }
 
           for (const m of moveRows) {
             const layers = await trx`
