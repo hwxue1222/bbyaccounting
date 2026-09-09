@@ -441,7 +441,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
               SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
               FROM inventory_layers
               WHERE org_id = ${orgId} AND item_id = ${itemId} AND qty_remaining > 0
-              ORDER BY received_date ASC, id ASC
+              ORDER BY received_date ASC, created_at ASC, id ASC
               FOR UPDATE
             `;
             let remaining = qtyRequested;
@@ -794,7 +794,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
               FROM inventory_layers
               WHERE org_id = ${orgId} AND item_id = ${itemId} AND qty_remaining > 0
-              ORDER BY received_date ASC, id ASC
+              ORDER BY received_date ASC, created_at ASC, id ASC
               FOR UPDATE
             `;
 
