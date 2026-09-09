@@ -220,10 +220,6 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         res.status(400).json({ success: false, error: "Missing shipment inventoryDetails" });
         return;
       }
-      if (!shipmentInventoryAccountId || !shipmentCogsAccountId) {
-        res.status(400).json({ success: false, error: "Missing shipment cost accounts" });
-        return;
-      }
       const expectedBase = debitBase > 0 ? debitBase : creditBase;
       if (expectedBase <= 0) {
         res.status(400).json({ success: false, error: "Inventory shipment linked line amount must be greater than 0" });
@@ -350,7 +346,28 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             `;
           }
 
-          if (!shipmentInventoryAccountId || !shipmentCogsAccountId) {
+          const activeAccounts = (await trx`
+            SELECT id, code, name, type
+            FROM accounts
+            WHERE org_id = ${orgId} AND (is_active IS NULL OR is_active = true)
+            ORDER BY code ASC
+          `) as any[];
+
+          const invAccId =
+            shipmentInventoryAccountId ||
+            activeAccounts.find((a) => String(a.code || "").startsWith("15"))?.id ||
+            activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("inventory"))?.id ||
+            activeAccounts.find((a) => String(a.type || "") === "asset")?.id ||
+            null;
+
+          const cogsAccId =
+            shipmentCogsAccountId ||
+            activeAccounts.find((a) => String(a.type || "") === "cogs")?.id ||
+            activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("cogs"))?.id ||
+            activeAccounts.find((a) => String(a.code || "").startsWith("50"))?.id ||
+            null;
+
+          if (!invAccId || !cogsAccId) {
             throw new Error("Missing shipment cost accounts");
           }
 
@@ -362,7 +379,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               org_id, entry_id, line_no, account_id, description, cost_center_id,
               debit_txn, credit_txn, debit_base, credit_base
             ) VALUES (
-              ${orgId}, ${entry.id}, ${nextLineNo}, ${shipmentCogsAccountId}, 'COGS (FIFO)', NULL,
+              ${orgId}, ${entry.id}, ${nextLineNo}, ${cogsAccId}, 'COGS (FIFO)', NULL,
               ${costTxn}, 0, ${costBase}, 0
             )
           `;
@@ -371,7 +388,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               org_id, entry_id, line_no, account_id, description, cost_center_id,
               debit_txn, credit_txn, debit_base, credit_base
             ) VALUES (
-              ${orgId}, ${entry.id}, ${nextLineNo + 1}, ${shipmentInventoryAccountId}, 'Inventory (FIFO)', NULL,
+              ${orgId}, ${entry.id}, ${nextLineNo + 1}, ${invAccId}, 'Inventory (FIFO)', NULL,
               0, ${costTxn}, 0, ${costBase}
             )
           `;
