@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
 type Account = { id: string; code: string; name: string };
 type CostCenter = { id: string; code: string; name: string };
+type Currency = { id: string; code: string; isEnabled: boolean };
 
 type EntryListRow = {
   id: string;
@@ -32,8 +34,10 @@ type EntryDetail = {
 };
 
 export default function Journal() {
+  const { orgs, activeOrgId } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [entries, setEntries] = useState<EntryListRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EntryDetail | null>(null);
@@ -41,6 +45,17 @@ export default function Journal() {
   const [err, setErr] = useState<string | null>(null);
 
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const baseCurrency = useMemo(() => {
+    const active = orgs.find((o) => o.orgId === activeOrgId);
+    return (active?.baseCurrency || "SGD").toUpperCase();
+  }, [orgs, activeOrgId]);
+
+  const enabledCurrencies = useMemo(() => {
+    const list = currencies.filter((c) => c.isEnabled).map((c) => c.code.toUpperCase());
+    const uniq = Array.from(new Set([baseCurrency, ...list]));
+    return uniq.sort();
+  }, [currencies, baseCurrency]);
+
   const [draftCurrency, setDraftCurrency] = useState("SGD");
   const [draftFx, setDraftFx] = useState(1);
   const [draftMemo, setDraftMemo] = useState("");
@@ -56,14 +71,37 @@ export default function Journal() {
   }, [draftLines, draftFx]);
 
   async function refresh() {
-    const [{ accounts }, { costCenters }, { entries }] = await Promise.all([
+    const [{ accounts }, { costCenters }, { currencies }, { entries }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
+      api<{ currencies: any[] }>("/api/settings/currencies"),
       api<{ entries: any[] }>("/api/journals"),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
+    setCurrencies(currencies as any);
     setEntries(entries as any);
+  }
+
+  useEffect(() => {
+    setDraftCurrency(baseCurrency);
+    setDraftFx(1);
+  }, [baseCurrency]);
+
+  async function fillFxFromHistory() {
+    const cc = draftCurrency.toUpperCase();
+    if (cc === baseCurrency) {
+      setDraftFx(1);
+      return;
+    }
+    const r = await api<{ fxRates: Array<{ fxRate: number }> }>(
+      `/api/settings/fx-rates?rateDate=${draftDate}&currencyCode=${encodeURIComponent(cc)}`,
+    );
+    const fx = r.fxRates?.[0]?.fxRate;
+    if (!fx) {
+      throw new Error("未找到该日期的历史汇率，请到设置里新增 FX Rate");
+    }
+    setDraftFx(Number(fx));
   }
 
   async function loadDetail(id: string) {
@@ -145,11 +183,34 @@ export default function Journal() {
               </div>
               <div>
                 <label className="text-xs text-zinc-600">币种</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftCurrency} onChange={(e) => setDraftCurrency(e.target.value.toUpperCase())} maxLength={3} />
+                <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={draftCurrency} onChange={(e) => setDraftCurrency(e.target.value.toUpperCase())}>
+                  {enabledCurrencies.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="text-xs text-zinc-600">汇率（交易币 → 本位）</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftFx} onChange={(e) => setDraftFx(Number(e.target.value) || 1)} type="number" step="0.0001" />
+                <div className="mt-1 flex items-center gap-2">
+                  <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftFx} onChange={(e) => setDraftFx(Number(e.target.value) || 1)} type="number" step="0.0001" />
+                  <button
+                    className="whitespace-nowrap rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                    disabled={!draftDate.trim() || !draftCurrency.trim()}
+                    onClick={async () => {
+                      setErr(null);
+                      try {
+                        await fillFxFromHistory();
+                      } catch (e: any) {
+                        setErr(e.message);
+                      }
+                    }}
+                  >
+                    用历史
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-zinc-500">本位币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
               </div>
               <div>
                 <label className="text-xs text-zinc-600">摘要</label>
@@ -404,4 +465,3 @@ export default function Journal() {
     </AppShell>
   );
 }
-

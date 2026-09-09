@@ -105,6 +105,144 @@ router.get("/currencies", requireAuth, async (req: AuthedRequest, res: Response)
   res.status(200).json({ success: true, data: { currencies: rows } });
 });
 
+router.post("/currencies", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+  const bodySchema = z.object({ code: z.string().min(3).max(3), isEnabled: z.boolean().optional() });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+  const sql = getSql();
+  const code = parsed.data.code.toUpperCase();
+  const isEnabled = parsed.data.isEnabled ?? true;
+  const row = (
+    await sql`
+      INSERT INTO currencies (org_id, code, is_enabled)
+      VALUES (${orgId}, ${code}, ${isEnabled})
+      ON CONFLICT (org_id, code)
+      DO UPDATE SET is_enabled = EXCLUDED.is_enabled
+      RETURNING id, code, is_enabled as "isEnabled"
+    `
+  )[0];
+  res.status(200).json({ success: true, data: { currency: row } });
+});
+
+router.patch("/currencies/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+  const bodySchema = z.object({ isEnabled: z.boolean() });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+  const sql = getSql();
+  const id = req.params.id;
+  const row = (
+    await sql`
+      UPDATE currencies
+      SET is_enabled = ${parsed.data.isEnabled}
+      WHERE id = ${id} AND org_id = ${orgId}
+      RETURNING id, code, is_enabled as "isEnabled"
+    `
+  )[0];
+  if (!row) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+  res.status(200).json({ success: true, data: { currency: row } });
+});
+
+router.get("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+
+  const q = z
+    .object({
+      rateDate: z.string().min(10).optional(),
+      currencyCode: z.string().min(3).max(3).optional(),
+      start: z.string().min(10).optional(),
+      end: z.string().min(10).optional(),
+      limit: z.coerce.number().int().min(1).max(500).optional(),
+    })
+    .safeParse({
+      rateDate: req.query.rateDate,
+      currencyCode: req.query.currencyCode,
+      start: req.query.start,
+      end: req.query.end,
+      limit: req.query.limit,
+    });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid query" });
+    return;
+  }
+  const sql = getSql();
+
+  const currencyCode = q.data.currencyCode ? q.data.currencyCode.toUpperCase() : undefined;
+  const limit = q.data.limit ?? 50;
+
+  if (q.data.rateDate && currencyCode) {
+    const rows = await sql`
+      SELECT id, rate_date as "rateDate", currency_code as "currencyCode", fx_rate as "fxRate"
+      FROM fx_rates
+      WHERE org_id = ${orgId}
+        AND rate_date = ${q.data.rateDate}
+        AND currency_code = ${currencyCode}
+      LIMIT 1
+    `;
+    res.status(200).json({ success: true, data: { fxRates: rows } });
+    return;
+  }
+
+  if (q.data.start && q.data.end) {
+    const rows = currencyCode
+      ? await sql`
+          SELECT id, rate_date as "rateDate", currency_code as "currencyCode", fx_rate as "fxRate"
+          FROM fx_rates
+          WHERE org_id = ${orgId}
+            AND rate_date >= ${q.data.start}
+            AND rate_date <= ${q.data.end}
+            AND currency_code = ${currencyCode}
+          ORDER BY rate_date DESC, currency_code ASC
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT id, rate_date as "rateDate", currency_code as "currencyCode", fx_rate as "fxRate"
+          FROM fx_rates
+          WHERE org_id = ${orgId}
+            AND rate_date >= ${q.data.start}
+            AND rate_date <= ${q.data.end}
+          ORDER BY rate_date DESC, currency_code ASC
+          LIMIT ${limit}
+        `;
+    res.status(200).json({ success: true, data: { fxRates: rows } });
+    return;
+  }
+
+  const rows = currencyCode
+    ? await sql`
+        SELECT id, rate_date as "rateDate", currency_code as "currencyCode", fx_rate as "fxRate"
+        FROM fx_rates
+        WHERE org_id = ${orgId}
+          AND currency_code = ${currencyCode}
+        ORDER BY rate_date DESC
+        LIMIT ${limit}
+      `
+    : await sql`
+        SELECT id, rate_date as "rateDate", currency_code as "currencyCode", fx_rate as "fxRate"
+        FROM fx_rates
+        WHERE org_id = ${orgId}
+        ORDER BY rate_date DESC, currency_code ASC
+        LIMIT ${limit}
+      `;
+  res.status(200).json({ success: true, data: { fxRates: rows } });
+});
+
 router.post("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrg(req, res);

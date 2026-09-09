@@ -3,9 +3,11 @@ import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 
 type Account = { id: string; code: string; name: string; type: string };
+type CostCenter = { id: string; code: string; name: string };
 
 export default function Reports() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [tab, setTab] = useState<"tb" | "pl" | "bs" | "gl">("tb");
   const [start, setStart] = useState(() => {
     const d = new Date();
@@ -15,6 +17,7 @@ export default function Reports() {
   const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
   const [accountId, setAccountId] = useState<string>("");
+  const [costCenterId, setCostCenterId] = useState<string>("");
   const [rows, setRows] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -22,8 +25,14 @@ export default function Reports() {
   const accountOptions = useMemo(() => accounts.slice().sort((a, b) => a.code.localeCompare(b.code)), [accounts]);
 
   useEffect(() => {
-    api<{ accounts: any[] }>("/api/settings/accounts")
-      .then((r) => setAccounts(r.accounts as any))
+    Promise.all([
+      api<{ accounts: any[] }>("/api/settings/accounts"),
+      api<{ costCenters: any[] }>("/api/settings/cost-centers"),
+    ])
+      .then(([a, c]) => {
+        setAccounts(a.accounts as any);
+        setCostCenters(c.costCenters as any);
+      })
       .catch((e) => setErr(e.message));
   }, []);
 
@@ -31,18 +40,19 @@ export default function Reports() {
     setBusy(true);
     setErr(null);
     try {
+      const ccParam = costCenterId ? `&costCenterId=${encodeURIComponent(costCenterId)}` : "";
       if (tab === "tb") {
-        const r = await api<{ rows: any[] }>(`/api/reports/trial-balance?start=${start}&end=${end}`);
+        const r = await api<{ rows: any[] }>(`/api/reports/trial-balance?start=${start}&end=${end}${ccParam}`);
         setRows(r.rows);
       } else if (tab === "pl") {
-        const r = await api<{ rows: any[] }>(`/api/reports/profit-loss?start=${start}&end=${end}`);
+        const r = await api<{ rows: any[] }>(`/api/reports/profit-loss?start=${start}&end=${end}${ccParam}`);
         setRows(r.rows);
       } else if (tab === "bs") {
-        const r = await api<{ rows: any[] }>(`/api/reports/balance-sheet?asOf=${asOf}`);
+        const r = await api<{ rows: any[] }>(`/api/reports/balance-sheet?asOf=${asOf}${ccParam}`);
         setRows(r.rows);
       } else {
         if (!accountId) throw new Error("请选择科目");
-        const r = await api<{ lines: any[] }>(`/api/reports/gl?accountId=${accountId}&start=${start}&end=${end}`);
+        const r = await api<{ lines: any[] }>(`/api/reports/gl?accountId=${accountId}&start=${start}&end=${end}${ccParam}`);
         setRows(r.lines);
       }
     } catch (e: any) {
@@ -106,6 +116,16 @@ export default function Reports() {
               ))}
             </select>
           ) : null}
+
+          <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
+            <option value="">All Cost Centers</option>
+            <option value="__none__">(No Cost Center)</option>
+            {costCenters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.code} {c.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
@@ -156,4 +176,3 @@ export default function Reports() {
     </AppShell>
   );
 }
-
