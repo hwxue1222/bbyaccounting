@@ -84,6 +84,286 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { entry, lines, attachments: atts } });
 });
 
+router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const lineSchema = z.object({
+    accountId: z.string().uuid(),
+    description: z.string().optional(),
+    costCenterId: z.string().uuid().nullable().optional(),
+    debitTxn: z.number().nonnegative().default(0),
+    creditTxn: z.number().nonnegative().default(0),
+  });
+
+  const inventoryDetailReceiptSchema = z.object({
+    moveType: z.literal("receipt"),
+    itemId: z.string().uuid(),
+    qty: z.number().positive(),
+    unitCostTxn: z.number().positive(),
+  });
+  const inventoryDetailShipmentSchema = z.object({
+    moveType: z.literal("shipment"),
+    itemId: z.string().uuid(),
+    qty: z.number().positive(),
+  });
+  const inventoryDetailsSchema = z.array(z.union([inventoryDetailReceiptSchema, inventoryDetailShipmentSchema])).min(1).optional();
+
+  const bodySchema = z.object({
+    entryDate: z.string().min(10),
+    currency: z.string().min(3).max(3),
+    fxRate: z.number().positive().default(1),
+    memo: z.string().optional(),
+    inventoryDetails: inventoryDetailsSchema,
+    inventoryLinkLineNo: z.number().int().positive().optional(),
+    lines: z.array(lineSchema).min(2),
+  });
+
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+  const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const inventoryDetails = parsed.data.inventoryDetails;
+  const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
+  const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
+
+  const normalizedLines = lines.map((l, idx) => {
+    const debit = l.debitTxn || 0;
+    const credit = l.creditTxn || 0;
+    const debitBase = round2(debit * fxRate);
+    const creditBase = round2(credit * fxRate);
+    return {
+      lineNo: idx + 1,
+      accountId: l.accountId,
+      description: l.description || null,
+      costCenterId: l.costCenterId ?? null,
+      debitTxn: debit,
+      creditTxn: credit,
+      debitBase,
+      creditBase,
+    };
+  });
+
+  const sumDebitBase = round2(normalizedLines.reduce((s, l) => s + Number(l.debitBase || 0), 0));
+  const sumCreditBase = round2(normalizedLines.reduce((s, l) => s + Number(l.creditBase || 0), 0));
+  if (round2(sumDebitBase) !== round2(sumCreditBase)) {
+    res.status(400).json({ success: false, error: `Unbalanced entry: debit ${sumDebitBase} credit ${sumCreditBase}` });
+    return;
+  }
+  if (round2(sumDebitBase) <= 0) {
+    res.status(400).json({ success: false, error: "Entry amount must be greater than 0" });
+    return;
+  }
+
+  let inventoryMode: "none" | "receipt" | "shipment" = "none";
+  let linkLineNo: number | null = null;
+  let expectedShipmentBase: number | null = null;
+
+  if (effectiveInventoryImpact) {
+    if (!inventoryDetails?.length) {
+      res.status(400).json({ success: false, error: "Missing inventoryDetails" });
+      return;
+    }
+    if (!inventoryLinkLineNo) {
+      res.status(400).json({ success: false, error: "Missing inventoryLinkLineNo" });
+      return;
+    }
+    linkLineNo = inventoryLinkLineNo;
+
+    const detailTypes = Array.from(new Set(inventoryDetails.map((d) => d.moveType)));
+    if (detailTypes.length !== 1) {
+      res.status(400).json({ success: false, error: "Inventory details must be all receipt or all shipment" });
+      return;
+    }
+
+    const linkedLine = normalizedLines.find((l) => l.lineNo === inventoryLinkLineNo);
+    if (!linkedLine) {
+      res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
+      return;
+    }
+    const debitBase = round2(linkedLine.debitBase);
+    const creditBase = round2(linkedLine.creditBase);
+    if (debitBase > 0 && creditBase > 0) {
+      res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
+      return;
+    }
+
+    const requestedMode = detailTypes[0];
+    inventoryMode = requestedMode;
+    if (requestedMode === "receipt") {
+      const receiptDetails = inventoryDetails.filter((d) => d.moveType === "receipt") as Array<{
+        moveType: "receipt";
+        itemId: string;
+        qty: number;
+        unitCostTxn: number;
+      }>;
+      const expectedTxn = round2(receiptDetails.reduce((s, d) => s + round2(d.qty * d.unitCostTxn), 0));
+      const debitTxn = round2(linkedLine.debitTxn);
+      const creditTxn = round2(linkedLine.creditTxn);
+      const existingTxn = debitTxn > 0 ? debitTxn : creditTxn > 0 ? creditTxn : 0;
+      if (existingTxn > 0 && round2(existingTxn) !== round2(expectedTxn)) {
+        res.status(400).json({ success: false, error: `Inventory total mismatch: entry ${round2(existingTxn)} vs receipt ${expectedTxn}` });
+        return;
+      }
+    }
+    if (requestedMode === "shipment") {
+      const shipmentDetails = inventoryDetails.filter((d) => d.moveType === "shipment");
+      if (!shipmentDetails.length) {
+        res.status(400).json({ success: false, error: "Missing shipment inventoryDetails" });
+        return;
+      }
+      const expectedBase = debitBase > 0 ? debitBase : creditBase;
+      if (expectedBase <= 0) {
+        res.status(400).json({ success: false, error: "Inventory shipment linked line amount must be greater than 0" });
+        return;
+      }
+      expectedShipmentBase = expectedBase;
+    }
+  }
+
+  try {
+    const created = await sql.begin(async (trx) => {
+      const entry = (
+        await trx`
+          INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+          VALUES (${orgId}, ${entryDate}, 'posted', ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+          RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo
+        `
+      )[0] as any;
+
+      for (const l of normalizedLines) {
+        await trx`
+          INSERT INTO journal_lines (
+            org_id, entry_id, line_no, account_id, description, cost_center_id,
+            debit_txn, credit_txn, debit_base, credit_base
+          ) VALUES (
+            ${orgId}, ${entry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
+            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}
+          )
+        `;
+      }
+
+      if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
+        if (inventoryMode === "receipt") {
+          for (const d of inventoryDetails as any[]) {
+            const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
+            await trx`
+              INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+              VALUES (
+                ${orgId},
+                ${d.itemId},
+                'receipt',
+                ${entryDate},
+                ${d.qty},
+                ${unitCostBase},
+                ${round6(Number(d.unitCostTxn))},
+                ${currency.toUpperCase()},
+                ${fxRate},
+                'posted',
+                ${entry.id},
+                ${linkLineNo}
+              )
+            `;
+            await trx`
+              INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id)
+              VALUES (${orgId}, ${d.itemId}, ${entryDate}, ${d.qty}, ${unitCostBase}, ${entry.id})
+            `;
+          }
+        }
+
+        if (inventoryMode === "shipment") {
+          const fx = Number(fxRate);
+          let totalBaseAll = 0;
+
+          const moveRows = (
+            await trx`
+              INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+              SELECT
+                ${orgId},
+                (d->>'itemId')::uuid,
+                'shipment',
+                ${entryDate},
+                (d->>'qty')::numeric,
+                NULL,
+                NULL,
+                ${currency.toUpperCase()},
+                ${fxRate},
+                'posted',
+                ${entry.id},
+                ${linkLineNo}
+              FROM jsonb_array_elements(${JSON.stringify(inventoryDetails)}::jsonb) d
+              RETURNING id, item_id as "itemId", qty
+            `
+          ) as any[];
+
+          for (const m of moveRows) {
+            const layers = await trx`
+              SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
+              FROM inventory_layers
+              WHERE org_id = ${orgId} AND item_id = ${m.itemId} AND qty_remaining > 0
+              ORDER BY received_date ASC, created_at ASC
+              FOR UPDATE
+            `;
+
+            let remaining = Number(m.qty);
+            const breakdown: Array<{ layerId: string; qty: number; amountBase: number }> = [];
+            for (const row of layers as any[]) {
+              if (remaining <= 0) break;
+              const qtyAvail = Number(row.qtyRemaining);
+              const take = Math.min(remaining, qtyAvail);
+              const unitCostBase = Number(row.unitCostBase);
+              const amountBase = round2(take * unitCostBase);
+              breakdown.push({ layerId: row.id, qty: take, amountBase });
+              remaining = round6(remaining - take);
+            }
+            if (remaining > 0) {
+              throw new Error("Insufficient stock");
+            }
+            const totalBase = round2(breakdown.reduce((s, x) => s + x.amountBase, 0));
+            totalBaseAll = round2(totalBaseAll + totalBase);
+
+            for (const b of breakdown) {
+              await trx`
+                UPDATE inventory_layers
+                SET qty_remaining = qty_remaining - ${b.qty}
+                WHERE id = ${b.layerId} AND org_id = ${orgId}
+              `;
+            }
+
+            const unitCostBase = round6(totalBase / Number(m.qty));
+            const unitCostTxn = fx > 0 ? round6(unitCostBase / fx) : null;
+            await trx`
+              UPDATE inventory_moves
+              SET unit_cost_base = ${unitCostBase}, unit_cost_txn = ${unitCostTxn}
+              WHERE id = ${m.id} AND org_id = ${orgId}
+            `;
+          }
+
+          if (expectedShipmentBase == null || round2(totalBaseAll) !== round2(expectedShipmentBase)) {
+            throw new Error(`Inventory cost mismatch: entry ${expectedShipmentBase || 0} vs FIFO ${totalBaseAll}`);
+          }
+        }
+      }
+
+      return entry;
+    });
+
+    res.status(200).json({ success: true, data: { entry: created } });
+  } catch (e: any) {
+    const msg = typeof e?.message === "string" ? e.message : "Post failed";
+    if (msg.includes("Insufficient stock") || msg.includes("Inventory cost mismatch") || msg.includes("Inventory")) {
+      res.status(400).json({ success: false, error: msg });
+      return;
+    }
+    res.status(500).json({ success: false, error: "Server internal error" });
+  }
+});
+
 router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);

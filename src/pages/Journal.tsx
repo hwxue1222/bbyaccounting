@@ -88,6 +88,18 @@ export default function Journal() {
     return Math.round((debit - credit) * 100) / 100;
   }, [draftLines]);
 
+  function resetDraftEntry() {
+    setDraftLines([
+      { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
+      { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
+    ]);
+    setDraftMemo("");
+    setInvDetails([]);
+    setInvConfirmed(null);
+    setInvLineIdx(null);
+    setInvDefaultSide("debit");
+  }
+
   const invLine = useMemo(() => {
     if (invLineIdx == null) return null;
     return draftLines[invLineIdx] || null;
@@ -185,19 +197,21 @@ export default function Journal() {
     let cancelled = false;
     const rows = invEditingDetails.filter((d) => d.itemId && d.qty > 0);
     (async () => {
-      for (const r of rows) {
-        if (cancelled) return;
-        try {
-          const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
-            `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(r.qty))}`,
-          );
-          if (cancelled) return;
-          setInvQuoteByRow((prev) => ({ ...prev, [r.rowId]: { base: Number(resp.totalBase), err: null } }));
-        } catch (e: any) {
-          if (cancelled) return;
-          setInvQuoteByRow((prev) => ({ ...prev, [r.rowId]: { base: null, err: e.message } }));
-        }
-      }
+      const pairs = await Promise.all(
+        rows.map(async (r) => {
+          try {
+            const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
+              `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(r.qty))}`,
+            );
+            return [r.rowId, { base: Number(resp.totalBase), err: null }] as const;
+          } catch (e: any) {
+            return [r.rowId, { base: null, err: e?.message || "Quote failed" }] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const updates = Object.fromEntries(pairs);
+      setInvQuoteByRow((prev) => ({ ...prev, ...updates }));
     })();
     return () => {
       cancelled = true;
@@ -344,7 +358,7 @@ export default function Journal() {
         </div>
 
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-semibold">新建草稿凭证</div>
+          <div className="text-sm font-semibold">新建凭证（直接过账）</div>
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <div>在任意分录行的借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
             <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
@@ -367,7 +381,7 @@ export default function Journal() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-zinc-600">汇率（交易币 → 本位）</label>
+                <label className="text-xs text-zinc-600">汇率（交易币 → 基准币）</label>
                 <div className="mt-1 flex items-center gap-2">
                   <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftFx} onChange={(e) => setDraftFx(Number(e.target.value) || 1)} type="number" step="0.0001" />
                   <button
@@ -385,7 +399,7 @@ export default function Journal() {
                     用历史
                   </button>
                 </div>
-                <div className="mt-1 text-xs text-zinc-500">本位币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
+                <div className="mt-1 text-xs text-zinc-500">基准币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
               </div>
               <div>
                 <label className="text-xs text-zinc-600">摘要</label>
@@ -656,7 +670,7 @@ export default function Journal() {
                       if (invMode === "shipment") {
                         if (existingTxn > 0) {
                           if (Math.round(expectedBaseFromExisting * 100) / 100 !== Math.round(computedShipmentBase * 100) / 100) {
-                            setErr("库存出库 FIFO 成本合计必须与该行金额一致（以本位比较）。");
+                            setErr("库存出库 FIFO 成本合计必须与该行金额一致（以基准币比较）。");
                             try {
                               openInventoryDetailsModal(invLineIdx, "shipment", invDefaultSide);
                             } catch {
@@ -717,14 +731,13 @@ export default function Journal() {
                         }
                       }
 
-                      const resp = await api<{ entry: { id: string } }>("/api/journals", {
+                      const resp = await api<{ entry: { id: string } }>("/api/journals/post", {
                         method: "POST",
                         json: {
                           entryDate: draftDate,
                           currency: draftCurrency,
                           fxRate: draftFx,
                           memo: draftMemo,
-                          inventoryImpact: Boolean(inventoryDetails?.length),
                           inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
                           inventoryDetails,
                           lines: effectiveLines.map((l) => ({
@@ -738,6 +751,7 @@ export default function Journal() {
                       });
                       await refresh();
                       setSelectedId(resp.entry.id);
+                      resetDraftEntry();
                     } catch (e: any) {
                       setErr(e.message);
                     } finally {
@@ -745,7 +759,7 @@ export default function Journal() {
                     }
                   }}
                 >
-                  创建草稿
+                  过账
                 </button>
               </div>
             </div>
@@ -994,7 +1008,7 @@ export default function Journal() {
                   <tr>
                     <th className="px-3 py-2 text-left">商品</th>
                     <th className="px-3 py-2 text-right">数量</th>
-                    {invMode === "receipt" ? <th className="px-3 py-2 text-right">单价({draftCurrency})</th> : <th className="px-3 py-2 text-right">FIFO 成本(本位)</th>}
+                    {invMode === "receipt" ? <th className="px-3 py-2 text-right">单价({draftCurrency})</th> : <th className="px-3 py-2 text-right">FIFO 成本({baseCurrency})</th>}
                     <th className="px-3 py-2 text-right">金额</th>
                     <th className="px-3 py-2 text-left">操作</th>
                   </tr>
@@ -1030,10 +1044,11 @@ export default function Journal() {
                           <input
                             className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
                             type="number"
-                            step="0.0001"
+                            step="1"
                             value={r.qty}
                             onChange={(e) => {
-                              const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, qty: Number(e.target.value) || 0 } : x));
+                              const nextQty = Math.trunc(Number(e.target.value) || 0);
+                              const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, qty: nextQty } : x));
                               setInvEditingDetails(next);
                             }}
                           />
@@ -1043,7 +1058,7 @@ export default function Journal() {
                             <input
                               className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
                               type="number"
-                              step="0.0001"
+                              step="0.01"
                               value={r.unitCostTxn}
                               onChange={(e) => {
                                 const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, unitCostTxn: Number(e.target.value) || 0 } : x));
@@ -1053,7 +1068,7 @@ export default function Journal() {
                           </td>
                         ) : (
                           <td className="px-3 py-2 text-right whitespace-nowrap">
-                            {q?.err ? <span className="text-red-700">{q.err}</span> : costBase == null ? "-" : costBase.toFixed(2)}
+                            {q?.err ? <span className="text-red-700">{q.err}</span> : costBase == null ? "-" : `${costBase.toFixed(2)} ${baseCurrency}`}
                           </td>
                         )}
                         <td className="px-3 py-2 text-right whitespace-nowrap">
@@ -1095,7 +1110,7 @@ export default function Journal() {
             ) : (
               <div className="mt-3 text-sm">
                 <div>
-                  FIFO 合计：{invEditingTotals.totalQuoteBase.toFixed(2)} (本位)；分录金额：{invExpectedBase.toFixed(2)} (本位)
+                  FIFO 合计：{invEditingTotals.totalQuoteBase.toFixed(2)} {baseCurrency}；分录金额：{invExpectedBase.toFixed(2)} {baseCurrency}
                 </div>
                 {invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.err) ? (
                   <div className="mt-1 text-sm text-red-700">存在库存不足或数据错误，请调整商品/数量。</div>
@@ -1104,7 +1119,7 @@ export default function Journal() {
                   <div className="mt-1 text-xs text-zinc-500">正在计算 FIFO 成本…</div>
                 ) : null}
                 {Math.round(invEditingTotals.totalQuoteBase * 100) / 100 !== Math.round(invExpectedBase * 100) / 100 ? (
-                  <div className="mt-1 text-sm text-red-700">FIFO 合计必须与绑定的分录行金额一致（以本位比较）。</div>
+                  <div className="mt-1 text-sm text-red-700">FIFO 合计必须与绑定的分录行金额一致（以基准币比较）。</div>
                 ) : null}
               </div>
             )}

@@ -31,7 +31,7 @@ export default function Inventory() {
   const [selectedItemId, setSelectedItemId] = useState<string>("");
   const [stock, setStock] = useState<{ qty: number; valueBase: number } | null>(null);
 
-  const [moveStatus, setMoveStatus] = useState<"" | "draft" | "posted">("draft");
+  const [moveStatus, setMoveStatus] = useState<"" | "draft" | "posted">("");
   const [movesOnlySelectedItem, setMovesOnlySelectedItem] = useState(true);
   const [moves, setMoves] = useState<Move[]>([]);
 
@@ -40,6 +40,8 @@ export default function Inventory() {
   const [result, setResult] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const [panel, setPanel] = useState<"receipt" | "shipment" | "moves">("moves");
 
   const offsetAccounts = useMemo(() => accounts, [accounts]);
 
@@ -65,6 +67,14 @@ export default function Inventory() {
   async function refreshStock(itemId: string) {
     const s = await api<{ itemId: string; qty: number; valueBase: number }>(`/api/inventory/stock?itemId=${encodeURIComponent(itemId)}`);
     setStock({ qty: s.qty, valueBase: s.valueBase });
+  }
+
+  async function refreshAll() {
+    await Promise.all([
+      refresh(),
+      refreshMoves(),
+      selectedItemId ? refreshStock(selectedItemId) : Promise.resolve(),
+    ]);
   }
 
   useEffect(() => {
@@ -130,8 +140,8 @@ export default function Inventory() {
             </select>
             {stock ? (
               <div className="mt-2 rounded-lg bg-zinc-50 p-3 text-sm">
-                <div>期末数量：{stock.qty.toFixed(4)}</div>
-                <div>期末金额(本位)：{stock.valueBase.toFixed(2)}</div>
+                <div>期末数量：{Math.trunc(stock.qty)}</div>
+                <div>期末金额：{stock.valueBase.toFixed(2)}</div>
               </div>
             ) : null}
           </div>
@@ -139,7 +149,45 @@ export default function Inventory() {
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                className={
+                  panel === "receipt"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setPanel("receipt")}
+              >
+                入库
+              </button>
+              <button
+                className={
+                  panel === "shipment"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setPanel("shipment")}
+              >
+                出库
+              </button>
+              <button
+                className={
+                  panel === "moves"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setPanel("moves")}
+              >
+                单据
+              </button>
+            </div>
+          </div>
+
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "receipt" ? "" : "hidden")}>
             <div className="text-sm font-semibold">入库（生成分录 + FIFO 批次）</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
@@ -148,11 +196,23 @@ export default function Inventory() {
               </div>
               <div>
                 <label className="text-xs text-zinc-600">数量</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={receipt.qty} onChange={(e) => setReceipt({ ...receipt, qty: Number(e.target.value) || 0 })} type="number" step="0.0001" />
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={receipt.qty}
+                  onChange={(e) => setReceipt({ ...receipt, qty: Math.trunc(Number(e.target.value) || 0) })}
+                  type="number"
+                  step="1"
+                />
               </div>
               <div>
                 <label className="text-xs text-zinc-600">单价（交易币）</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={receipt.unitCostTxn} onChange={(e) => setReceipt({ ...receipt, unitCostTxn: Number(e.target.value) || 0 })} type="number" step="0.0001" />
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={receipt.unitCostTxn}
+                  onChange={(e) => setReceipt({ ...receipt, unitCostTxn: Number(e.target.value) || 0 })}
+                  type="number"
+                  step="0.01"
+                />
               </div>
               <div>
                 <label className="text-xs text-zinc-600">币种</label>
@@ -186,7 +246,7 @@ export default function Inventory() {
                     json: { ...receipt, itemId: selectedItemId },
                   });
                   setResult({ type: "receipt", resp });
-                  await refreshStock(selectedItemId);
+                  await Promise.all([refreshStock(selectedItemId), refreshMoves()]);
                 } catch (e: any) {
                   setErr(e.message);
                 } finally {
@@ -198,7 +258,7 @@ export default function Inventory() {
             </button>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "shipment" ? "" : "hidden")}>
             <div className="text-sm font-semibold">出库（FIFO 计算成本 + 自动结转）</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
@@ -207,7 +267,13 @@ export default function Inventory() {
               </div>
               <div>
                 <label className="text-xs text-zinc-600">数量</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={shipment.qty} onChange={(e) => setShipment({ ...shipment, qty: Number(e.target.value) || 0 })} type="number" step="0.0001" />
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={shipment.qty}
+                  onChange={(e) => setShipment({ ...shipment, qty: Math.trunc(Number(e.target.value) || 0) })}
+                  type="number"
+                  step="1"
+                />
               </div>
             </div>
             <button
@@ -219,7 +285,7 @@ export default function Inventory() {
                 try {
                   const resp = await api<any>("/api/inventory/shipments", { method: "POST", json: { ...shipment, itemId: selectedItemId } });
                   setResult({ type: "shipment", resp });
-                  await refreshStock(selectedItemId);
+                  await Promise.all([refreshStock(selectedItemId), refreshMoves()]);
                 } catch (e: any) {
                   setErr(e.message);
                 } finally {
@@ -231,13 +297,13 @@ export default function Inventory() {
             </button>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "moves" ? "" : "hidden")}>
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-semibold">库存单据（含分录联动）</div>
               <button
                 className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
                 disabled={busy}
-                onClick={() => refreshMoves().catch((e) => setErr(e.message))}
+                onClick={() => refreshAll().catch((e) => setErr(e.message))}
               >
                 刷新
               </button>
@@ -245,16 +311,44 @@ export default function Inventory() {
 
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <div>
-                <label className="text-xs text-zinc-600">状态</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
-                  value={moveStatus}
-                  onChange={(e) => setMoveStatus(e.target.value as any)}
-                >
-                  <option value="draft">draft</option>
-                  <option value="posted">posted</option>
-                  <option value="">all</option>
-                </select>
+                <div className="text-xs text-zinc-600">状态</div>
+                <div className="mt-1 rounded-xl border border-zinc-200 bg-white p-1">
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      className={
+                        moveStatus === ""
+                          ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                          : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                      }
+                      type="button"
+                      onClick={() => setMoveStatus("")}
+                    >
+                      all
+                    </button>
+                    <button
+                      className={
+                        moveStatus === "draft"
+                          ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                          : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                      }
+                      type="button"
+                      onClick={() => setMoveStatus("draft")}
+                    >
+                      draft
+                    </button>
+                    <button
+                      className={
+                        moveStatus === "posted"
+                          ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                          : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                      }
+                      type="button"
+                      onClick={() => setMoveStatus("posted")}
+                    >
+                      posted
+                    </button>
+                  </div>
+                </div>
               </div>
               <label className="mt-5 flex items-center gap-2 text-sm">
                 <input type="checkbox" className="h-4 w-4" checked={movesOnlySelectedItem} onChange={(e) => setMovesOnlySelectedItem(e.target.checked)} />
@@ -287,8 +381,8 @@ export default function Inventory() {
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveDate}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveType}</td>
                         <td className="px-3 py-2">{(m.itemSku ? `${m.itemSku} ` : "") + m.itemName}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">{Number.isFinite(qty) ? qty.toFixed(4) : m.qty}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">{unitTxn == null ? "-" : `${unitTxn.toFixed(6)} ${m.currency || ""}`}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">{Number.isFinite(qty) ? String(Math.trunc(qty)) : m.qty}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">{unitTxn == null ? "-" : `${unitTxn.toFixed(2)} ${m.currency || ""}`}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{amountTxn == null ? "-" : `${amountTxn.toFixed(2)} ${m.currency || ""}`}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{m.status}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{m.entryId ? <a className="text-blue-700 hover:underline" href="/journal">打开</a> : "-"}</td>
