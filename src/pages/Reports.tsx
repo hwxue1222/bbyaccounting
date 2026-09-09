@@ -51,8 +51,8 @@ export default function Reports() {
         const r = await api<{ rows: any[] }>(`/api/reports/balance-sheet?asOf=${asOf}${ccParam}`);
         setRows(r.rows);
       } else {
-        if (!accountId) throw new Error("请选择科目");
-        const r = await api<{ lines: any[] }>(`/api/reports/gl?accountId=${accountId}&start=${start}&end=${end}${ccParam}`);
+        const accountParam = accountId ? `accountId=${encodeURIComponent(accountId)}&` : "";
+        const r = await api<{ lines: any[] }>(`/api/reports/gl?${accountParam}start=${start}&end=${end}${ccParam}`);
         setRows(r.lines);
       }
     } catch (e: any) {
@@ -108,7 +108,7 @@ export default function Reports() {
 
           {tab === "gl" ? (
             <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              <option value="">请选择科目</option>
+              <option value="">All Accounts</option>
               {accountOptions.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.code} {a.name}
@@ -135,6 +135,7 @@ export default function Reports() {
             <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
               {tab === "gl" ? (
                 <tr>
+                  {!accountId ? <th className="px-3 py-2 text-left">科目</th> : null}
                   <th className="px-3 py-2 text-left">日期</th>
                   <th className="px-3 py-2 text-left">摘要</th>
                   <th className="px-3 py-2 text-right">借</th>
@@ -154,10 +155,11 @@ export default function Reports() {
               {rows.map((r, idx) =>
                 tab === "gl" ? (
                   <tr key={idx} className="border-t border-zinc-100">
+                    {!accountId ? <td className="px-3 py-2">{r.accountCode ? `${r.accountCode} ${r.accountName || ""}`.trim() : ""}</td> : null}
                     <td className="px-3 py-2">{r.entryDate}</td>
                     <td className="px-3 py-2">{r.memo || r.description || ""}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.debitBase).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.creditBase).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.creditBase ?? 0).toFixed(2)}</td>
                   </tr>
                 ) : (
                   <tr key={idx} className="border-t border-zinc-100">

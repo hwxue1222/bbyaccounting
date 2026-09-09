@@ -56,6 +56,66 @@ router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) 
   res.status(200).json({ success: true, data: { account: row } });
 });
 
+router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+
+  const bodySchema = z.object({
+    code: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    type: z.enum(["asset", "liability", "equity", "income", "cogs", "expense"]).optional(),
+    normalBalance: z.enum(["debit", "credit"]).optional(),
+    isActive: z.boolean().optional(),
+  });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    res.status(400).json({ success: false, error: "No changes" });
+    return;
+  }
+
+  const sql = getSql();
+  const id = req.params.id;
+
+  const code = parsed.data.code?.trim();
+  const name = parsed.data.name?.trim();
+  const type = parsed.data.type;
+  const normalBalance = parsed.data.normalBalance;
+  const isActive = parsed.data.isActive;
+
+  try {
+    const row = (
+      await sql`
+        UPDATE accounts
+        SET
+          code = COALESCE(${code ?? null}, code),
+          name = COALESCE(${name ?? null}, name),
+          type = COALESCE(${type ?? null}, type),
+          normal_balance = COALESCE(${normalBalance ?? null}, normal_balance),
+          is_active = COALESCE(${isActive ?? null}, is_active)
+        WHERE id = ${id} AND org_id = ${orgId}
+        RETURNING id, code, name, type, normal_balance as "normalBalance", is_active as "isActive"
+      `
+    )[0];
+    if (!row) {
+      res.status(404).json({ success: false, error: "Not found" });
+      return;
+    }
+    res.status(200).json({ success: true, data: { account: row } });
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    if (msg.includes("duplicate key")) {
+      res.status(409).json({ success: false, error: "Account code already exists" });
+      return;
+    }
+    throw e;
+  }
+});
+
 router.get("/cost-centers", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrg(req, res);

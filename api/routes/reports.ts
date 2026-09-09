@@ -246,9 +246,9 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!orgId) return;
   const q = z
     .object({
-      accountId: z.string().uuid(),
       start: z.string().min(10),
       end: z.string().min(10),
+      accountId: z.string().uuid().optional(),
       costCenterId: z.union([z.string().uuid(), z.literal("__none__")]).optional(),
     })
     .safeParse({
@@ -258,67 +258,138 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
       costCenterId: req.query.costCenterId,
     });
   if (!q.success) {
-    res.status(400).json({ success: false, error: "Missing accountId/start/end" });
+    res.status(400).json({ success: false, error: "Missing start/end" });
     return;
   }
   const sql = getSql();
   const costCenterId = q.data.costCenterId;
+
+  const accountId = q.data.accountId;
+  const baseWhere = {
+    orgId,
+    start: q.data.start,
+    end: q.data.end,
+  };
+
   const lines =
-    costCenterId === undefined
-      ? await sql`
-          SELECT
-            e.entry_date as entryDate,
-            e.id as entryId,
-            e.memo,
-            l.description,
-            l.debit_base as debitBase,
-            l.credit_base as creditBase
-          FROM journal_lines l
-          JOIN journal_entries e ON e.id = l.entry_id
-          WHERE l.org_id = ${orgId}
-            AND l.account_id = ${q.data.accountId}
-            AND e.status = 'posted'
-            AND e.entry_date >= ${q.data.start}
-            AND e.entry_date <= ${q.data.end}
-          ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
-        `
-      : costCenterId === "__none__"
+    accountId === undefined
+      ? costCenterId === undefined
         ? await sql`
             SELECT
-              e.entry_date as entryDate,
-              e.id as entryId,
+              e.entry_date as "entryDate",
+              e.id as "entryId",
               e.memo,
+              a.code as "accountCode",
+              a.name as "accountName",
               l.description,
-              l.debit_base as debitBase,
-              l.credit_base as creditBase
+              l.debit_base as "debitBase",
+              l.credit_base as "creditBase"
             FROM journal_lines l
             JOIN journal_entries e ON e.id = l.entry_id
-            WHERE l.org_id = ${orgId}
-              AND l.account_id = ${q.data.accountId}
+            JOIN accounts a ON a.id = l.account_id
+            WHERE l.org_id = ${baseWhere.orgId}
               AND e.status = 'posted'
-              AND e.entry_date >= ${q.data.start}
-              AND e.entry_date <= ${q.data.end}
-              AND l.cost_center_id IS NULL
+              AND e.entry_date >= ${baseWhere.start}
+              AND e.entry_date <= ${baseWhere.end}
+            ORDER BY a.code ASC, e.entry_date ASC, e.created_at ASC, l.line_no ASC
+          `
+        : costCenterId === "__none__"
+          ? await sql`
+              SELECT
+                e.entry_date as "entryDate",
+                e.id as "entryId",
+                e.memo,
+                a.code as "accountCode",
+                a.name as "accountName",
+                l.description,
+                l.debit_base as "debitBase",
+                l.credit_base as "creditBase"
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              JOIN accounts a ON a.id = l.account_id
+              WHERE l.org_id = ${baseWhere.orgId}
+                AND e.status = 'posted'
+                AND e.entry_date >= ${baseWhere.start}
+                AND e.entry_date <= ${baseWhere.end}
+                AND l.cost_center_id IS NULL
+              ORDER BY a.code ASC, e.entry_date ASC, e.created_at ASC, l.line_no ASC
+            `
+          : await sql`
+              SELECT
+                e.entry_date as "entryDate",
+                e.id as "entryId",
+                e.memo,
+                a.code as "accountCode",
+                a.name as "accountName",
+                l.description,
+                l.debit_base as "debitBase",
+                l.credit_base as "creditBase"
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              JOIN accounts a ON a.id = l.account_id
+              WHERE l.org_id = ${baseWhere.orgId}
+                AND e.status = 'posted'
+                AND e.entry_date >= ${baseWhere.start}
+                AND e.entry_date <= ${baseWhere.end}
+                AND l.cost_center_id = ${costCenterId}
+              ORDER BY a.code ASC, e.entry_date ASC, e.created_at ASC, l.line_no ASC
+            `
+      : costCenterId === undefined
+        ? await sql`
+            SELECT
+              e.entry_date as "entryDate",
+              e.id as "entryId",
+              e.memo,
+              l.description,
+              l.debit_base as "debitBase",
+              l.credit_base as "creditBase"
+            FROM journal_lines l
+            JOIN journal_entries e ON e.id = l.entry_id
+            WHERE l.org_id = ${baseWhere.orgId}
+              AND l.account_id = ${accountId}
+              AND e.status = 'posted'
+              AND e.entry_date >= ${baseWhere.start}
+              AND e.entry_date <= ${baseWhere.end}
             ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
           `
-        : await sql`
-            SELECT
-              e.entry_date as entryDate,
-              e.id as entryId,
-              e.memo,
-              l.description,
-              l.debit_base as debitBase,
-              l.credit_base as creditBase
-            FROM journal_lines l
-            JOIN journal_entries e ON e.id = l.entry_id
-            WHERE l.org_id = ${orgId}
-              AND l.account_id = ${q.data.accountId}
-              AND e.status = 'posted'
-              AND e.entry_date >= ${q.data.start}
-              AND e.entry_date <= ${q.data.end}
-              AND l.cost_center_id = ${costCenterId}
-            ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
-          `;
+        : costCenterId === "__none__"
+          ? await sql`
+              SELECT
+                e.entry_date as "entryDate",
+                e.id as "entryId",
+                e.memo,
+                l.description,
+                l.debit_base as "debitBase",
+                l.credit_base as "creditBase"
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              WHERE l.org_id = ${baseWhere.orgId}
+                AND l.account_id = ${accountId}
+                AND e.status = 'posted'
+                AND e.entry_date >= ${baseWhere.start}
+                AND e.entry_date <= ${baseWhere.end}
+                AND l.cost_center_id IS NULL
+              ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
+            `
+          : await sql`
+              SELECT
+                e.entry_date as "entryDate",
+                e.id as "entryId",
+                e.memo,
+                l.description,
+                l.debit_base as "debitBase",
+                l.credit_base as "creditBase"
+              FROM journal_lines l
+              JOIN journal_entries e ON e.id = l.entry_id
+              WHERE l.org_id = ${baseWhere.orgId}
+                AND l.account_id = ${accountId}
+                AND e.status = 'posted'
+                AND e.entry_date >= ${baseWhere.start}
+                AND e.entry_date <= ${baseWhere.end}
+                AND l.cost_center_id = ${costCenterId}
+              ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
+            `;
+
   res.status(200).json({ success: true, data: { lines } });
 });
 
