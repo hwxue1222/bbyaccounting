@@ -44,6 +44,72 @@ function requireOrgId(req: AuthedRequest, res: Response): string | null {
   return orgId;
 }
 
+async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: string) {
+  const moves = (await trx`
+    SELECT
+      id,
+      move_type as "moveType",
+      qty,
+      source_layer_id as "sourceLayerId",
+      created_layer_id as "createdLayerId"
+    FROM inventory_moves
+    WHERE org_id = ${orgId} AND entry_id = ${entryId} AND status = 'posted'
+    ORDER BY created_at DESC, id DESC
+  `) as any[];
+
+  const shipmentMoves = moves.filter((m) => m.moveType === "shipment");
+  const receiptMoves = moves.filter((m) => m.moveType === "receipt");
+
+  if (shipmentMoves.length) {
+    for (const m of shipmentMoves) {
+      const layerId = m.sourceLayerId ? String(m.sourceLayerId) : null;
+      const qty = Number(m.qty);
+      if (!layerId) {
+        throw new Error("Cannot rollback shipment without source_layer_id");
+      }
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error("Invalid shipment qty");
+      }
+      await trx`
+        UPDATE inventory_layers
+        SET qty_remaining = qty_remaining + ${qty}
+        WHERE org_id = ${orgId} AND id = ${layerId}
+      `;
+    }
+  }
+
+  if (receiptMoves.length) {
+    for (const m of receiptMoves) {
+      const layerId = m.createdLayerId ? String(m.createdLayerId) : null;
+      const qty = Number(m.qty);
+      if (!layerId) {
+        throw new Error("Cannot rollback receipt without created_layer_id");
+      }
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error("Invalid receipt qty");
+      }
+      const layers = await trx`
+        SELECT qty_remaining as "qtyRemaining"
+        FROM inventory_layers
+        WHERE org_id = ${orgId} AND id = ${layerId}
+        LIMIT 1
+      `;
+      const remaining = layers.length ? Number((layers[0] as any).qtyRemaining) : NaN;
+      if (!Number.isFinite(remaining)) {
+        throw new Error("Receipt layer missing");
+      }
+      if (round6(remaining) !== round6(qty)) {
+        throw new Error("Cannot rollback receipt: layer already consumed");
+      }
+      await trx`DELETE FROM inventory_layers WHERE org_id = ${orgId} AND id = ${layerId}`;
+    }
+  }
+
+  if (moves.length) {
+    await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${entryId} AND status = 'posted'`;
+  }
+}
+
 router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -140,6 +206,371 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     ORDER BY created_at DESC
   `;
   res.status(200).json({ success: true, data: { entry, lines, attachments: atts } });
+});
+
+router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const id = req.params.id;
+
+  const lineSchema = z.object({
+    accountId: z.string().uuid(),
+    description: z.string().optional(),
+    costCenterId: z.string().uuid().nullable().optional(),
+    debitTxn: z.number().nonnegative().default(0),
+    creditTxn: z.number().nonnegative().default(0),
+  });
+
+  const inventoryDetailReceiptSchema = z.object({
+    moveType: z.literal("receipt"),
+    itemId: z.string().uuid(),
+    qty: z.number().positive().finite(),
+    unitCostTxn: z.number().positive().finite(),
+  });
+  const inventoryDetailShipmentSchema = z.object({
+    moveType: z.literal("shipment"),
+    itemId: z.string().uuid(),
+    qty: z.number().positive().finite(),
+  });
+  const inventoryDetailsSchema = z.array(z.union([inventoryDetailReceiptSchema, inventoryDetailShipmentSchema])).min(1).optional();
+
+  const bodySchema = z.object({
+    entryDate: z.string().min(10),
+    currency: z.string().min(3).max(3),
+    fxRate: z.number().positive().default(1),
+    voucherNo: z.string().trim().min(1).max(32).optional(),
+    memo: z.string().optional(),
+    inventoryDetails: inventoryDetailsSchema,
+    inventoryLinkLineNo: z.number().int().positive().optional(),
+    shipmentInventoryAccountId: z.string().uuid().optional(),
+    shipmentCogsAccountId: z.string().uuid().optional(),
+    lines: z.array(lineSchema).min(2),
+  });
+
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+  const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const inventoryDetails = parsed.data.inventoryDetails;
+  const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
+  const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
+  const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
+  const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
+
+  const normalizedLines = lines.map((l, idx) => {
+    const debit = l.debitTxn || 0;
+    const credit = l.creditTxn || 0;
+    const debitBase = round2(debit * fxRate);
+    const creditBase = round2(credit * fxRate);
+    return {
+      lineNo: idx + 1,
+      accountId: l.accountId,
+      description: l.description || null,
+      costCenterId: l.costCenterId ?? null,
+      debitTxn: debit,
+      creditTxn: credit,
+      debitBase,
+      creditBase,
+    };
+  });
+
+  const sumDebitBase = round2(normalizedLines.reduce((s, l) => s + Number(l.debitBase || 0), 0));
+  const sumCreditBase = round2(normalizedLines.reduce((s, l) => s + Number(l.creditBase || 0), 0));
+  if (round2(sumDebitBase) !== round2(sumCreditBase)) {
+    res.status(400).json({ success: false, error: `Unbalanced entry: debit ${sumDebitBase} credit ${sumCreditBase}` });
+    return;
+  }
+  if (round2(sumDebitBase) <= 0) {
+    res.status(400).json({ success: false, error: "Entry amount must be greater than 0" });
+    return;
+  }
+
+  let inventoryMode: "none" | "receipt" | "shipment" = "none";
+  let linkLineNo: number | null = null;
+  if (effectiveInventoryImpact) {
+    if (!inventoryDetails?.length) {
+      res.status(400).json({ success: false, error: "Missing inventoryDetails" });
+      return;
+    }
+    if (!inventoryLinkLineNo) {
+      res.status(400).json({ success: false, error: "Missing inventoryLinkLineNo" });
+      return;
+    }
+    linkLineNo = inventoryLinkLineNo;
+    const detailTypes = Array.from(new Set(inventoryDetails.map((d) => d.moveType)));
+    if (detailTypes.length !== 1) {
+      res.status(400).json({ success: false, error: "Inventory details must be all receipt or all shipment" });
+      return;
+    }
+    const linkedLine = normalizedLines.find((l) => l.lineNo === inventoryLinkLineNo);
+    if (!linkedLine) {
+      res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
+      return;
+    }
+    const debitBase = round2(linkedLine.debitBase);
+    const creditBase = round2(linkedLine.creditBase);
+    if (debitBase > 0 && creditBase > 0) {
+      res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
+      return;
+    }
+    inventoryMode = detailTypes[0];
+    if (inventoryMode === "receipt") {
+      const receiptDetails = inventoryDetails.filter((d) => d.moveType === "receipt") as Array<{
+        moveType: "receipt";
+        itemId: string;
+        qty: number;
+        unitCostTxn: number;
+      }>;
+      const expectedTxn = round2(receiptDetails.reduce((s, d) => s + round2(d.qty * d.unitCostTxn), 0));
+      const debitTxn = round2(linkedLine.debitTxn);
+      const creditTxn = round2(linkedLine.creditTxn);
+      const existingTxn = debitTxn > 0 ? debitTxn : creditTxn > 0 ? creditTxn : 0;
+      if (existingTxn > 0 && round2(existingTxn) !== round2(expectedTxn)) {
+        res.status(400).json({ success: false, error: `Inventory total mismatch: entry ${round2(existingTxn)} vs receipt ${expectedTxn}` });
+        return;
+      }
+    }
+    if (inventoryMode === "shipment") {
+      const expectedBase = debitBase > 0 ? debitBase : creditBase;
+      if (expectedBase <= 0) {
+        res.status(400).json({ success: false, error: "Inventory shipment linked line amount must be greater than 0" });
+        return;
+      }
+    }
+  }
+
+  try {
+    const updated = await sql.begin(async (trx) => {
+      const existingRows = await trx`
+        SELECT status, voucher_no as "voucherNo", inventory_impact as "inventoryImpact"
+        FROM journal_entries
+        WHERE org_id = ${orgId} AND id = ${id}
+        LIMIT 1
+      `;
+      const existing = existingRows[0] as any;
+      if (!existing) {
+        throw new Error("Not found");
+      }
+      if (String(existing.status) !== "posted") {
+        throw new Error("Only posted entries can be edited currently");
+      }
+
+      await rollbackInventoryByEntryId(trx, orgId, id);
+
+      await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${id}`;
+
+      const voucherNo = parsed.data.voucherNo?.trim() || String(existing.voucherNo || "").trim() || (await issueVoucherNo(trx, orgId));
+      await trx`
+        UPDATE journal_entries
+        SET entry_date = ${entryDate},
+            voucher_no = ${voucherNo},
+            currency_code = ${currency.toUpperCase()},
+            fx_rate = ${fxRate},
+            memo = ${memo || null},
+            inventory_impact = ${effectiveInventoryImpact},
+            posted_at = now()
+        WHERE org_id = ${orgId} AND id = ${id}
+      `;
+
+      for (const l of normalizedLines) {
+        await trx`
+          INSERT INTO journal_lines (
+            org_id, entry_id, line_no, account_id, description, cost_center_id,
+            debit_txn, credit_txn, debit_base, credit_base
+          ) VALUES (
+            ${orgId}, ${id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
+            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}
+          )
+        `;
+      }
+
+      if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
+        if (inventoryMode === "receipt") {
+          for (const d of inventoryDetails as any[]) {
+            const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
+            const insertedMove = (
+              await trx`
+                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+                VALUES (
+                  ${orgId},
+                  ${d.itemId},
+                  'receipt',
+                  ${entryDate},
+                  ${d.qty},
+                  ${unitCostBase},
+                  ${round6(Number(d.unitCostTxn))},
+                  ${currency.toUpperCase()},
+                  ${fxRate},
+                  'posted',
+                  ${id},
+                  ${linkLineNo}
+                )
+                RETURNING id
+              `
+            )[0] as any;
+            const layer = (
+              await trx`
+                INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
+                VALUES (${orgId}, ${d.itemId}, ${entryDate}, ${d.qty}, ${unitCostBase}, ${id}, ${insertedMove.id})
+                RETURNING id
+              `
+            )[0] as any;
+            await trx`
+              UPDATE inventory_moves
+              SET created_layer_id = ${layer.id}
+              WHERE org_id = ${orgId} AND id = ${insertedMove.id}
+            `;
+          }
+        }
+
+        if (inventoryMode === "shipment") {
+          const fx = Number(fxRate);
+          let totalBaseAll = 0;
+          for (const d of inventoryDetails as any[]) {
+            const itemId = String(d.itemId);
+            const qtyRequested = Number(d.qty);
+            if (!Number.isFinite(qtyRequested) || qtyRequested <= 0) {
+              throw new Error("Invalid shipment qty");
+            }
+            const layers = await trx`
+              SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
+              FROM inventory_layers
+              WHERE org_id = ${orgId} AND item_id = ${itemId} AND qty_remaining > 0
+              ORDER BY received_date ASC, id ASC
+              FOR UPDATE
+            `;
+            let remaining = qtyRequested;
+            const breakdown: Array<{ layerId: string; qty: number; unitCostBase: number; amountBase: number }> = [];
+            for (const row of layers as any[]) {
+              if (remaining <= 0) break;
+              const qtyAvail = Number(row.qtyRemaining);
+              const take = Math.min(remaining, qtyAvail);
+              const layerUnitCostBase = Number(row.unitCostBase);
+              const amountBase = round2(take * layerUnitCostBase);
+              breakdown.push({ layerId: row.id, qty: take, unitCostBase: layerUnitCostBase, amountBase });
+              remaining = round6(remaining - take);
+            }
+            if (remaining > 0) {
+              throw new Error("Insufficient stock");
+            }
+            const totalBase = round2(breakdown.reduce((s, x) => s + x.amountBase, 0));
+            totalBaseAll = round2(totalBaseAll + totalBase);
+            for (const b of breakdown) {
+              await trx`
+                UPDATE inventory_layers
+                SET qty_remaining = qty_remaining - ${b.qty}
+                WHERE id = ${b.layerId} AND org_id = ${orgId}
+              `;
+              const unitCostTxn = fx > 0 ? round6(b.unitCostBase / fx) : null;
+              await trx`
+                INSERT INTO inventory_moves (
+                  org_id, item_id, move_type, move_date, qty,
+                  unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
+                  entry_id, entry_line_no, source_layer_id
+                ) VALUES (
+                  ${orgId},
+                  ${itemId},
+                  'shipment',
+                  ${entryDate},
+                  ${b.qty},
+                  ${b.unitCostBase},
+                  ${unitCostTxn},
+                  ${currency.toUpperCase()},
+                  ${fxRate},
+                  'posted',
+                  ${id},
+                  ${linkLineNo},
+                  ${b.layerId}
+                )
+              `;
+            }
+          }
+
+          try {
+            const activeAccounts = (await trx`
+              SELECT id, code, name, type
+              FROM accounts
+              WHERE org_id = ${orgId} AND (is_active IS NULL OR is_active = true)
+              ORDER BY code ASC
+            `) as any[];
+            const invAccId =
+              shipmentInventoryAccountId ||
+              activeAccounts.find((a) => String(a.code || "").startsWith("15"))?.id ||
+              activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("inventory"))?.id ||
+              activeAccounts.find((a) => String(a.type || "") === "asset")?.id ||
+              null;
+            const cogsAccId =
+              shipmentCogsAccountId ||
+              activeAccounts.find((a) => String(a.type || "") === "cogs")?.id ||
+              activeAccounts.find((a) => String(a.name || "").toLowerCase().includes("cogs"))?.id ||
+              activeAccounts.find((a) => String(a.code || "").startsWith("50"))?.id ||
+              null;
+            if (invAccId && cogsAccId) {
+              const costBase = round2(totalBaseAll);
+              const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
+              const nextLineNo = normalizedLines.length + 1;
+              await trx`
+                INSERT INTO journal_lines (
+                  org_id, entry_id, line_no, account_id, description, cost_center_id,
+                  debit_txn, credit_txn, debit_base, credit_base
+                ) VALUES (
+                  ${orgId}, ${id}, ${nextLineNo}, ${cogsAccId}, 'COGS (FIFO)', NULL,
+                  ${costTxn}, 0, ${costBase}, 0
+                )
+              `;
+              await trx`
+                INSERT INTO journal_lines (
+                  org_id, entry_id, line_no, account_id, description, cost_center_id,
+                  debit_txn, credit_txn, debit_base, credit_base
+                ) VALUES (
+                  ${orgId}, ${id}, ${nextLineNo + 1}, ${invAccId}, 'Inventory (FIFO)', NULL,
+                  0, ${costTxn}, 0, ${costBase}
+                )
+              `;
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      const entry = (
+        await trx`
+          SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
+          FROM journal_entries
+          WHERE org_id = ${orgId} AND id = ${id}
+          LIMIT 1
+        `
+      )[0] as any;
+      return entry;
+    });
+
+    res.status(200).json({ success: true, data: { entry: updated } });
+  } catch (e: any) {
+    const msg = typeof e?.message === "string" ? e.message : "Update failed";
+    if (msg === "Not found") {
+      res.status(404).json({ success: false, error: msg });
+      return;
+    }
+    if (msg.includes("Cannot rollback") || msg.includes("Insufficient stock") || msg.includes("Unbalanced") || msg.includes("Only posted")) {
+      res.status(400).json({ success: false, error: msg });
+      return;
+    }
+    const mapped = mapPgError(e);
+    if (mapped) {
+      console.error("[journals/put]", { orgId, userId: req.auth?.userId, pgCode: e?.code, message: msg });
+      res.status(mapped.status).json({ success: false, error: mapped.message });
+      return;
+    }
+    const errorId = makeErrorId();
+    console.error("[journals/put]", { orgId, userId: req.auth?.userId, errorId, message: msg });
+    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
+  }
 });
 
 router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
@@ -314,26 +745,37 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         if (inventoryMode === "receipt") {
           for (const d of inventoryDetails as any[]) {
             const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
+            const insertedMove = (
+              await trx`
+                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+                VALUES (
+                  ${orgId},
+                  ${d.itemId},
+                  'receipt',
+                  ${entryDate},
+                  ${d.qty},
+                  ${unitCostBase},
+                  ${round6(Number(d.unitCostTxn))},
+                  ${currency.toUpperCase()},
+                  ${fxRate},
+                  'posted',
+                  ${entry.id},
+                  ${linkLineNo}
+                )
+                RETURNING id
+              `
+            )[0] as any;
+            const layer = (
+              await trx`
+                INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
+                VALUES (${orgId}, ${d.itemId}, ${entryDate}, ${d.qty}, ${unitCostBase}, ${entry.id}, ${insertedMove.id})
+                RETURNING id
+              `
+            )[0] as any;
             await trx`
-              INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
-              VALUES (
-                ${orgId},
-                ${d.itemId},
-                'receipt',
-                ${entryDate},
-                ${d.qty},
-                ${unitCostBase},
-                ${round6(Number(d.unitCostTxn))},
-                ${currency.toUpperCase()},
-                ${fxRate},
-                'posted',
-                ${entry.id},
-                ${linkLineNo}
-              )
-            `;
-            await trx`
-              INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id)
-              VALUES (${orgId}, ${d.itemId}, ${entryDate}, ${d.qty}, ${unitCostBase}, ${entry.id})
+              UPDATE inventory_moves
+              SET created_layer_id = ${layer.id}
+              WHERE org_id = ${orgId} AND id = ${insertedMove.id}
             `;
           }
         }
@@ -496,19 +938,35 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
     res.status(404).json({ success: false, error: "Not found" });
     return;
   }
-  if (status !== "draft") {
-    res.status(400).json({ success: false, error: "Only draft entries can be deleted" });
-    return;
+  try {
+    await sql.begin(async (trx) => {
+      if (status === "posted") {
+        await rollbackInventoryByEntryId(trx, orgId, id);
+      } else {
+        await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${id} AND status = 'draft'`;
+      }
+      await trx`DELETE FROM attachments WHERE org_id = ${orgId} AND entry_id = ${id}`;
+      await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${id}`;
+      await trx`DELETE FROM journal_entries WHERE org_id = ${orgId} AND id = ${id}`;
+    });
+
+    res.status(200).json({ success: true, data: { id } });
+  } catch (e: any) {
+    const msg = typeof e?.message === "string" ? e.message : "Delete failed";
+    if (msg.includes("Cannot rollback") || msg.includes("layer") || msg.includes("Insufficient")) {
+      res.status(400).json({ success: false, error: msg });
+      return;
+    }
+    const mapped = mapPgError(e);
+    if (mapped) {
+      console.error("[journals/delete]", { orgId, userId: req.auth?.userId, pgCode: e?.code, message: msg });
+      res.status(mapped.status).json({ success: false, error: mapped.message });
+      return;
+    }
+    const errorId = makeErrorId();
+    console.error("[journals/delete]", { orgId, userId: req.auth?.userId, errorId, message: msg });
+    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
   }
-
-  await sql.begin(async (trx) => {
-    await trx`DELETE FROM attachments WHERE org_id = ${orgId} AND entry_id = ${id}`;
-    await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${id} AND status = 'draft'`;
-    await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${id}`;
-    await trx`DELETE FROM journal_entries WHERE org_id = ${orgId} AND id = ${id}`;
-  });
-
-  res.status(200).json({ success: true, data: { id } });
 });
 
 router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {

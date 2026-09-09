@@ -93,6 +93,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!orgId) return;
   const status = typeof req.query.status === "string" ? req.query.status : null;
   const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
+  const entryId = typeof req.query.entryId === "string" ? req.query.entryId : null;
   const startDate = typeof req.query.startDate === "string" ? req.query.startDate : null;
   const endDate = typeof req.query.endDate === "string" ? req.query.endDate : null;
   const limit = typeof req.query.limit === "string" ? Math.min(200, Math.max(1, Number(req.query.limit) || 50)) : 50;
@@ -130,7 +131,10 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
           FROM inventory_moves m
           JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
           LEFT JOIN journal_entries e ON e.id = m.entry_id AND e.org_id = m.org_id
-          WHERE m.org_id = ${orgId} AND m.status = ${status} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``} ${dateCond}
+          WHERE m.org_id = ${orgId} AND m.status = ${status}
+            ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
+            ${entryId ? sql`AND m.entry_id = ${entryId}` : sql``}
+            ${dateCond}
           ORDER BY m.move_date DESC, m.created_at DESC
           LIMIT ${limit}
         `
@@ -155,7 +159,10 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
           FROM inventory_moves m
           JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
           LEFT JOIN journal_entries e ON e.id = m.entry_id AND e.org_id = m.org_id
-          WHERE m.org_id = ${orgId} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``} ${dateCond}
+          WHERE m.org_id = ${orgId}
+            ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
+            ${entryId ? sql`AND m.entry_id = ${entryId}` : sql``}
+            ${dateCond}
           ORDER BY m.move_date DESC, m.created_at DESC
           LIMIT ${limit}
         `;
@@ -326,18 +333,36 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
       VALUES (${orgId}, ${entry.id}, 2, ${parsed.data.offsetAccountId}, 'Inventory receipt offset', 0, ${round2(parsed.data.unitCostTxn * parsed.data.qty)}, 0, ${totalBase})
     `;
 
-    await trx`
-      INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id)
-      VALUES (${orgId}, ${parsed.data.itemId}, ${parsed.data.date}, ${parsed.data.qty}, ${unitCostBase}, ${entry.id})
-    `;
-    await trx`
-      INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id)
-      VALUES (${orgId}, ${parsed.data.itemId}, 'receipt', ${parsed.data.date}, ${parsed.data.qty}, ${unitCostBase}, ${entry.id})
-    `;
+    const insertedMove = (
+      await trx`
+        INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id, unit_cost_txn, currency_code, fx_rate, status)
+        VALUES (
+          ${orgId},
+          ${parsed.data.itemId},
+          'receipt',
+          ${parsed.data.date},
+          ${parsed.data.qty},
+          ${unitCostBase},
+          ${entry.id},
+          ${round6(parsed.data.unitCostTxn)},
+          ${parsed.data.currency.toUpperCase()},
+          ${parsed.data.fxRate},
+          'posted'
+        )
+        RETURNING id
+      `
+    )[0] as any;
+    const layer = (
+      await trx`
+        INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
+        VALUES (${orgId}, ${parsed.data.itemId}, ${parsed.data.date}, ${parsed.data.qty}, ${unitCostBase}, ${entry.id}, ${insertedMove.id})
+        RETURNING id
+      `
+    )[0] as any;
     await trx`
       UPDATE inventory_moves
-      SET unit_cost_txn = ${round6(parsed.data.unitCostTxn)}, currency_code = ${parsed.data.currency.toUpperCase()}, fx_rate = ${parsed.data.fxRate}, status = 'posted'
-      WHERE org_id = ${orgId} AND entry_id = ${entry.id} AND item_id = ${parsed.data.itemId} AND move_type = 'receipt'
+      SET created_layer_id = ${layer.id}
+      WHERE org_id = ${orgId} AND id = ${insertedMove.id}
     `;
 
     return { entryId: entry.id };

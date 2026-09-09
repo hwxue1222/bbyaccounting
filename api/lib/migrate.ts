@@ -201,10 +201,12 @@ export async function ensureMigrated(): Promise<void> {
       qty_remaining NUMERIC(18,4) NOT NULL,
       unit_cost_base NUMERIC(18,6) NOT NULL,
       source_entry_id UUID,
+      source_move_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_inventory_layers_item ON inventory_layers(org_id, item_id, received_date)`;
+  await sql`ALTER TABLE inventory_layers ADD COLUMN IF NOT EXISTS source_move_id UUID`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS inventory_moves (
@@ -222,6 +224,7 @@ export async function ensureMigrated(): Promise<void> {
       entry_id UUID,
       entry_line_no INT,
       source_layer_id UUID,
+      created_layer_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
@@ -232,6 +235,7 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'posted'`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS entry_line_no INT`;
   await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS source_layer_id UUID`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS created_layer_id UUID`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS fixed_assets (

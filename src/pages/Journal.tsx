@@ -77,7 +77,7 @@ export default function Journal() {
   const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
   const [invExpectedTxn, setInvExpectedTxn] = useState<number>(0);
   const [invExpectedBase, setInvExpectedBase] = useState<number>(0);
-  const [invDetails, setInvDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
+  const [invDetails, setInvDetails] = useState<Array<{ rowId: string; itemId: string; qty: string; unitCostTxn: string }>>([]);
   const [invConfirmed, setInvConfirmed] = useState<
     null | {
       mode: "receipt" | "shipment";
@@ -89,12 +89,13 @@ export default function Journal() {
   const [invLineIdx, setInvLineIdx] = useState<number | null>(null);
   const [invDefaultSide, setInvDefaultSide] = useState<"debit" | "credit">("debit");
 
-  const [invEditingDetails, setInvEditingDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
+  const [invEditingDetails, setInvEditingDetails] = useState<Array<{ rowId: string; itemId: string; qty: string; unitCostTxn: string }>>([]);
   const [invQuoteByRow, setInvQuoteByRow] = useState<Record<string, { base: number | null; err: string | null }>>({});
   const [draftLines, setDraftLines] = useState(() => [
-    { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
-    { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
+    { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
+    { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
   ]);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
 
   const txnDiff = useMemo(() => {
     const debit = draftLines.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
@@ -104,12 +105,13 @@ export default function Journal() {
 
   function resetDraftEntry() {
     setDraftLines([
-      { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
-      { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
+      { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
+      { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
     ]);
     setDraftMemo("");
     setDraftVoucherNo("");
     setVoucherTouched(false);
+    setEditingEntryId(null);
     setInvDetails([]);
     setInvConfirmed(null);
     setInvLineIdx(null);
@@ -153,7 +155,106 @@ export default function Journal() {
     await refresh();
   }
 
-  function getInventoryLinkInfoByLine(line: { debitTxn: number; creditTxn: number }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
+  async function startEditEntry(id: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const d = await api<EntryDetail>(`/api/journals/${id}`);
+      const movesResp = await api<{ moves: any[] }>(`/api/inventory/moves?entryId=${encodeURIComponent(id)}&limit=200`);
+      const moves = Array.isArray(movesResp.moves) ? movesResp.moves : [];
+
+      const entryFx = Number(d.entry.fxRate) || 1;
+      const entryCurrency = String(d.entry.currency || "").toUpperCase();
+
+      setEditingEntryId(id);
+      setDraftDate(d.entry.entryDate);
+      setDraftCurrency(entryCurrency);
+      setDraftFx(entryFx);
+      setDraftMemo(d.entry.memo || "");
+      setDraftVoucherNo(d.entry.voucherNo || "");
+      setVoucherTouched(true);
+
+      const nextLines = d.lines.map((l) => {
+        const debit = Number(l.debitTxn) || 0;
+        const credit = Number(l.creditTxn) || 0;
+        return {
+          accountId: l.accountId,
+          description: l.description || "",
+          costCenterId: l.costCenterId || "",
+          debitTxn: debit > 0 ? debit.toFixed(2) : "",
+          creditTxn: credit > 0 ? credit.toFixed(2) : "",
+        };
+      });
+      setDraftLines(nextLines);
+
+      const hasMoves = moves.length > 0;
+      if (!hasMoves) {
+        setInvDetails([]);
+        setInvConfirmed(null);
+        setInvLineIdx(null);
+        return;
+      }
+
+      const moveType = String(moves[0].moveType || "");
+      const mode = moveType === "receipt" ? "receipt" : "shipment";
+      const entryLineNo = moves[0].entryLineNo ? Number(moves[0].entryLineNo) : NaN;
+      const lineIdx = Number.isFinite(entryLineNo) && entryLineNo > 0 ? entryLineNo - 1 : null;
+
+      let expectedTxn = 0;
+      let defaultSide: "debit" | "credit" = "debit";
+      if (lineIdx != null && nextLines[lineIdx]) {
+        const line = nextLines[lineIdx];
+        const debit = Number(line.debitTxn) || 0;
+        const credit = Number(line.creditTxn) || 0;
+        if (debit > 0) {
+          expectedTxn = debit;
+          defaultSide = "debit";
+        } else if (credit > 0) {
+          expectedTxn = credit;
+          defaultSide = "credit";
+        }
+      }
+      const expectedBase = Math.round(expectedTxn * entryFx * 100) / 100;
+
+      setInvMode(mode);
+      setInvLineIdx(lineIdx);
+      setInvDefaultSide(defaultSide);
+      setInvExpectedTxn(expectedTxn);
+      setInvExpectedBase(expectedBase);
+
+      if (mode === "receipt") {
+        const det = moves
+          .filter((m) => String(m.moveType) === "receipt")
+          .map((m) => {
+            const qty = Number(m.qty) || 0;
+            const unit = m.unitCostTxn == null ? 0 : Number(m.unitCostTxn) || 0;
+            return { rowId: newRowId(), itemId: String(m.itemId), qty: String(Math.trunc(qty)), unitCostTxn: unit > 0 ? String(unit) : "" };
+          });
+        setInvDetails(det);
+        setInvConfirmed({ mode: "receipt", expectedTxn, expectedBase, quoteBase: 0 });
+        return;
+      }
+
+      const byItem = new Map<string, number>();
+      let quoteBase = 0;
+      for (const m of moves.filter((x) => String(x.moveType) === "shipment")) {
+        const itemId = String(m.itemId);
+        const qty = Number(m.qty) || 0;
+        const unitBase = m.unitCostBase == null ? 0 : Number(m.unitCostBase) || 0;
+        byItem.set(itemId, (byItem.get(itemId) || 0) + qty);
+        quoteBase += qty * unitBase;
+      }
+      const det = Array.from(byItem.entries()).map(([itemId, qty]) => ({ rowId: newRowId(), itemId, qty: String(Math.trunc(qty)), unitCostTxn: "" }));
+      setInvDetails(det);
+      setInvConfirmed({ mode: "shipment", expectedTxn, expectedBase, quoteBase: Math.round(quoteBase * 100) / 100 });
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function getInventoryLinkInfoByLine(line: { debitTxn: string; creditTxn: string }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
     const debit = Number(line.debitTxn) || 0;
     const credit = Number(line.creditTxn) || 0;
     if (debit > 0 && credit > 0) {
@@ -197,7 +298,7 @@ export default function Journal() {
     setInvExpectedBase(info.expectedBase);
     const seed = invDetails.length
       ? invDetails
-      : [{ rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: 1, unitCostTxn: info.mode === "receipt" ? info.expectedTxn : 0 }];
+      : [{ rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: "1", unitCostTxn: info.mode === "receipt" ? String(info.expectedTxn) : "" }];
     setInvEditingDetails(seed);
     setInvQuoteByRow({});
     setInvModalOpen(true);
@@ -220,13 +321,13 @@ export default function Journal() {
   useEffect(() => {
     if (!invModalOpen || invMode !== "shipment") return;
     let cancelled = false;
-    const rows = invEditingDetails.filter((d) => d.itemId && d.qty > 0);
+    const rows = invEditingDetails.filter((d) => d.itemId && (Number(d.qty) || 0) > 0);
     (async () => {
       const pairs = await Promise.all(
         rows.map(async (r) => {
           try {
             const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
-              `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(r.qty))}`,
+              `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(Number(r.qty) || 0))}`,
             );
             return [r.rowId, { base: Number(resp.totalBase), err: null }] as const;
           } catch (e: any) {
@@ -311,19 +412,19 @@ export default function Journal() {
         {err ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{err}</div> : null}
 
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-semibold">新建凭证（直接过账）</div>
+          <div className="text-sm font-semibold">{editingEntryId ? "编辑凭证" : "新建凭证（直接过账）"}</div>
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <div>在任意分录行的借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
             <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
               查看库存 FIFO
             </a>
           </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div>
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <div className="w-44">
                 <label className="text-xs text-zinc-600">日期</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} />
               </div>
-              <div>
+              <div className="w-44">
                 <label className="text-xs text-zinc-600">分录号</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -335,7 +436,7 @@ export default function Journal() {
                   placeholder="自动生成，可修改"
                 />
               </div>
-              <div>
+              <div className="w-28">
                 <label className="text-xs text-zinc-600">币种</label>
                 <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={draftCurrency} onChange={(e) => setDraftCurrency(e.target.value.toUpperCase())}>
                   {enabledCurrencies.map((c) => (
@@ -345,32 +446,37 @@ export default function Journal() {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="text-xs text-zinc-600">汇率（交易币 → 基准币）</label>
-                <div className="mt-1 flex items-center gap-2">
-                  <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftFx} onChange={(e) => setDraftFx(Number(e.target.value) || 1)} type="number" step="0.0001" />
-                  <button
-                    className="whitespace-nowrap rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-                    disabled={!draftDate.trim() || !draftCurrency.trim()}
-                    onClick={async () => {
-                      setErr(null);
-                      try {
-                        await fillFxFromHistory();
-                      } catch (e: any) {
-                        setErr(e.message);
-                      }
-                    }}
-                  >
-                    用历史
-                  </button>
-                </div>
-                <div className="mt-1 text-xs text-zinc-500">基准币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
+              <div className="w-40">
+                <label className="text-xs text-zinc-600">汇率</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={String(draftFx)}
+                  onChange={(e) => setDraftFx(e.target.value === "" ? 1 : Number(e.target.value) || 1)}
+                  type="number"
+                  step="0.0001"
+                />
               </div>
-              <div>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                disabled={!draftDate.trim() || !draftCurrency.trim()}
+                onClick={async () => {
+                  setErr(null);
+                  try {
+                    await fillFxFromHistory();
+                  } catch (e: any) {
+                    setErr(e.message);
+                  }
+                }}
+                type="button"
+              >
+                用历史
+              </button>
+              <div className="min-w-[260px] flex-1">
                 <label className="text-xs text-zinc-600">摘要</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftMemo} onChange={(e) => setDraftMemo(e.target.value)} />
               </div>
             </div>
+            <div className="mt-1 text-xs text-zinc-500">基准币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
 
             <div className="mt-4 overflow-auto rounded-lg border border-zinc-100">
               <table className="w-full text-sm">
@@ -445,7 +551,7 @@ export default function Journal() {
                             value={l.debitTxn}
                             onChange={(e) => {
                               const next = [...draftLines];
-                              next[idx] = { ...l, debitTxn: Number(e.target.value) || 0 };
+                              next[idx] = { ...l, debitTxn: e.target.value };
                               setDraftLines(next);
                             }}
                             type="number"
@@ -509,7 +615,7 @@ export default function Journal() {
                             value={l.creditTxn}
                             onChange={(e) => {
                               const next = [...draftLines];
-                              next[idx] = { ...l, creditTxn: Number(e.target.value) || 0 };
+                              next[idx] = { ...l, creditTxn: e.target.value };
                               setDraftLines(next);
                             }}
                             type="number"
@@ -576,10 +682,23 @@ export default function Journal() {
               <div className="flex items-center gap-2">
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                  onClick={() => setDraftLines([...draftLines, { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 }])}
+                  onClick={() => setDraftLines([...draftLines, { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" }])}
                 >
                   增加行
                 </button>
+                {editingEntryId ? (
+                  <button
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                    disabled={busy}
+                    onClick={() => {
+                      setErr(null);
+                      resetDraftEntry();
+                    }}
+                    type="button"
+                  >
+                    取消编辑
+                  </button>
+                ) : null}
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                   disabled={busy}
@@ -664,8 +783,8 @@ export default function Journal() {
                         invDetails.length && invLineIdx != null
                           ? invDetails.map((d) =>
                               invMode === "receipt"
-                                ? { moveType: "receipt", itemId: d.itemId, qty: d.qty, unitCostTxn: d.unitCostTxn }
-                                : { moveType: "shipment", itemId: d.itemId, qty: d.qty },
+                                ? { moveType: "receipt", itemId: d.itemId, qty: Number(d.qty) || 0, unitCostTxn: Number(d.unitCostTxn) || 0 }
+                                : { moveType: "shipment", itemId: d.itemId, qty: Number(d.qty) || 0 },
                             )
                           : undefined;
 
@@ -679,45 +798,47 @@ export default function Journal() {
                           if (invMode === "receipt") {
                             const totalTxn = Math.round(invDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100;
                             if (invDefaultSide === "credit") {
-                              line.creditTxn = totalTxn;
-                              line.debitTxn = 0;
+                              line.creditTxn = totalTxn > 0 ? String(totalTxn) : "";
+                              line.debitTxn = "";
                             } else {
-                              line.debitTxn = totalTxn;
-                              line.creditTxn = 0;
+                              line.debitTxn = totalTxn > 0 ? String(totalTxn) : "";
+                              line.creditTxn = "";
                             }
                           } else {
                             const totalBase = invConfirmed?.quoteBase ?? 0;
                             const totalTxn = Math.round((totalBase / (draftFx || 1)) * 100) / 100;
                             if (invDefaultSide === "debit") {
-                              line.debitTxn = totalTxn;
-                              line.creditTxn = 0;
+                              line.debitTxn = totalTxn > 0 ? String(totalTxn) : "";
+                              line.creditTxn = "";
                             } else {
-                              line.creditTxn = totalTxn;
-                              line.debitTxn = 0;
+                              line.creditTxn = totalTxn > 0 ? String(totalTxn) : "";
+                              line.debitTxn = "";
                             }
                           }
                         }
                       }
 
-                      const resp = await api<{ entry: { id: string } }>("/api/journals/post", {
-                        method: "POST",
-                        json: {
-                          entryDate: draftDate,
-                          voucherNo: draftVoucherNo.trim() || undefined,
-                          currency: draftCurrency,
-                          fxRate: draftFx,
-                          memo: draftMemo,
-                          inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
-                          inventoryDetails,
-                          lines: effectiveLines.map((l) => ({
-                            accountId: l.accountId,
-                            description: l.description || undefined,
-                            costCenterId: l.costCenterId ? l.costCenterId : null,
-                            debitTxn: Number(l.debitTxn) || 0,
-                            creditTxn: Number(l.creditTxn) || 0,
-                          })),
-                        },
-                      });
+                      const reqBody = {
+                        entryDate: draftDate,
+                        voucherNo: draftVoucherNo.trim() || undefined,
+                        currency: draftCurrency,
+                        fxRate: draftFx,
+                        memo: draftMemo,
+                        inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
+                        inventoryDetails,
+                        lines: effectiveLines.map((l) => ({
+                          accountId: l.accountId,
+                          description: l.description || undefined,
+                          costCenterId: l.costCenterId ? l.costCenterId : null,
+                          debitTxn: Number(l.debitTxn) || 0,
+                          creditTxn: Number(l.creditTxn) || 0,
+                        })),
+                      };
+
+                      const resp = editingEntryId
+                        ? await api<{ entry: { id: string } }>(`/api/journals/${encodeURIComponent(editingEntryId)}` as any, { method: "PUT", json: reqBody })
+                        : await api<{ entry: { id: string } }>("/api/journals/post", { method: "POST", json: reqBody });
+
                       resetDraftEntry();
                       await refresh();
                       setSelectedId(resp.entry.id);
@@ -728,7 +849,7 @@ export default function Journal() {
                     }
                   }}
                 >
-                  过账
+                  {editingEntryId ? "保存" : "过账"}
                 </button>
               </div>
             </div>
@@ -789,7 +910,7 @@ export default function Journal() {
                       })()}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {e.status === "draft" ? (
+                      <div className="flex items-center justify-end gap-2">
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
                           disabled={busy}
@@ -797,7 +918,22 @@ export default function Journal() {
                           onClick={async (ev) => {
                             ev.preventDefault();
                             ev.stopPropagation();
-                            const ok = window.confirm("确认删除该草稿凭证？");
+                            await startEditEntry(e.id);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                          disabled={busy}
+                          type="button"
+                          onClick={async (ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            const ok = window.confirm(
+                              e.status === "posted" ? "确认删除该已过账凭证？删除会回滚库存/FIFO 并影响报表。" : "确认删除该草稿凭证？",
+                            );
                             if (!ok) return;
                             setBusy(true);
                             setErr(null);
@@ -812,9 +948,7 @@ export default function Journal() {
                         >
                           删除
                         </button>
-                      ) : (
-                        "-"
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -831,48 +965,41 @@ export default function Journal() {
                   <div className="text-sm text-zinc-600">
                     {detail.entry.entryDate} · {detail.entry.voucherNo || "-"} · {detail.entry.status} · {detail.entry.currency} @ {detail.entry.fxRate}
                   </div>
-                  {detail.entry.status === "draft" ? (
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
-                        disabled={busy}
-                        onClick={async () => {
-                          const ok = window.confirm("确认删除该草稿凭证？");
-                          if (!ok) return;
-                          setBusy(true);
-                          setErr(null);
-                          try {
-                            await deleteEntry(detail.entry.id);
-                          } catch (e: any) {
-                            setErr(e.message);
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        删除
-                      </button>
-                      <button
-                        className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
-                        disabled={busy}
-                        onClick={async () => {
-                          setBusy(true);
-                          setErr(null);
-                          try {
-                            await api(`/api/journals/${detail.entry.id}/post`, { method: "POST" });
-                            await loadDetail(detail.entry.id);
-                            await refresh();
-                          } catch (e: any) {
-                            setErr(e.message);
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        过账
-                      </button>
-                    </div>
-                  ) : null}
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
+                      disabled={busy}
+                      onClick={async () => {
+                        await startEditEntry(detail.entry.id);
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                      type="button"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
+                      disabled={busy}
+                      onClick={async () => {
+                        const ok = window.confirm(
+                          detail.entry.status === "posted" ? "确认删除该已过账凭证？删除会回滚库存/FIFO 并影响报表。" : "确认删除该草稿凭证？",
+                        );
+                        if (!ok) return;
+                        setBusy(true);
+                        setErr(null);
+                        try {
+                          await deleteEntry(detail.entry.id);
+                        } catch (e: any) {
+                          setErr(e.message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                      type="button"
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-auto rounded-lg border border-zinc-100">
@@ -1111,8 +1238,7 @@ export default function Journal() {
                             step="1"
                             value={r.qty}
                             onChange={(e) => {
-                              const nextQty = Math.trunc(Number(e.target.value) || 0);
-                              const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, qty: nextQty } : x));
+                              const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, qty: e.target.value } : x));
                               setInvEditingDetails(next);
                             }}
                           />
@@ -1125,7 +1251,7 @@ export default function Journal() {
                               step="0.01"
                               value={r.unitCostTxn}
                               onChange={(e) => {
-                                const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, unitCostTxn: Number(e.target.value) || 0 } : x));
+                                const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, unitCostTxn: e.target.value } : x));
                                 setInvEditingDetails(next);
                               }}
                             />
@@ -1186,7 +1312,7 @@ export default function Journal() {
                 {invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.err) ? (
                   <div className="mt-1 text-sm text-red-700">存在库存不足或数据错误，请调整商品/数量。</div>
                 ) : null}
-                {invEditingDetails.some((r) => r.itemId && r.qty > 0 && invQuoteByRow[r.rowId]?.base == null && !invQuoteByRow[r.rowId]?.err) ? (
+                {invEditingDetails.some((r) => r.itemId && (Number(r.qty) || 0) > 0 && invQuoteByRow[r.rowId]?.base == null && !invQuoteByRow[r.rowId]?.err) ? (
                   <div className="mt-1 text-xs text-zinc-500">正在计算 FIFO 成本…</div>
                 ) : null}
               </div>
@@ -1198,7 +1324,7 @@ export default function Journal() {
                 onClick={() => {
                   setInvEditingDetails([
                     ...invEditingDetails,
-                    { rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: 1, unitCostTxn: invMode === "receipt" ? 1 : 0 },
+                    { rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: "1", unitCostTxn: invMode === "receipt" ? "1" : "" },
                   ]);
                 }}
                 type="button"
@@ -1218,7 +1344,7 @@ export default function Journal() {
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
                   disabled={
                     busy ||
-                    invEditingDetails.some((r) => !r.itemId || r.qty <= 0 || (invMode === "receipt" && r.unitCostTxn <= 0)) ||
+                    invEditingDetails.some((r) => !r.itemId || (Number(r.qty) || 0) <= 0 || (invMode === "receipt" && (Number(r.unitCostTxn) || 0) <= 0)) ||
                     (invMode === "receipt"
                       ? Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100
                       : invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.base == null || invQuoteByRow[r.rowId]?.err))
