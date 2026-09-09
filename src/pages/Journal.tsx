@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -36,6 +37,7 @@ type EntryDetail = {
 };
 
 export default function Journal() {
+  const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
@@ -365,11 +367,16 @@ export default function Journal() {
                           className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
                           value={l.accountId}
                           onChange={(e) => {
+                            if (e.target.value === "__new_account__") {
+                              navigate("/settings");
+                              return;
+                            }
                             const next = [...draftLines];
                             next[idx] = { ...l, accountId: e.target.value };
                             setDraftLines(next);
                           }}
                         >
+                          <option value="__new_account__">+ 新增科目</option>
                           <option value="">请选择</option>
                           {accounts.map((a) => (
                             <option key={a.id} value={a.id}>
