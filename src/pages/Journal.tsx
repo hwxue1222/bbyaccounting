@@ -107,6 +107,9 @@ export default function Journal() {
     setInvConfirmed(null);
     setInvLineIdx(null);
     setInvDefaultSide("debit");
+    setInvEditingDetails([]);
+    setInvQuoteByRow({});
+    setInvModalOpen(false);
   }
 
   const invLine = useMemo(() => {
@@ -623,6 +626,17 @@ export default function Journal() {
                   onClick={() => setDraftLines([...draftLines, { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 }])}
                 >
                   增加行
+                </button>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    resetDraftEntry();
+                  }}
+                  type="button"
+                >
+                  清空
                 </button>
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
