@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import { useTr } from "@/lib/tr";
 
 type Account = { id: string; code: string; name: string };
 type CostCenter = { id: string; code: string; name: string };
@@ -40,6 +41,7 @@ type EntryDetail = {
 export default function Journal() {
   const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
+  const tr = useTr();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -71,9 +73,21 @@ export default function Journal() {
   const [invExpectedTxn, setInvExpectedTxn] = useState<number>(0);
   const [invExpectedBase, setInvExpectedBase] = useState<number>(0);
   const [invDetails, setInvDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
-  const [invConfirmed, setInvConfirmed] = useState<null | { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number; quoteBase: number }>(null);
+  const [invConfirmed, setInvConfirmed] = useState<
+    null | {
+      mode: "receipt" | "shipment";
+      expectedTxn: number;
+      expectedBase: number;
+      quoteBase: number;
+      shipmentInventoryAccountId?: string;
+      shipmentCogsAccountId?: string;
+    }
+  >(null);
   const [invLineIdx, setInvLineIdx] = useState<number | null>(null);
   const [invDefaultSide, setInvDefaultSide] = useState<"debit" | "credit">("debit");
+
+  const [shipmentInventoryAccountId, setShipmentInventoryAccountId] = useState<string>("");
+  const [shipmentCogsAccountId, setShipmentCogsAccountId] = useState<string>("");
 
   const [invEditingDetails, setInvEditingDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
   const [invQuoteByRow, setInvQuoteByRow] = useState<Record<string, { base: number | null; err: string | null }>>({});
@@ -98,6 +112,8 @@ export default function Journal() {
     setInvConfirmed(null);
     setInvLineIdx(null);
     setInvDefaultSide("debit");
+    setShipmentInventoryAccountId("");
+    setShipmentCogsAccountId("");
   }
 
   const invLine = useMemo(() => {
@@ -268,7 +284,7 @@ export default function Journal() {
   }, [selectedId]);
 
   return (
-    <AppShell title="分录">
+    <AppShell title={tr("分录", "Journals")}>
       <div className="space-y-4">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -669,15 +685,7 @@ export default function Journal() {
 
                       if (invMode === "shipment") {
                         if (existingTxn > 0) {
-                          if (Math.round(expectedBaseFromExisting * 100) / 100 !== Math.round(computedShipmentBase * 100) / 100) {
-                            setErr("库存出库 FIFO 成本合计必须与该行金额一致（以基准币比较）。");
-                            try {
-                              openInventoryDetailsModal(invLineIdx, "shipment", invDefaultSide);
-                            } catch {
-                              // ignore
-                            }
-                            return;
-                          }
+                        void expectedBaseFromExisting;
                         }
                       }
 
@@ -740,6 +748,8 @@ export default function Journal() {
                           memo: draftMemo,
                           inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
                           inventoryDetails,
+                          shipmentInventoryAccountId: invMode === "shipment" ? shipmentInventoryAccountId || undefined : undefined,
+                          shipmentCogsAccountId: invMode === "shipment" ? shipmentCogsAccountId || undefined : undefined,
                           lines: effectiveLines.map((l) => ({
                             accountId: l.accountId,
                             description: l.description || undefined,
@@ -891,7 +901,7 @@ export default function Journal() {
 
       {invModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-xl">
+          <div className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <div className="text-sm font-semibold">库存明细</div>
@@ -1002,15 +1012,56 @@ export default function Journal() {
               </div>
             </div>
 
+            {invMode === "shipment" ? (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-xs text-zinc-600">库存科目（贷）</div>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={shipmentInventoryAccountId}
+                    onChange={(e) => {
+                      setShipmentInventoryAccountId(e.target.value);
+                      setInvConfirmed(null);
+                    }}
+                  >
+                    <option value="">请选择</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-xs text-zinc-600">成本科目（借）</div>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={shipmentCogsAccountId}
+                    onChange={(e) => {
+                      setShipmentCogsAccountId(e.target.value);
+                      setInvConfirmed(null);
+                    }}
+                  >
+                    <option value="">请选择</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-              <table className="w-full text-sm">
+              <table className="w-full table-fixed text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-600">
                   <tr>
-                    <th className="px-3 py-2 text-left">商品</th>
-                    <th className="px-3 py-2 text-right">数量</th>
+                    <th className="w-80 px-3 py-2 text-left">商品</th>
+                    <th className="w-24 px-3 py-2 text-right">数量</th>
                     {invMode === "receipt" ? <th className="px-3 py-2 text-right">单价({draftCurrency})</th> : <th className="px-3 py-2 text-right">FIFO 成本({baseCurrency})</th>}
-                    <th className="px-3 py-2 text-right">金额</th>
-                    <th className="px-3 py-2 text-left">操作</th>
+                    <th className="w-36 px-3 py-2 text-right">{invMode === "shipment" ? `总成本(${draftCurrency})` : "金额"}</th>
+                    <th className="w-20 px-3 py-2 text-left">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1035,7 +1086,7 @@ export default function Journal() {
                             <option value="">请选择</option>
                             {inventoryItems.map((it) => (
                               <option key={it.id} value={it.id}>
-                                {(it.sku ? `${it.sku} ` : "") + it.name}
+                                {((it.sku ? `${it.sku} ` : "") + it.name).replace(/\s+/g, " ").trim()}
                               </option>
                             ))}
                           </select>
@@ -1109,17 +1160,21 @@ export default function Journal() {
               </div>
             ) : (
               <div className="mt-3 text-sm">
-                <div>
-                  FIFO 合计：{invEditingTotals.totalQuoteBase.toFixed(2)} {baseCurrency}；分录金额：{invExpectedBase.toFixed(2)} {baseCurrency}
-                </div>
+                {(() => {
+                  const totalCostBase = invEditingTotals.totalQuoteBase;
+                  const totalCostTxn = Math.round((totalCostBase / (draftFx || 1)) * 100) / 100;
+                  const profitTxn = Math.round((invExpectedTxn - totalCostTxn) * 100) / 100;
+                  return (
+                    <div>
+                      分录金额 {invExpectedTxn.toFixed(2)} {draftCurrency} − 总成本 {totalCostTxn.toFixed(2)} {draftCurrency} = 利润 {profitTxn.toFixed(2)} {draftCurrency}
+                    </div>
+                  );
+                })()}
                 {invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.err) ? (
                   <div className="mt-1 text-sm text-red-700">存在库存不足或数据错误，请调整商品/数量。</div>
                 ) : null}
                 {invEditingDetails.some((r) => r.itemId && r.qty > 0 && invQuoteByRow[r.rowId]?.base == null && !invQuoteByRow[r.rowId]?.err) ? (
                   <div className="mt-1 text-xs text-zinc-500">正在计算 FIFO 成本…</div>
-                ) : null}
-                {Math.round(invEditingTotals.totalQuoteBase * 100) / 100 !== Math.round(invExpectedBase * 100) / 100 ? (
-                  <div className="mt-1 text-sm text-red-700">FIFO 合计必须与绑定的分录行金额一致（以基准币比较）。</div>
                 ) : null}
               </div>
             )}
@@ -1153,12 +1208,18 @@ export default function Journal() {
                     invEditingDetails.some((r) => !r.itemId || r.qty <= 0 || (invMode === "receipt" && r.unitCostTxn <= 0)) ||
                     (invMode === "receipt"
                       ? Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100
-                      : invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.base == null || invQuoteByRow[r.rowId]?.err) ||
-                        Math.round(invEditingTotals.totalQuoteBase * 100) / 100 !== Math.round(invExpectedBase * 100) / 100)
+                      : !shipmentInventoryAccountId || !shipmentCogsAccountId || invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.base == null || invQuoteByRow[r.rowId]?.err))
                   }
                   onClick={() => {
                     setInvDetails(invEditingDetails);
-                    setInvConfirmed({ mode: invMode, expectedTxn: invExpectedTxn, expectedBase: invExpectedBase, quoteBase: invMode === "shipment" ? invEditingTotals.totalQuoteBase : 0 });
+                    setInvConfirmed({
+                      mode: invMode,
+                      expectedTxn: invExpectedTxn,
+                      expectedBase: invExpectedBase,
+                      quoteBase: invMode === "shipment" ? invEditingTotals.totalQuoteBase : 0,
+                      shipmentInventoryAccountId: invMode === "shipment" ? shipmentInventoryAccountId : undefined,
+                      shipmentCogsAccountId: invMode === "shipment" ? shipmentCogsAccountId : undefined,
+                    });
                     setInvModalOpen(false);
                   }}
                   type="button"

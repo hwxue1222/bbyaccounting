@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import { useTr } from "@/lib/tr";
 
 type Account = { id: string; code: string; name: string };
 type Item = { id: string; sku: string | null; name: string; uom: string; inventoryAccountId: string | null; cogsAccountId: string | null };
@@ -24,6 +25,7 @@ type Move = {
 
 export default function Inventory() {
   const { activeOrgId, orgSwitching } = useAuthStore();
+  const tr = useTr();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [itemSku, setItemSku] = useState("");
@@ -32,7 +34,6 @@ export default function Inventory() {
   const [stock, setStock] = useState<{ qty: number; valueBase: number } | null>(null);
 
   const [moveStatus, setMoveStatus] = useState<"" | "draft" | "posted">("");
-  const [movesOnlySelectedItem, setMovesOnlySelectedItem] = useState(true);
   const [moves, setMoves] = useState<Move[]>([]);
 
   const [receipt, setReceipt] = useState({ date: new Date().toISOString().slice(0, 10), qty: 1, unitCostTxn: 10, currency: "SGD", fxRate: 1, offsetAccountId: "" });
@@ -58,8 +59,7 @@ export default function Inventory() {
     const qs = new URLSearchParams();
     qs.set("limit", "100");
     if (moveStatus) qs.set("status", moveStatus);
-    const effectiveItemId = movesOnlySelectedItem ? selectedItemId : "";
-    if (effectiveItemId) qs.set("itemId", effectiveItemId);
+    if (selectedItemId) qs.set("itemId", selectedItemId);
     const r = await api<{ moves: any[] }>(`/api/inventory/moves?${qs.toString()}`);
     setMoves(r.moves as any);
   }
@@ -97,56 +97,58 @@ export default function Inventory() {
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     refreshMoves().catch((e) => setErr(e.message));
-  }, [activeOrgId, orgSwitching, selectedItemId, moveStatus, movesOnlySelectedItem]);
+  }, [activeOrgId, orgSwitching, selectedItemId, moveStatus]);
 
   return (
-    <AppShell title="库存 FIFO">
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-semibold">库存商品</div>
-          <div className="mt-3 flex gap-2">
-            <input className="w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemSku} onChange={(e) => setItemSku(e.target.value)} placeholder="编号" />
-            <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="商品名称" />
-            <button
-              className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-              disabled={busy || !itemSku.trim() || !itemName.trim()}
-              onClick={async () => {
-                setBusy(true);
-                setErr(null);
-                try {
-                  await api("/api/inventory/items", { method: "POST", json: { sku: itemSku, name: itemName, uom: "EA" } });
-                  setItemSku("");
-                  setItemName("");
-                  await refresh();
-                } catch (e: any) {
-                  setErr(e.message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              新增
-            </button>
+    <AppShell title={tr("库存 FIFO", "Inventory FIFO")}>
+      <div className={panel === "moves" ? "space-y-4" : "grid items-start gap-4 lg:grid-cols-2"}>
+        {panel !== "moves" ? (
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold">库存商品</div>
+            <div className="mt-3 flex gap-2">
+              <input className="w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemSku} onChange={(e) => setItemSku(e.target.value)} placeholder="编号" />
+              <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="商品名称" />
+              <button
+                className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                disabled={busy || !itemSku.trim() || !itemName.trim()}
+                onClick={async () => {
+                  setBusy(true);
+                  setErr(null);
+                  try {
+                    await api("/api/inventory/items", { method: "POST", json: { sku: itemSku, name: itemName, uom: "EA" } });
+                    setItemSku("");
+                    setItemName("");
+                    await refresh();
+                  } catch (e: any) {
+                    setErr(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                新增
+              </button>
+            </div>
+            <div className="mt-3">
+              <label className="text-xs text-zinc-600">选择商品</label>
+              <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={selectedItemId} onChange={(e) => setSelectedItemId(e.target.value)}>
+                <option value="">请选择</option>
+                {items.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {(it.sku ? `${it.sku} ` : "") + it.name}
+                  </option>
+                ))}
+              </select>
+              {stock ? (
+                <div className="mt-2 rounded-lg bg-zinc-50 p-3 text-sm">
+                  <div>期末数量：{Math.trunc(stock.qty)}</div>
+                  <div>期末金额：{stock.valueBase.toFixed(2)}</div>
+                </div>
+              ) : null}
+            </div>
+            {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
           </div>
-          <div className="mt-3">
-            <label className="text-xs text-zinc-600">选择商品</label>
-            <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={selectedItemId} onChange={(e) => setSelectedItemId(e.target.value)}>
-              <option value="">请选择</option>
-              {items.map((it) => (
-                <option key={it.id} value={it.id}>
-                  {(it.sku ? `${it.sku} ` : "") + it.name}
-                </option>
-              ))}
-            </select>
-            {stock ? (
-              <div className="mt-2 rounded-lg bg-zinc-50 p-3 text-sm">
-                <div>期末数量：{Math.trunc(stock.qty)}</div>
-                <div>期末金额：{stock.valueBase.toFixed(2)}</div>
-              </div>
-            ) : null}
-          </div>
-          {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
-        </div>
+        ) : null}
 
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
@@ -310,6 +312,21 @@ export default function Inventory() {
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-3">
+              <div className="min-w-60">
+                <div className="text-xs text-zinc-600">商品</div>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                  value={selectedItemId}
+                  onChange={(e) => setSelectedItemId(e.target.value)}
+                >
+                  <option value="">全部商品</option>
+                  {items.map((it) => (
+                    <option key={it.id} value={it.id}>
+                      {(it.sku ? `${it.sku} ` : "") + it.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <div className="text-xs text-zinc-600">状态</div>
                 <div className="mt-1 rounded-xl border border-zinc-200 bg-white p-1">
@@ -350,25 +367,21 @@ export default function Inventory() {
                   </div>
                 </div>
               </div>
-              <label className="mt-5 flex items-center gap-2 text-sm">
-                <input type="checkbox" className="h-4 w-4" checked={movesOnlySelectedItem} onChange={(e) => setMovesOnlySelectedItem(e.target.checked)} />
-                仅选中商品
-              </label>
               <div className="mt-5 text-xs text-zinc-500">draft=来自分录/未过账；posted=已过账并写入 FIFO</div>
             </div>
 
-            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-              <table className="w-full text-sm">
+            <div className="mt-3 overflow-x-auto rounded-lg border border-zinc-100">
+              <table className="w-full table-fixed text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-600">
                   <tr>
-                    <th className="px-3 py-2 text-left">日期</th>
-                    <th className="px-3 py-2 text-left">类型</th>
+                    <th className="w-28 px-3 py-2 text-left">日期</th>
+                    <th className="w-20 px-3 py-2 text-left">类型</th>
                     <th className="px-3 py-2 text-left">商品</th>
-                    <th className="px-3 py-2 text-right">数量</th>
-                    <th className="px-3 py-2 text-right">单价</th>
-                    <th className="px-3 py-2 text-right">金额</th>
-                    <th className="px-3 py-2 text-left">状态</th>
-                    <th className="px-3 py-2 text-left">凭证</th>
+                    <th className="w-16 px-3 py-2 text-right">数量</th>
+                    <th className="w-24 px-3 py-2 text-right">单价</th>
+                    <th className="w-24 px-3 py-2 text-right">金额</th>
+                    <th className="hidden w-20 px-3 py-2 text-left md:table-cell">状态</th>
+                    <th className="hidden w-16 px-3 py-2 text-left lg:table-cell">凭证</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -376,16 +389,17 @@ export default function Inventory() {
                     const qty = Number(m.qty);
                     const unitTxn = m.unitCostTxn == null ? null : Number(m.unitCostTxn);
                     const amountTxn = unitTxn == null ? null : Math.round(qty * unitTxn * 100) / 100;
+                    const itemLabel = ((m.itemSku ? `${m.itemSku} ` : "") + m.itemName).replace(/\s+/g, " ").trim();
                     return (
                       <tr key={m.id} className="border-t border-zinc-100">
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveDate}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveType}</td>
-                        <td className="px-3 py-2">{(m.itemSku ? `${m.itemSku} ` : "") + m.itemName}</td>
+                        <td className="px-3 py-2 break-words">{itemLabel}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{Number.isFinite(qty) ? String(Math.trunc(qty)) : m.qty}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{unitTxn == null ? "-" : `${unitTxn.toFixed(2)} ${m.currency || ""}`}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{amountTxn == null ? "-" : `${amountTxn.toFixed(2)} ${m.currency || ""}`}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{m.status}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{m.entryId ? <a className="text-blue-700 hover:underline" href="/journal">打开</a> : "-"}</td>
+                        <td className="hidden px-3 py-2 whitespace-nowrap md:table-cell">{m.status}</td>
+                        <td className="hidden px-3 py-2 whitespace-nowrap lg:table-cell">{m.entryId ? <a className="text-blue-700 hover:underline" href="/journal">打开</a> : "-"}</td>
                       </tr>
                     );
                   })}

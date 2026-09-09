@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import { useTr } from "@/lib/tr";
 
 type MemberRow = {
   id: string;
@@ -14,6 +15,7 @@ type MemberRow = {
 
 export default function Users() {
   const { orgs, activeOrgId, orgSwitching, createInvite } = useAuthStore();
+  const tr = useTr();
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
   const canManage = active?.role === "owner" || active?.role === "admin";
 
@@ -37,7 +39,7 @@ export default function Users() {
   }, [activeOrgId, orgSwitching]);
 
   return (
-    <AppShell title="用户管理">
+    <AppShell title={tr("用户管理", "User Management")}>
       {!canManage ? (
         <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm">只有 Owner/Admin 可以管理用户。</div>
       ) : (

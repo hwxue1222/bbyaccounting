@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import { useTr } from "@/lib/tr";
 
 type Account = { id: string; code: string; name: string };
 type Asset = {
@@ -36,6 +37,7 @@ type ScheduleTotals = Omit<ScheduleRow, "assetId" | "name" | "acquisitionDate" |
 
 export default function FixedAssets() {
   const { activeOrgId, orgSwitching, orgs } = useAuthStore();
+  const tr = useTr();
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
   const baseCurrency = active?.baseCurrency || "BASE";
   const [params] = useSearchParams();
@@ -138,7 +140,7 @@ export default function FixedAssets() {
   }, [activeOrgId, params]);
 
   return (
-    <AppShell title="固定资产">
+    <AppShell title={tr("固定资产", "Fixed Assets")}>
       <div className="space-y-4">
         <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
           <div className="grid grid-cols-5 gap-1">

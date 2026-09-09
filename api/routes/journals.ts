@@ -117,6 +117,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     memo: z.string().optional(),
     inventoryDetails: inventoryDetailsSchema,
     inventoryLinkLineNo: z.number().int().positive().optional(),
+    shipmentInventoryAccountId: z.string().uuid().optional(),
+    shipmentCogsAccountId: z.string().uuid().optional(),
     lines: z.array(lineSchema).min(2),
   });
 
@@ -130,6 +132,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const { entryDate, currency, fxRate, memo, lines } = parsed.data;
   const inventoryDetails = parsed.data.inventoryDetails;
   const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
+  const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
+  const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
   const normalizedLines = lines.map((l, idx) => {
@@ -162,7 +166,6 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   let inventoryMode: "none" | "receipt" | "shipment" = "none";
   let linkLineNo: number | null = null;
-  let expectedShipmentBase: number | null = null;
 
   if (effectiveInventoryImpact) {
     if (!inventoryDetails?.length) {
@@ -217,12 +220,15 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         res.status(400).json({ success: false, error: "Missing shipment inventoryDetails" });
         return;
       }
+      if (!shipmentInventoryAccountId || !shipmentCogsAccountId) {
+        res.status(400).json({ success: false, error: "Missing shipment cost accounts" });
+        return;
+      }
       const expectedBase = debitBase > 0 ? debitBase : creditBase;
       if (expectedBase <= 0) {
         res.status(400).json({ success: false, error: "Inventory shipment linked line amount must be greater than 0" });
         return;
       }
-      expectedShipmentBase = expectedBase;
     }
   }
 
@@ -344,9 +350,31 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             `;
           }
 
-          if (expectedShipmentBase == null || round2(totalBaseAll) !== round2(expectedShipmentBase)) {
-            throw new Error(`Inventory cost mismatch: entry ${expectedShipmentBase || 0} vs FIFO ${totalBaseAll}`);
+          if (!shipmentInventoryAccountId || !shipmentCogsAccountId) {
+            throw new Error("Missing shipment cost accounts");
           }
+
+          const costBase = round2(totalBaseAll);
+          const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
+          const nextLineNo = normalizedLines.length + 1;
+          await trx`
+            INSERT INTO journal_lines (
+              org_id, entry_id, line_no, account_id, description, cost_center_id,
+              debit_txn, credit_txn, debit_base, credit_base
+            ) VALUES (
+              ${orgId}, ${entry.id}, ${nextLineNo}, ${shipmentCogsAccountId}, 'COGS (FIFO)', NULL,
+              ${costTxn}, 0, ${costBase}, 0
+            )
+          `;
+          await trx`
+            INSERT INTO journal_lines (
+              org_id, entry_id, line_no, account_id, description, cost_center_id,
+              debit_txn, credit_txn, debit_base, credit_base
+            ) VALUES (
+              ${orgId}, ${entry.id}, ${nextLineNo + 1}, ${shipmentInventoryAccountId}, 'Inventory (FIFO)', NULL,
+              0, ${costTxn}, 0, ${costBase}
+            )
+          `;
         }
       }
 
@@ -356,7 +384,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     res.status(200).json({ success: true, data: { entry: created } });
   } catch (e: any) {
     const msg = typeof e?.message === "string" ? e.message : "Post failed";
-    if (msg.includes("Insufficient stock") || msg.includes("Inventory cost mismatch") || msg.includes("Inventory")) {
+    if (msg.includes("Insufficient stock") || msg.includes("Missing shipment cost accounts") || msg.includes("Inventory cost mismatch") || msg.includes("Inventory")) {
       res.status(400).json({ success: false, error: msg });
       return;
     }

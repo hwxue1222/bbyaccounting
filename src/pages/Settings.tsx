@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import { useTr } from "@/lib/tr";
 
 type Account = { id: string; code: string; name: string; type: string; normalBalance: string; isActive?: boolean };
 type CostCenter = { id: string; code: string; name: string };
@@ -10,6 +11,7 @@ type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: numb
 
 export default function Settings() {
   const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg } = useAuthStore();
+  const tr = useTr();
   const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
   const [rightTab, setRightTab] = useState<"accounts" | "costCenters" | "currencies" | "fxRates">("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -80,7 +82,7 @@ export default function Settings() {
   }, [activeOrgId, orgSwitching]);
 
   return (
-    <AppShell title="设置">
+    <AppShell title={tr("设置", "Settings")}>
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">

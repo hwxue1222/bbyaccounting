@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import { useTr } from "@/lib/tr";
 
 type Account = { id: string; code: string; name: string; type: string };
 type CostCenter = { id: string; code: string; name: string };
 
 export default function Reports() {
   const { activeOrgId, orgSwitching } = useAuthStore();
+  const tr = useTr();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [tab, setTab] = useState<"tb" | "pl" | "bs" | "gl">("tb");
+  const [hideZero, setHideZero] = useState(true);
   const [start, setStart] = useState(() => {
     const d = new Date();
     const s = new Date(d.getFullYear(), d.getMonth(), 1);
@@ -80,8 +83,38 @@ export default function Reports() {
     return null;
   }, [tab, start, end, asOf, costCenterId]);
 
+  const displayRows = useMemo(() => {
+    if (!hideZero) return rows;
+
+    if (tab === "gl") return rows;
+
+    if (tab === "tb") {
+      return rows.filter((r) => {
+        const nums = [
+          Number(r.openingDebit ?? 0),
+          Number(r.openingCredit ?? 0),
+          Number(r.periodDebit ?? 0),
+          Number(r.periodCredit ?? 0),
+          Number(r.closingDebit ?? 0),
+          Number(r.closingCredit ?? 0),
+        ];
+        return nums.some((n) => Math.round(n * 100) / 100 !== 0);
+      });
+    }
+
+    if (tab === "pl" || tab === "bs") {
+      return rows.filter((r) => {
+        if (r.isHeader || r.isTotal) return true;
+        const amt = Number(r.amount ?? 0);
+        return Math.round(amt * 100) / 100 !== 0;
+      });
+    }
+
+    return rows;
+  }, [rows, tab, hideZero]);
+
   return (
-    <AppShell title="报表">
+    <AppShell title={tr("报表", "Reports")}>
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-2">
@@ -154,6 +187,11 @@ export default function Reports() {
               </option>
             ))}
           </select>
+
+          <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
+            <input type="checkbox" className="h-4 w-4" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
+            {tr("不显示金额为 0 的科目", "Hide zero-amount accounts")}
+          </label>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
@@ -193,7 +231,7 @@ export default function Reports() {
               )}
             </thead>
             <tbody>
-              {rows.map((r, idx) =>
+              {displayRows.map((r, idx) =>
                 tab === "gl" ? (
                   <tr key={idx} className="border-t border-zinc-100">
                     {!accountId ? <td className="px-3 py-2">{r.accountCode ? `${r.accountCode} ${r.accountName || ""}`.trim() : ""}</td> : null}
