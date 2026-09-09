@@ -387,15 +387,25 @@ export default function Inventory() {
                 <tbody>
                   {moves.map((m) => {
                     const qty = Number(m.qty);
+                    const isOut = m.moveType === "shipment";
+                    const typeLabel = m.moveType === "shipment" ? "out" : m.moveType === "receipt" ? "in" : m.moveType;
                     const unitTxn = m.unitCostTxn == null ? null : Number(m.unitCostTxn);
-                    const amountTxn = unitTxn == null ? null : Math.round(qty * unitTxn * 100) / 100;
+                    const amountTxn = unitTxn == null ? null : Math.round(Math.abs(qty) * unitTxn * 100) / 100;
                     const itemLabel = ((m.itemSku ? `${m.itemSku} ` : "") + m.itemName).replace(/\s+/g, " ").trim();
                     return (
                       <tr key={m.id} className="border-t border-zinc-100">
                         <td className="px-3 py-2 whitespace-nowrap">{m.moveDate}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">{m.moveType}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{typeLabel}</td>
                         <td className="px-3 py-2 break-words">{itemLabel}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">{Number.isFinite(qty) ? String(Math.trunc(qty)) : m.qty}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          {Number.isFinite(qty) ? (
+                            <span className={isOut ? "text-red-700" : ""}>
+                              {String(isOut ? -Math.trunc(Math.abs(qty)) : Math.trunc(qty))}
+                            </span>
+                          ) : (
+                            m.qty
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{unitTxn == null ? "-" : `${unitTxn.toFixed(2)} ${m.currency || ""}`}</td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">{amountTxn == null ? "-" : `${amountTxn.toFixed(2)} ${m.currency || ""}`}</td>
                         <td className="hidden px-3 py-2 whitespace-nowrap md:table-cell">{m.status}</td>

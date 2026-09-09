@@ -282,92 +282,7 @@ export default function Journal() {
   return (
     <AppShell title={tr("分录", "Journals")}>
       <div className="space-y-4">
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">凭证列表</div>
-            <button
-              className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-              onClick={() => refresh()}
-            >
-              刷新
-            </button>
-          </div>
-          <div className="mt-3 max-h-[420px] overflow-auto rounded-lg border border-zinc-100">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-                <tr>
-                  <th className="px-3 py-2 text-left">日期</th>
-                  <th className="px-3 py-2 text-left">状态</th>
-                  <th className="px-3 py-2 text-left">库存</th>
-                  <th className="px-3 py-2 text-left">币种</th>
-                  <th className="px-3 py-2 text-right">金额</th>
-                  <th className="px-3 py-2 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((e) => (
-                  <tr
-                    key={e.id}
-                    className={
-                      "cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
-                      (selectedId === e.id ? "bg-blue-50" : "")
-                    }
-                    onClick={() => setSelectedId(e.id)}
-                  >
-                    <td className="px-3 py-2">{e.entryDate}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={
-                          "rounded-full px-2 py-0.5 text-xs " +
-                          (e.status === "posted" ? "bg-green-50 text-green-700" : "bg-zinc-100 text-zinc-700")
-                        }
-                      >
-                        {e.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-sm">{e.inventoryImpact ? "Yes" : ""}</td>
-                    <td className="px-3 py-2 text-sm">{e.currency}</td>
-                    <td className="px-3 py-2 text-right">
-                      {(() => {
-                        const amt = Number(e.totalDebitTxn);
-                        return Number.isFinite(amt) ? amt.toFixed(2) : "-";
-                      })()}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {e.status === "draft" ? (
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                          disabled={busy}
-                          type="button"
-                          onClick={async (ev) => {
-                            ev.preventDefault();
-                            ev.stopPropagation();
-                            const ok = window.confirm("确认删除该草稿凭证？");
-                            if (!ok) return;
-                            setBusy(true);
-                            setErr(null);
-                            try {
-                              await deleteEntry(e.id);
-                            } catch (err: any) {
-                              setErr(err.message);
-                            } finally {
-                              setBusy(false);
-                            }
-                          }}
-                        >
-                          删除
-                        </button>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
-        </div>
+        {err ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{err}</div> : null}
 
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold">新建凭证（直接过账）</div>
@@ -779,6 +694,93 @@ export default function Journal() {
               </div>
             </div>
           </div>
+
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">凭证列表</div>
+            <button
+              className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+              onClick={() => refresh()}
+              type="button"
+            >
+              刷新
+            </button>
+          </div>
+          <div className="mt-3 max-h-[420px] overflow-auto rounded-lg border border-zinc-100">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
+                <tr>
+                  <th className="px-3 py-2 text-left">日期</th>
+                  <th className="px-3 py-2 text-left">状态</th>
+                  <th className="px-3 py-2 text-left">库存</th>
+                  <th className="px-3 py-2 text-left">币种</th>
+                  <th className="px-3 py-2 text-right">金额</th>
+                  <th className="px-3 py-2 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e) => (
+                  <tr
+                    key={e.id}
+                    className={
+                      "cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
+                      (selectedId === e.id ? "bg-blue-50" : "")
+                    }
+                    onClick={() => setSelectedId(e.id)}
+                  >
+                    <td className="px-3 py-2">{e.entryDate}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={
+                          "rounded-full px-2 py-0.5 text-xs " +
+                          (e.status === "posted" ? "bg-green-50 text-green-700" : "bg-zinc-100 text-zinc-700")
+                        }
+                      >
+                        {e.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-sm">{e.inventoryImpact ? "Yes" : ""}</td>
+                    <td className="px-3 py-2 text-sm">{e.currency}</td>
+                    <td className="px-3 py-2 text-right">
+                      {(() => {
+                        const amt = Number(e.totalDebitTxn);
+                        return Number.isFinite(amt) ? amt.toFixed(2) : "-";
+                      })()}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {e.status === "draft" ? (
+                        <button
+                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                          disabled={busy}
+                          type="button"
+                          onClick={async (ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            const ok = window.confirm("确认删除该草稿凭证？");
+                            if (!ok) return;
+                            setBusy(true);
+                            setErr(null);
+                            try {
+                              await deleteEntry(e.id);
+                            } catch (err: any) {
+                              setErr(err.message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          删除
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold">凭证详情</div>
