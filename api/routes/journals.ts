@@ -67,7 +67,7 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
     const rows = await trx`
       SELECT id
       FROM inventory_layers
-      WHERE org_id = ${orgId} AND id = ANY(${trx.array(layerIds, "uuid")})
+      WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])
       FOR UPDATE
     `;
     const exists = new Set((rows as any[]).map((x) => String(x.id)));
@@ -78,7 +78,7 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
       UPDATE inventory_layers l
       SET qty_remaining = l.qty_remaining + x.qty
       FROM (
-        SELECT unnest(${trx.array(layerIds, "uuid")}) as id, unnest(${trx.array(qtys, "numeric")}) as qty
+        SELECT unnest(${layerIds}::uuid[]) as id, unnest(${qtys}::numeric[]) as qty
       ) x
       WHERE l.org_id = ${orgId} AND l.id = x.id
     `;
@@ -101,7 +101,7 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
     const layers = (await trx`
       SELECT id, qty_remaining as "qtyRemaining"
       FROM inventory_layers
-      WHERE org_id = ${orgId} AND id = ANY(${trx.array(layerIds, "uuid")})
+      WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])
       FOR UPDATE
     `) as any[];
     const remainingById = new Map<string, number>();
@@ -118,7 +118,7 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
         throw new Error("Cannot rollback receipt: layer already consumed");
       }
     }
-    await trx`DELETE FROM inventory_layers WHERE org_id = ${orgId} AND id = ANY(${trx.array(layerIds, "uuid")})`;
+    await trx`DELETE FROM inventory_layers WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])`;
   }
 
   await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${entryId} AND status = 'posted'`;
@@ -405,11 +405,12 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
       if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
         if (inventoryMode === "receipt") {
+          let entrySeq = 1;
           for (const d of inventoryDetails as any[]) {
             const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
             const insertedMove = (
               await trx`
-                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no, entry_seq)
                 VALUES (
                   ${orgId},
                   ${d.itemId},
@@ -422,11 +423,13 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
                   ${fxRate},
                   'posted',
                   ${id},
-                  ${linkLineNo}
+                  ${linkLineNo},
+                  ${entrySeq}
                 )
                 RETURNING id
               `
             )[0] as any;
+            entrySeq += 1;
             const layer = (
               await trx`
                 INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
@@ -474,35 +477,51 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             }
             const totalBase = round2(breakdown.reduce((s, x) => s + x.amountBase, 0));
             totalBaseAll = round2(totalBaseAll + totalBase);
-            for (const b of breakdown) {
-              await trx`
-                UPDATE inventory_layers
-                SET qty_remaining = qty_remaining - ${b.qty}
-                WHERE id = ${b.layerId} AND org_id = ${orgId}
-              `;
-              const unitCostTxn = fx > 0 ? round6(b.unitCostBase / fx) : null;
-              await trx`
-                INSERT INTO inventory_moves (
-                  org_id, item_id, move_type, move_date, qty,
-                  unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
-                  entry_id, entry_line_no, source_layer_id
-                ) VALUES (
-                  ${orgId},
-                  ${itemId},
-                  'shipment',
-                  ${entryDate},
-                  ${b.qty},
-                  ${b.unitCostBase},
-                  ${unitCostTxn},
-                  ${currency.toUpperCase()},
-                  ${fxRate},
-                  'posted',
-                  ${id},
-                  ${linkLineNo},
-                  ${b.layerId}
-                )
-              `;
-            }
+            const layerIds = breakdown.map((b) => String(b.layerId));
+            const qtys = breakdown.map((b) => Number(b.qty));
+            const unitCostsBase = breakdown.map((b) => Number(b.unitCostBase));
+            const unitCostsTxn = breakdown.map((b) => (fx > 0 ? round6(Number(b.unitCostBase) / fx) : null));
+            const entrySeqs = breakdown.map((_, i) => i + 1);
+
+            await trx`
+              UPDATE inventory_layers l
+              SET qty_remaining = l.qty_remaining - x.qty
+              FROM (
+                SELECT unnest(${layerIds}::uuid[]) as id, unnest(${qtys}::numeric[]) as qty
+              ) x
+              WHERE l.org_id = ${orgId} AND l.id = x.id
+            `;
+
+            await trx`
+              INSERT INTO inventory_moves (
+                org_id, item_id, move_type, move_date, qty,
+                unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
+                entry_id, entry_line_no, source_layer_id, entry_seq
+              )
+              SELECT
+                ${orgId},
+                ${itemId},
+                'shipment',
+                ${entryDate},
+                x.qty,
+                x.unit_cost_base,
+                x.unit_cost_txn,
+                ${currency.toUpperCase()},
+                ${fxRate},
+                'posted',
+                ${id},
+                ${linkLineNo},
+                x.layer_id,
+                x.entry_seq
+              FROM (
+                SELECT
+                  unnest(${layerIds}::uuid[]) as layer_id,
+                  unnest(${qtys}::numeric[]) as qty,
+                  unnest(${unitCostsBase}::numeric[]) as unit_cost_base,
+                  unnest(${unitCostsTxn as any}::numeric[]) as unit_cost_txn,
+                  unnest(${entrySeqs}::int[]) as entry_seq
+              ) x
+            `;
           }
 
           try {
@@ -757,11 +776,12 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
       if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
         if (inventoryMode === "receipt") {
+          let entrySeq = 1;
           for (const d of inventoryDetails as any[]) {
             const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
             const insertedMove = (
               await trx`
-                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
+                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no, entry_seq)
                 VALUES (
                   ${orgId},
                   ${d.itemId},
@@ -774,11 +794,13 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
                   ${fxRate},
                   'posted',
                   ${entry.id},
-                  ${linkLineNo}
+                  ${linkLineNo},
+                  ${entrySeq}
                 )
                 RETURNING id
               `
             )[0] as any;
+            entrySeq += 1;
             const layer = (
               await trx`
                 INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
@@ -829,36 +851,51 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             const totalBase = round2(breakdown.reduce((s, x) => s + x.amountBase, 0));
             totalBaseAll = round2(totalBaseAll + totalBase);
 
-            for (const b of breakdown) {
-              await trx`
-                UPDATE inventory_layers
-                SET qty_remaining = qty_remaining - ${b.qty}
-                WHERE id = ${b.layerId} AND org_id = ${orgId}
-              `;
+            const layerIds = breakdown.map((b) => String(b.layerId));
+            const qtys = breakdown.map((b) => Number(b.qty));
+            const unitCostsBase = breakdown.map((b) => Number(b.unitCostBase));
+            const unitCostsTxn = breakdown.map((b) => (fx > 0 ? round6(Number(b.unitCostBase) / fx) : null));
+            const entrySeqs = breakdown.map((_, i) => i + 1);
 
-              const unitCostTxn = fx > 0 ? round6(b.unitCostBase / fx) : null;
-              await trx`
-                INSERT INTO inventory_moves (
-                  org_id, item_id, move_type, move_date, qty,
-                  unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
-                  entry_id, entry_line_no, source_layer_id
-                ) VALUES (
-                  ${orgId},
-                  ${itemId},
-                  'shipment',
-                  ${entryDate},
-                  ${b.qty},
-                  ${b.unitCostBase},
-                  ${unitCostTxn},
-                  ${currency.toUpperCase()},
-                  ${fxRate},
-                  'posted',
-                  ${entry.id},
-                  ${linkLineNo},
-                  ${b.layerId}
-                )
-              `;
-            }
+            await trx`
+              UPDATE inventory_layers l
+              SET qty_remaining = l.qty_remaining - x.qty
+              FROM (
+                SELECT unnest(${layerIds}::uuid[]) as id, unnest(${qtys}::numeric[]) as qty
+              ) x
+              WHERE l.org_id = ${orgId} AND l.id = x.id
+            `;
+
+            await trx`
+              INSERT INTO inventory_moves (
+                org_id, item_id, move_type, move_date, qty,
+                unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
+                entry_id, entry_line_no, source_layer_id, entry_seq
+              )
+              SELECT
+                ${orgId},
+                ${itemId},
+                'shipment',
+                ${entryDate},
+                x.qty,
+                x.unit_cost_base,
+                x.unit_cost_txn,
+                ${currency.toUpperCase()},
+                ${fxRate},
+                'posted',
+                ${entry.id},
+                ${linkLineNo},
+                x.layer_id,
+                x.entry_seq
+              FROM (
+                SELECT
+                  unnest(${layerIds}::uuid[]) as layer_id,
+                  unnest(${qtys}::numeric[]) as qty,
+                  unnest(${unitCostsBase}::numeric[]) as unit_cost_base,
+                  unnest(${unitCostsTxn as any}::numeric[]) as unit_cost_txn,
+                  unnest(${entrySeqs}::int[]) as entry_seq
+              ) x
+            `;
           }
 
           try {

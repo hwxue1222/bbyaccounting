@@ -18,6 +18,7 @@ type Move = {
   status: string;
   entryId: string | null;
   voucherNo?: string | null;
+  entrySeq?: number | null;
   itemId: string;
   itemSku?: string | null;
   itemName: string;

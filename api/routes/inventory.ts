@@ -123,6 +123,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.status,
             m.entry_id as "entryId",
             m.entry_line_no as "entryLineNo",
+            m.entry_seq as "entrySeq",
             e.voucher_no as "voucherNo",
             i.id as "itemId",
             i.sku as "itemSku",
@@ -135,7 +136,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
             ${entryId ? sql`AND m.entry_id = ${entryId}` : sql``}
             ${dateCond}
-          ORDER BY m.move_date DESC, m.created_at DESC
+          ORDER BY m.move_date DESC, m.created_at DESC, m.entry_seq DESC NULLS LAST, m.id DESC
           LIMIT ${limit}
         `
       : await sql`
@@ -151,6 +152,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             m.status,
             m.entry_id as "entryId",
             m.entry_line_no as "entryLineNo",
+            m.entry_seq as "entrySeq",
             e.voucher_no as "voucherNo",
             i.id as "itemId",
             i.sku as "itemSku",
@@ -163,7 +165,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
             ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
             ${entryId ? sql`AND m.entry_id = ${entryId}` : sql``}
             ${dateCond}
-          ORDER BY m.move_date DESC, m.created_at DESC
+          ORDER BY m.move_date DESC, m.created_at DESC, m.entry_seq DESC NULLS LAST, m.id DESC
           LIMIT ${limit}
         `;
 
@@ -335,7 +337,7 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
 
     const insertedMove = (
       await trx`
-        INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id, unit_cost_txn, currency_code, fx_rate, status)
+        INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id, unit_cost_txn, currency_code, fx_rate, status, entry_seq)
         VALUES (
           ${orgId},
           ${parsed.data.itemId},
@@ -348,6 +350,7 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
           ${parsed.data.currency.toUpperCase()},
           ${parsed.data.fxRate},
           'posted'
+          , 1
         )
         RETURNING id
       `
@@ -463,12 +466,13 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
       VALUES (${orgId}, ${entry.id}, 2, ${item.inventoryAccountId}, 'Inventory decrease (FIFO)', 0, 0, 0, ${totalBase}, ${parsed.data.itemId})
     `;
 
+    let entrySeq = 1;
     for (const b of breakdown) {
       await trx`
         INSERT INTO inventory_moves (
           org_id, item_id, move_type, move_date, qty,
           unit_cost_base, unit_cost_txn, currency_code, fx_rate, status,
-          entry_id, source_layer_id
+          entry_id, source_layer_id, entry_seq
         ) VALUES (
           ${orgId},
           ${parsed.data.itemId},
@@ -481,9 +485,11 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
           1,
           'posted',
           ${entry.id},
-          ${b.layerId}
+          ${b.layerId},
+          ${entrySeq}
         )
       `;
+      entrySeq += 1;
     }
 
     return { entryId: entry.id };
