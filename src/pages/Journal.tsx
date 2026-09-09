@@ -70,6 +70,7 @@ export default function Journal() {
   const [invDetails, setInvDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
   const [invConfirmed, setInvConfirmed] = useState<null | { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number; quoteBase: number }>(null);
   const [invLineIdx, setInvLineIdx] = useState<number | null>(null);
+  const [invDefaultSide, setInvDefaultSide] = useState<"debit" | "credit">("debit");
 
   const [invEditingDetails, setInvEditingDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
   const [invQuoteByRow, setInvQuoteByRow] = useState<Record<string, { base: number | null; err: string | null }>>({});
@@ -124,7 +125,7 @@ export default function Journal() {
     return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
-  function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment") {
+  function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
     if (!line) {
       throw new Error("Invalid line");
@@ -134,17 +135,15 @@ export default function Journal() {
     if (debit > 0 && credit > 0) {
       throw new Error("该行不能同时有借和贷。");
     }
-    if (mode === "receipt" && debit <= 0) {
-      throw new Error("入库需要该行借方金额大于 0。");
-    }
-    if (mode === "shipment" && credit <= 0) {
-      throw new Error("出库需要该行贷方金额大于 0。");
-    }
-    const info = mode === "receipt"
-      ? { mode: "receipt" as const, expectedTxn: debit, expectedBase: Math.round(debit * draftFx * 100) / 100 }
-      : { mode: "shipment" as const, expectedTxn: credit, expectedBase: Math.round(credit * draftFx * 100) / 100 };
+    const amountTxn = mode === "receipt" ? debit : credit;
+    const info = {
+      mode,
+      expectedTxn: amountTxn,
+      expectedBase: Math.round(amountTxn * draftFx * 100) / 100,
+    };
 
     setInvLineIdx(lineIdx);
+    setInvDefaultSide(defaultSide);
     setInvMode(info.mode);
     setInvExpectedTxn(info.expectedTxn);
     setInvExpectedBase(info.expectedBase);
@@ -300,7 +299,7 @@ export default function Journal() {
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold">新建草稿凭证</div>
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <div>在存货相关行（1500 Inventory）右侧点击“填写”录入库存明细；过账后才会影响 FIFO 成本与库存数量。</div>
+            <div>在任意分录行的借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
             <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
               查看库存 FIFO
             </a>
@@ -433,7 +432,7 @@ export default function Journal() {
                                 setInvConfirmed(null);
                               }
                               try {
-                                openInventoryDetailsModal(idx, "receipt");
+                                openInventoryDetailsModal(idx, "receipt", "debit");
                               } catch (e: any) {
                                 setErr(e.message);
                               }
@@ -470,7 +469,7 @@ export default function Journal() {
                                 setInvConfirmed(null);
                               }
                               try {
-                                openInventoryDetailsModal(idx, "shipment");
+                                openInventoryDetailsModal(idx, "shipment", "credit");
                               } catch (e: any) {
                                 setErr(e.message);
                               }
@@ -520,12 +519,17 @@ export default function Journal() {
                         setErr("库存关联行不能同时有借和贷。");
                         return;
                       }
-                      const expectedTxn = invMode === "receipt" ? debit : credit;
-                      const expectedBase = Math.round(expectedTxn * draftFx * 100) / 100;
-                      if (!invConfirmed || invConfirmed.mode !== invMode || invConfirmed.expectedTxn !== expectedTxn) {
-                        setErr("请先确认库存明细后再创建草稿。");
+                      const existingTxn = debit > 0 ? debit : credit > 0 ? credit : 0;
+                      const expectedBaseFromExisting = Math.round(existingTxn * draftFx * 100) / 100;
+
+                      const computedReceiptTxn = Math.round(invDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100;
+                      const computedShipmentBase = invConfirmed?.quoteBase ?? 0;
+                      const computedShipmentTxn = Math.round((computedShipmentBase / (draftFx || 1)) * 100) / 100;
+
+                      if (!invConfirmed || invConfirmed.mode !== invMode) {
+                        setErr("请先在库存明细弹窗点击“确认”。");
                         try {
-                          openInventoryDetailsModal(invLineIdx, invMode);
+                          openInventoryDetailsModal(invLineIdx, invMode, invDefaultSide);
                         } catch {
                           // ignore
                         }
@@ -533,36 +537,39 @@ export default function Journal() {
                       }
 
                       if (invMode === "receipt") {
-                        if (debit <= 0 || credit > 0) {
-                          setErr("入库需要库存关联行只有借方金额（贷方为 0）。");
-                          return;
-                        }
-                        const totalTxn = Math.round(invDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100;
-                        if (Math.round(totalTxn * 100) / 100 !== Math.round(expectedTxn * 100) / 100) {
-                          setErr("库存入库明细合计必须与该行借方金额一致。");
-                          try {
-                            openInventoryDetailsModal(invLineIdx, "receipt");
-                          } catch {
-                            // ignore
+                        if (existingTxn > 0) {
+                          if (Math.round(existingTxn * 100) / 100 !== Math.round(computedReceiptTxn * 100) / 100) {
+                            setErr("库存入库明细合计必须与该行金额一致。");
+                            try {
+                              openInventoryDetailsModal(invLineIdx, "receipt", invDefaultSide);
+                            } catch {
+                              // ignore
+                            }
+                            return;
                           }
-                          return;
                         }
                       }
 
                       if (invMode === "shipment") {
-                        if (credit <= 0 || debit > 0) {
-                          setErr("出库需要库存关联行只有贷方金额（借方为 0）。");
-                          return;
-                        }
-                        if (Math.round(invConfirmed.quoteBase * 100) / 100 !== Math.round(expectedBase * 100) / 100) {
-                          setErr("库存出库 FIFO 成本合计必须与该行贷方金额一致（以本位比较）。");
-                          try {
-                            openInventoryDetailsModal(invLineIdx, "shipment");
-                          } catch {
-                            // ignore
+                        if (existingTxn > 0) {
+                          if (Math.round(expectedBaseFromExisting * 100) / 100 !== Math.round(computedShipmentBase * 100) / 100) {
+                            setErr("库存出库 FIFO 成本合计必须与该行金额一致（以本位比较）。");
+                            try {
+                              openInventoryDetailsModal(invLineIdx, "shipment", invDefaultSide);
+                            } catch {
+                              // ignore
+                            }
+                            return;
                           }
-                          return;
                         }
+                      }
+
+                      if (invMode === "receipt") {
+                        // ok
+                      }
+
+                      if (invMode === "shipment") {
+                        // ok
                       }
                     }
 
@@ -577,6 +584,36 @@ export default function Journal() {
                             )
                           : undefined;
 
+                      let effectiveLines = draftLines.map((l) => ({ ...l }));
+                      if (inventoryDetails?.length && invLineIdx != null) {
+                        const line = effectiveLines[invLineIdx];
+                        const debit = Number(line.debitTxn) || 0;
+                        const credit = Number(line.creditTxn) || 0;
+                        const existing = debit > 0 ? debit : credit > 0 ? credit : 0;
+                        if (existing <= 0) {
+                          if (invMode === "receipt") {
+                            const totalTxn = Math.round(invDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100;
+                            if (invDefaultSide === "credit") {
+                              line.creditTxn = totalTxn;
+                              line.debitTxn = 0;
+                            } else {
+                              line.debitTxn = totalTxn;
+                              line.creditTxn = 0;
+                            }
+                          } else {
+                            const totalBase = invConfirmed?.quoteBase ?? 0;
+                            const totalTxn = Math.round((totalBase / (draftFx || 1)) * 100) / 100;
+                            if (invDefaultSide === "debit") {
+                              line.debitTxn = totalTxn;
+                              line.creditTxn = 0;
+                            } else {
+                              line.creditTxn = totalTxn;
+                              line.debitTxn = 0;
+                            }
+                          }
+                        }
+                      }
+
                       const resp = await api<{ entry: { id: string } }>("/api/journals", {
                         method: "POST",
                         json: {
@@ -587,7 +624,7 @@ export default function Journal() {
                           inventoryImpact: Boolean(inventoryDetails?.length),
                           inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
                           inventoryDetails,
-                          lines: draftLines.map((l) => ({
+                          lines: effectiveLines.map((l) => ({
                             accountId: l.accountId,
                             description: l.description || undefined,
                             costCenterId: l.costCenterId ? l.costCenterId : null,
@@ -732,10 +769,6 @@ export default function Journal() {
                       try {
                         const line = draftLines[invLineIdx];
                         const debit = Number(line?.debitTxn) || 0;
-                        if (debit <= 0) {
-                          setErr("入库需要该行借方金额大于 0。");
-                          return;
-                        }
                         setInvMode("receipt");
                         setInvExpectedTxn(debit);
                         setInvExpectedBase(Math.round(debit * draftFx * 100) / 100);
@@ -760,10 +793,6 @@ export default function Journal() {
                       try {
                         const line = draftLines[invLineIdx];
                         const credit = Number(line?.creditTxn) || 0;
-                        if (credit <= 0) {
-                          setErr("出库需要该行贷方金额大于 0。");
-                          return;
-                        }
                         setInvMode("shipment");
                         setInvExpectedTxn(credit);
                         setInvExpectedBase(Math.round(credit * draftFx * 100) / 100);
@@ -882,7 +911,7 @@ export default function Journal() {
                   明细合计：{invEditingTotals.totalTxn.toFixed(2)} {draftCurrency}；分录金额：{invExpectedTxn.toFixed(2)} {draftCurrency}
                 </div>
                 {Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100 ? (
-                  <div className="mt-1 text-sm text-red-700">明细合计必须与分录中 1500 Inventory 的借方金额一致。</div>
+                  <div className="mt-1 text-sm text-red-700">明细合计必须与绑定的分录行金额一致。</div>
                 ) : null}
               </div>
             ) : (
@@ -897,7 +926,7 @@ export default function Journal() {
                   <div className="mt-1 text-xs text-zinc-500">正在计算 FIFO 成本…</div>
                 ) : null}
                 {Math.round(invEditingTotals.totalQuoteBase * 100) / 100 !== Math.round(invExpectedBase * 100) / 100 ? (
-                  <div className="mt-1 text-sm text-red-700">FIFO 合计必须与分录中 1500 Inventory 的贷方金额一致（以本位比较）。</div>
+                  <div className="mt-1 text-sm text-red-700">FIFO 合计必须与绑定的分录行金额一致（以本位比较）。</div>
                 ) : null}
               </div>
             )}

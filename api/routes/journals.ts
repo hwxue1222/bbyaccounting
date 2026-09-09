@@ -205,8 +205,10 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
       return;
     }
-    if (debit > 0) {
-      inventoryMode = "receipt";
+    const requestedMode = detailTypes[0];
+    inventoryMode = requestedMode;
+
+    if (requestedMode === "receipt") {
       const receiptDetails = inventoryDetails.filter((d) => d.moveType === "receipt") as Array<{
         moveType: "receipt";
         itemId: string;
@@ -218,25 +220,17 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
         return;
       }
       const expectedTxn = round2(receiptDetails.reduce((s, d) => s + round2(d.qty * d.unitCostTxn), 0));
-      if (round2(debit) !== round2(expectedTxn)) {
-        res.status(400).json({ success: false, error: `Inventory total mismatch: entry ${round2(debit)} vs receipt ${expectedTxn}` });
+      const existingTxn = debit > 0 ? debit : credit > 0 ? credit : 0;
+      if (existingTxn > 0 && round2(existingTxn) !== round2(expectedTxn)) {
+        res.status(400).json({ success: false, error: `Inventory total mismatch: entry ${round2(existingTxn)} vs receipt ${expectedTxn}` });
         return;
       }
-    } else if (credit > 0) {
-      inventoryMode = "shipment";
+    } else if (requestedMode === "shipment") {
       const shipmentDetails = inventoryDetails.filter((d) => d.moveType === "shipment");
       if (!shipmentDetails.length) {
         res.status(400).json({ success: false, error: "Missing shipment inventoryDetails" });
         return;
       }
-    } else {
-      res.status(400).json({ success: false, error: "Inventory link line amount must be greater than 0" });
-      return;
-    }
-
-    if (detailTypes[0] !== inventoryMode) {
-      res.status(400).json({ success: false, error: "Inventory details type does not match linked line debit/credit" });
-      return;
     }
   }
 
@@ -423,9 +417,14 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
             LIMIT 1
           `;
           const linkedLine = (linkedLineRows as any[])[0];
-          const expectedBase = round2(Number(linkedLine?.creditBase || 0));
-          if (round2(Number(linkedLine?.debitBase || 0)) > 0 || expectedBase <= 0) {
-            throw new Error("Inventory shipment requires credit on linked line");
+          const debitBase = round2(Number(linkedLine?.debitBase || 0));
+          const creditBase = round2(Number(linkedLine?.creditBase || 0));
+          if (debitBase > 0 && creditBase > 0) {
+            throw new Error("Inventory shipment linked line cannot have both debit and credit");
+          }
+          const expectedBase = debitBase > 0 ? debitBase : creditBase;
+          if (expectedBase <= 0) {
+            throw new Error("Inventory shipment linked line amount must be greater than 0");
           }
 
           const fx = Number(entry.fxRate);
