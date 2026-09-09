@@ -19,6 +19,7 @@ type AuthState = {
   register: (email: string, password: string, orgName: string, baseCurrency: string) => Promise<void>;
   logout: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
+  createOrg: (name: string, baseCurrency: string) => Promise<void>;
   acceptInvite: (token: string, password: string) => Promise<void>;
   createInvite: (email: string, role: string) => Promise<{ inviteUrl: string }>
 };
@@ -71,6 +72,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   switchOrg: async (orgId: string) => {
     await api("/api/orgs/switch", { method: "POST", json: { orgId } });
+    await get().bootstrap();
+  },
+  createOrg: async (name: string, baseCurrency: string) => {
+    await api("/api/orgs/create", { method: "POST", json: { name, baseCurrency } });
     await get().bootstrap();
   },
   acceptInvite: async (token: string, password: string) => {

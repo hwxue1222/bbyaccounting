@@ -59,6 +59,7 @@ export default function Journal() {
   const [draftCurrency, setDraftCurrency] = useState("SGD");
   const [draftFx, setDraftFx] = useState(1);
   const [draftMemo, setDraftMemo] = useState("");
+  const [inventoryImpact, setInventoryImpact] = useState(false);
   const [draftLines, setDraftLines] = useState(() => [
     { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
     { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
@@ -123,7 +124,7 @@ export default function Journal() {
 
   return (
     <AppShell title="分录">
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold">凭证列表</div>
@@ -176,6 +177,15 @@ export default function Journal() {
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold">新建草稿凭证</div>
+          <div className="mt-3 flex items-center gap-2">
+            <input id="inventoryImpact" type="checkbox" checked={inventoryImpact} onChange={(e) => setInventoryImpact(e.target.checked)} />
+            <label htmlFor="inventoryImpact" className="text-sm text-zinc-700">影响库存（勾选后请到库存模块做入库/出库）</label>
+          </div>
+          {inventoryImpact ? (
+            <div className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              该凭证与库存成本联动，建议在“库存 FIFO”中完成入库/出库，系统会自动生成对应分录。
+            </div>
+          ) : null}
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
                 <label className="text-xs text-zinc-600">日期</label>
@@ -218,7 +228,7 @@ export default function Journal() {
               </div>
             </div>
 
-            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+            <div className="mt-4 overflow-auto rounded-lg border border-zinc-100">
               <table className="w-full text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-600">
                   <tr>
@@ -281,7 +291,7 @@ export default function Journal() {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
-                          className="w-24 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                          className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
                           value={l.debitTxn}
                           onChange={(e) => {
                             const next = [...draftLines];
@@ -294,7 +304,7 @@ export default function Journal() {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
-                          className="w-24 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                          className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
                           value={l.creditTxn}
                           onChange={(e) => {
                             const next = [...draftLines];
@@ -311,7 +321,7 @@ export default function Journal() {
               </table>
             </div>
 
-            <div className="mt-3 flex items-center justify-between">
+            <div className="mt-4 flex items-center justify-between">
               <div className={"text-sm " + (baseDiff === 0 ? "text-green-700" : "text-amber-700")}>
                 本位差额：{baseDiff.toFixed(2)}
               </div>

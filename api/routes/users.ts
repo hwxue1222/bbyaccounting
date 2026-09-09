@@ -128,7 +128,8 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
       UPDATE memberships
       SET
         role = ${nextRole},
-        status = ${nextStatus}
+        status = ${nextStatus},
+        is_global = (${nextRole} = 'admin')
       WHERE id = ${membershipId} AND org_id = ${orgId}
       RETURNING id, user_id as "userId", role, status, created_at as "createdAt"
     `
@@ -138,4 +139,3 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
 });
 
 export default router;
-

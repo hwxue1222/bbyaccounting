@@ -175,16 +175,12 @@ export default function Reports() {
                 </tr>
               ) : tab === "pl" ? (
                 <tr>
-                  <th className="px-3 py-2 text-left">Section</th>
-                  <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">Name</th>
+                  <th className="px-3 py-2 text-left">Account</th>
                   <th className="px-3 py-2 text-right">Amount</th>
                 </tr>
               ) : (
                 <tr>
-                  <th className="px-3 py-2 text-left">Section</th>
-                  <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">Name</th>
+                  <th className="px-3 py-2 text-left">Account</th>
                   <th className="px-3 py-2 text-right">Amount</th>
                 </tr>
               )}
@@ -218,9 +214,7 @@ export default function Reports() {
                         (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
                     }
                   >
-                    <td className="px-3 py-2">{r.section}</td>
-                    <td className="px-3 py-2">{r.code || ""}</td>
-                    <td className="px-3 py-2">{r.name || ""}</td>
+                    <td className={"px-3 py-2 " + (r.isHeader ? "text-zinc-900" : "")}>{r.isHeader ? r.name : `${r.code ? `${r.code} ` : ""}${r.name || ""}`.trim()}</td>
                     <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
                   </tr>
                 ) : (
@@ -231,9 +225,9 @@ export default function Reports() {
                         (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
                     }
                   >
-                    <td className="px-3 py-2">{r.section}</td>
-                    <td className="px-3 py-2">{r.code || ""}</td>
-                    <td className="px-3 py-2">{r.label || r.name || ""}</td>
+                    <td className="px-3 py-2" style={{ paddingLeft: `${8 + (Number(r.indent || 0) * 16)}px` }}>
+                      {r.label || r.name || ""}
+                    </td>
                     <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
                   </tr>
                 ),

@@ -28,6 +28,14 @@ export async function ensureMigrated(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS user_default_org (
+      user_id UUID PRIMARY KEY,
+      org_id UUID NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS memberships (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID NOT NULL,
@@ -39,6 +47,7 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id)`;
+  await sql`ALTER TABLE memberships ADD COLUMN IF NOT EXISTS is_global BOOLEAN NOT NULL DEFAULT false`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS invitations (
@@ -241,4 +250,3 @@ export async function ensureMigrated(): Promise<void> {
 export function sha256(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
-

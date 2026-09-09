@@ -9,42 +9,12 @@ import { ensureMigrated, sha256 } from "../lib/migrate.js";
 import { clearSessionCookie, requireAuth, setSessionCookie, type AuthedRequest } from "../lib/auth.js";
 import { hashPassword, signSession, verifyPassword } from "../lib/security.js";
 import { randomToken } from "../lib/security.js";
+import { seedOrgDefaults } from "../lib/seed.js";
 
 const router = Router();
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
-}
-
-async function seedOrgDefaults(sql: ReturnType<typeof getSql>, orgId: string, baseCurrency: string) {
-  const accounts = [
-    { code: "1000", name: "Cash", type: "asset", normal_balance: "debit" },
-    { code: "1200", name: "Accounts Receivable", type: "asset", normal_balance: "debit" },
-    { code: "2000", name: "Accounts Payable", type: "liability", normal_balance: "credit" },
-    { code: "3000", name: "Retained Earnings", type: "equity", normal_balance: "credit" },
-    { code: "4000", name: "Sales", type: "income", normal_balance: "credit" },
-    { code: "5000", name: "Cost of Goods Sold", type: "cogs", normal_balance: "debit" },
-    { code: "6000", name: "Operating Expenses", type: "expense", normal_balance: "debit" },
-    { code: "6100", name: "Depreciation Expense", type: "expense", normal_balance: "debit" },
-    { code: "1500", name: "Inventory", type: "asset", normal_balance: "debit" },
-    { code: "1600", name: "Fixed Assets", type: "asset", normal_balance: "debit" },
-    { code: "1610", name: "Accumulated Depreciation", type: "asset", normal_balance: "credit" },
-    { code: "7000", name: "Gain/Loss on Disposal", type: "expense", normal_balance: "debit" },
-  ];
-  await sql.begin(async (trx) => {
-    for (const a of accounts) {
-      await trx`
-        INSERT INTO accounts (org_id, code, name, type, normal_balance)
-        VALUES (${orgId}, ${a.code}, ${a.name}, ${a.type}, ${a.normal_balance})
-        ON CONFLICT (org_id, code) DO NOTHING
-      `;
-    }
-    await trx`
-      INSERT INTO currencies (org_id, code, is_enabled)
-      VALUES (${orgId}, ${baseCurrency.toUpperCase()}, true)
-      ON CONFLICT (org_id, code) DO NOTHING
-    `;
-  });
 }
 
 router.post("/register", async (req: Request, res: Response): Promise<void> => {
@@ -90,6 +60,11 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     await trx`
       INSERT INTO memberships (org_id, user_id, role, status)
       VALUES (${org.id}, ${user.id}, 'owner', 'active')
+    `;
+    await trx`
+      INSERT INTO user_default_org (user_id, org_id)
+      VALUES (${user.id}, ${org.id})
+      ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
     `;
     return { user, org };
   });
@@ -249,7 +224,13 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
     await trx`
       INSERT INTO memberships (org_id, user_id, role, status)
       VALUES (${inv.orgId}, ${user.id}, ${inv.role}, 'active')
-      ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
+      ON CONFLICT (org_id, user_id)
+      DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = (EXCLUDED.role = 'admin')
+    `;
+    await trx`
+      INSERT INTO user_default_org (user_id, org_id)
+      VALUES (${user.id}, ${inv.orgId})
+      ON CONFLICT (user_id) DO NOTHING
     `;
     await trx`UPDATE invitations SET accepted_at = now() WHERE id = ${inv.id}`;
   });
