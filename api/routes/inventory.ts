@@ -86,6 +86,105 @@ router.get("/stock", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { itemId, qty, valueBase } });
 });
 
+router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const status = typeof req.query.status === "string" ? req.query.status : null;
+  const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
+  const limit = typeof req.query.limit === "string" ? Math.min(200, Math.max(1, Number(req.query.limit) || 50)) : 50;
+  const sql = getSql();
+
+  const rows =
+    status === "draft" || status === "posted"
+      ? await sql`
+          SELECT
+            m.id,
+            m.move_type as "moveType",
+            to_char(m.move_date, 'YYYY-MM-DD') as "moveDate",
+            m.qty,
+            m.unit_cost_base as "unitCostBase",
+            m.unit_cost_txn as "unitCostTxn",
+            m.currency_code as "currency",
+            m.fx_rate as "fxRate",
+            m.status,
+            m.entry_id as "entryId",
+            i.id as "itemId",
+            i.name as "itemName",
+            i.uom as "uom"
+          FROM inventory_moves m
+          JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
+          WHERE m.org_id = ${orgId} AND m.status = ${status} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
+          ORDER BY m.move_date DESC, m.created_at DESC
+          LIMIT ${limit}
+        `
+      : await sql`
+          SELECT
+            m.id,
+            m.move_type as "moveType",
+            to_char(m.move_date, 'YYYY-MM-DD') as "moveDate",
+            m.qty,
+            m.unit_cost_base as "unitCostBase",
+            m.unit_cost_txn as "unitCostTxn",
+            m.currency_code as "currency",
+            m.fx_rate as "fxRate",
+            m.status,
+            m.entry_id as "entryId",
+            i.id as "itemId",
+            i.name as "itemName",
+            i.uom as "uom"
+          FROM inventory_moves m
+          JOIN inventory_items i ON i.id = m.item_id AND i.org_id = m.org_id
+          WHERE m.org_id = ${orgId} ${itemId ? sql`AND m.item_id = ${itemId}` : sql``}
+          ORDER BY m.move_date DESC, m.created_at DESC
+          LIMIT ${limit}
+        `;
+
+  res.status(200).json({ success: true, data: { moves: rows } });
+});
+
+router.get("/shipments/quote", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
+  const qty = typeof req.query.qty === "string" ? Number(req.query.qty) : NaN;
+  if (!itemId) {
+    res.status(400).json({ success: false, error: "Missing itemId" });
+    return;
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    res.status(400).json({ success: false, error: "Invalid qty" });
+    return;
+  }
+
+  const sql = getSql();
+  const layers = await sql`
+    SELECT id, qty_remaining as "qtyRemaining", unit_cost_base as "unitCostBase", received_date as "receivedDate"
+    FROM inventory_layers
+    WHERE org_id = ${orgId} AND item_id = ${itemId} AND qty_remaining > 0
+    ORDER BY received_date ASC, created_at ASC
+  `;
+
+  let remaining = qty;
+  const breakdown: Array<{ layerId: string; receivedDate: string; qty: number; unitCostBase: number; amountBase: number }> = [];
+  for (const row of layers as any[]) {
+    if (remaining <= 0) break;
+    const qtyAvail = Number(row.qtyRemaining);
+    const take = Math.min(remaining, qtyAvail);
+    const unitCostBase = Number(row.unitCostBase);
+    const amountBase = round2(take * unitCostBase);
+    breakdown.push({ layerId: row.id, receivedDate: row.receivedDate, qty: take, unitCostBase, amountBase });
+    remaining = round6(remaining - take);
+  }
+  if (remaining > 0) {
+    res.status(400).json({ success: false, error: "Insufficient stock" });
+    return;
+  }
+  const totalBase = round2(breakdown.reduce((s, x) => s + x.amountBase, 0));
+  res.status(200).json({ success: true, data: { itemId, qty, totalBase, breakdown } });
+});
+
 router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -158,6 +257,11 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
     await trx`
       INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id)
       VALUES (${orgId}, ${parsed.data.itemId}, 'receipt', ${parsed.data.date}, ${parsed.data.qty}, ${unitCostBase}, ${entry.id})
+    `;
+    await trx`
+      UPDATE inventory_moves
+      SET unit_cost_txn = ${round6(parsed.data.unitCostTxn)}, currency_code = ${parsed.data.currency.toUpperCase()}, fx_rate = ${parsed.data.fxRate}, status = 'posted'
+      WHERE org_id = ${orgId} AND entry_id = ${entry.id} AND item_id = ${parsed.data.itemId} AND move_type = 'receipt'
     `;
 
     return { entryId: entry.id };
@@ -260,6 +364,11 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
     await trx`
       INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, entry_id)
       VALUES (${orgId}, ${parsed.data.itemId}, 'shipment', ${parsed.data.date}, ${parsed.data.qty}, ${round6(totalBase / parsed.data.qty)}, ${entry.id})
+    `;
+    await trx`
+      UPDATE inventory_moves
+      SET currency_code = 'BASE', fx_rate = 1, status = 'posted'
+      WHERE org_id = ${orgId} AND entry_id = ${entry.id} AND item_id = ${parsed.data.itemId} AND move_type = 'shipment'
     `;
 
     return { entryId: entry.id };

@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/authStore";
 type Account = { id: string; code: string; name: string };
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
+type InventoryItem = { id: string; name: string; uom: string };
 
 type EntryListRow = {
   id: string;
@@ -39,6 +40,7 @@ export default function Journal() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [entries, setEntries] = useState<EntryListRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EntryDetail | null>(null);
@@ -61,6 +63,15 @@ export default function Journal() {
   const [draftFx, setDraftFx] = useState(1);
   const [draftMemo, setDraftMemo] = useState("");
   const [inventoryImpact, setInventoryImpact] = useState(false);
+  const [invModalOpen, setInvModalOpen] = useState(false);
+  const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
+  const [invExpectedTxn, setInvExpectedTxn] = useState<number>(0);
+  const [invExpectedBase, setInvExpectedBase] = useState<number>(0);
+  const [invDetails, setInvDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
+  const [invConfirmed, setInvConfirmed] = useState<null | { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number; quoteBase: number }>(null);
+
+  const [invEditingDetails, setInvEditingDetails] = useState<Array<{ rowId: string; itemId: string; qty: number; unitCostTxn: number }>>([]);
+  const [invQuoteByRow, setInvQuoteByRow] = useState<Record<string, { base: number | null; err: string | null }>>({});
   const [draftLines, setDraftLines] = useState(() => [
     { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
     { accountId: "", description: "", costCenterId: "", debitTxn: 0, creditTxn: 0 },
@@ -72,23 +83,113 @@ export default function Journal() {
     return Math.round((debit - credit) * 100) / 100;
   }, [draftLines, draftFx]);
 
+  const inventoryAccountId = useMemo(() => accounts.find((a) => a.code === "1500")?.id || null, [accounts]);
+
   async function refresh() {
-    const [{ accounts }, { costCenters }, { currencies }, { entries }] = await Promise.all([
+    const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
       api<{ currencies: any[] }>("/api/settings/currencies"),
       api<{ entries: any[] }>("/api/journals"),
+      api<{ items: any[] }>("/api/inventory/items"),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setEntries(entries as any);
+    setInventoryItems((items as any[]).map((it) => ({ id: it.id, name: it.name, uom: it.uom })));
   }
+
+  function getInventoryLinkInfo(): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
+    const invAcc = accounts.find((a) => a.code === "1500");
+    if (!invAcc) {
+      throw new Error("未找到 1500 Inventory 科目，请先到设置里检查科目表。");
+    }
+    const invLines = draftLines.filter((l) => l.accountId === invAcc.id);
+    if (invLines.length !== 1) {
+      throw new Error("勾选影响库存时，需要有且仅有一行科目为 1500 Inventory。");
+    }
+    const l = invLines[0];
+    const debit = Number(l.debitTxn) || 0;
+    const credit = Number(l.creditTxn) || 0;
+    if (debit > 0 && credit > 0) {
+      throw new Error("1500 Inventory 这一行不能同时有借和贷。");
+    }
+    if (debit > 0) {
+      return { mode: "receipt", expectedTxn: debit, expectedBase: Math.round(debit * draftFx * 100) / 100 };
+    }
+    if (credit > 0) {
+      return { mode: "shipment", expectedTxn: credit, expectedBase: Math.round(credit * draftFx * 100) / 100 };
+    }
+    throw new Error("1500 Inventory 这一行金额必须大于 0。");
+  }
+
+  function newRowId(): string {
+    const c: any = (globalThis as any).crypto;
+    return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
+  }
+
+  function openInventoryDetailsModal() {
+    const info = getInventoryLinkInfo();
+    setInvMode(info.mode);
+    setInvExpectedTxn(info.expectedTxn);
+    setInvExpectedBase(info.expectedBase);
+    const seed = invDetails.length
+      ? invDetails
+      : [{ rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: 1, unitCostTxn: info.mode === "receipt" ? info.expectedTxn : 0 }];
+    setInvEditingDetails(seed);
+    setInvQuoteByRow({});
+    setInvModalOpen(true);
+  }
+
+  const invEditingTotals = useMemo(() => {
+    const totalTxn =
+      invMode === "receipt"
+        ? Math.round(invEditingDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100
+        : 0;
+    const totalQuoteBase =
+      invMode === "shipment"
+        ? Math.round(
+            invEditingDetails.reduce((s, d) => s + (Number(invQuoteByRow[d.rowId]?.base) || 0), 0) * 100,
+          ) / 100
+        : 0;
+    return { totalTxn, totalQuoteBase };
+  }, [invMode, invEditingDetails, invQuoteByRow]);
+
+  useEffect(() => {
+    if (!invModalOpen || invMode !== "shipment") return;
+    let cancelled = false;
+    const rows = invEditingDetails.filter((d) => d.itemId && d.qty > 0);
+    (async () => {
+      for (const r of rows) {
+        if (cancelled) return;
+        try {
+          const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
+            `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(r.qty))}`,
+          );
+          if (cancelled) return;
+          setInvQuoteByRow((prev) => ({ ...prev, [r.rowId]: { base: Number(resp.totalBase), err: null } }));
+        } catch (e: any) {
+          if (cancelled) return;
+          setInvQuoteByRow((prev) => ({ ...prev, [r.rowId]: { base: null, err: e.message } }));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [invModalOpen, invMode, invEditingDetails]);
 
   useEffect(() => {
     setDraftCurrency(baseCurrency);
     setDraftFx(1);
   }, [baseCurrency]);
+
+  useEffect(() => {
+    if (inventoryImpact) return;
+    setInvDetails([]);
+    setInvConfirmed(null);
+  }, [inventoryImpact]);
 
   async function fillFxFromHistory() {
     const cc = draftCurrency.toUpperCase();
@@ -193,14 +294,14 @@ export default function Journal() {
               onChange={(e) => setInventoryImpact(e.target.checked)}
             />
             <label htmlFor="inventoryImpact" className="text-sm text-zinc-700">
-              影响库存（勾选后请到库存模块做入库/出库）
+              影响库存（创建草稿时会录入入库/出库信息）
             </label>
           </div>
           {inventoryImpact ? (
             <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              <div>该凭证与库存成本联动，建议在“库存 FIFO”中完成入库/出库，系统会自动生成对应分录。</div>
+              <div>勾选后：在 1500 Inventory 行右侧填写库存明细；过账后才会正式影响 FIFO 成本与库存数量。</div>
               <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
-                去库存 FIFO
+                查看库存 FIFO
               </a>
             </div>
           ) : null}
@@ -255,6 +356,7 @@ export default function Journal() {
                     <th className="px-3 py-2 text-left">Cost Center</th>
                     <th className="px-3 py-2 text-right">借</th>
                     <th className="px-3 py-2 text-right">贷</th>
+                    <th className="px-3 py-2 text-left">库存</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -333,6 +435,27 @@ export default function Journal() {
                           step="0.01"
                         />
                       </td>
+                      <td className="px-3 py-2">
+                        {inventoryImpact && inventoryAccountId && l.accountId === inventoryAccountId ? (
+                          <button
+                            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                            onClick={() => {
+                              setErr(null);
+                              try {
+                                openInventoryDetailsModal();
+                              } catch (e: any) {
+                                setErr(e.message);
+                              }
+                            }}
+                            disabled={busy}
+                            type="button"
+                          >
+                            {invDetails.length ? `已填 ${invDetails.length} 行` : "填写"}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-zinc-400">-</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -354,8 +477,84 @@ export default function Journal() {
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
                   disabled={busy || baseDiff !== 0 || draftLines.some((l) => !l.accountId)}
                   onClick={async () => {
-                    setBusy(true);
                     setErr(null);
+                    if (inventoryImpact) {
+                      let info: { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number };
+                      try {
+                        info = getInventoryLinkInfo();
+                      } catch (e: any) {
+                        setErr(e.message);
+                        return;
+                      }
+
+                      if (!invDetails.length || !invConfirmed || invConfirmed.mode !== info.mode || invConfirmed.expectedTxn !== info.expectedTxn) {
+                        setErr("请先在 1500 Inventory 行右侧点击“填写”录入库存明细，然后再创建草稿。");
+                        try {
+                          openInventoryDetailsModal();
+                        } catch {
+                          // ignore
+                        }
+                        return;
+                      }
+
+                      if (info.mode === "receipt") {
+                        const totalTxn = Math.round(invDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100;
+                        if (Math.round(totalTxn * 100) / 100 !== Math.round(info.expectedTxn * 100) / 100) {
+                          setErr("库存入库明细总金额必须与分录中 1500 Inventory 的借方金额一致。");
+                          try {
+                            openInventoryDetailsModal();
+                          } catch {
+                            // ignore
+                          }
+                          return;
+                        }
+                      }
+
+                      if (info.mode === "shipment") {
+                        if (Math.round(invConfirmed.quoteBase * 100) / 100 !== Math.round(info.expectedBase * 100) / 100) {
+                          setErr("库存出库 FIFO 成本必须与分录中 1500 Inventory 的贷方金额一致（以本位比较）。");
+                          try {
+                            openInventoryDetailsModal();
+                          } catch {
+                            // ignore
+                          }
+                          return;
+                        }
+                      }
+
+                      setBusy(true);
+                      try {
+                        const payload = {
+                          entryDate: draftDate,
+                          currency: draftCurrency,
+                          fxRate: draftFx,
+                          memo: draftMemo,
+                          inventoryImpact: true,
+                          inventoryDetails: invDetails.map((d) =>
+                            info.mode === "receipt"
+                              ? { moveType: "receipt", itemId: d.itemId, qty: d.qty, unitCostTxn: d.unitCostTxn }
+                              : { moveType: "shipment", itemId: d.itemId, qty: d.qty },
+                          ),
+                          lines: draftLines.map((l) => ({
+                            accountId: l.accountId,
+                            description: l.description || undefined,
+                            costCenterId: l.costCenterId ? l.costCenterId : null,
+                            debitTxn: Number(l.debitTxn) || 0,
+                            creditTxn: Number(l.creditTxn) || 0,
+                          })),
+                        };
+                        const resp = await api<{ entry: { id: string } }>("/api/journals", { method: "POST", json: payload });
+                        await refresh();
+                        setSelectedId(resp.entry.id);
+                      } catch (e: any) {
+                        setErr(e.message);
+                      } finally {
+                        setBusy(false);
+                      }
+                      return;
+                    }
+
+                    setBusy(true);
                     try {
                       const resp = await api<{ entry: { id: string } }>("/api/journals", {
                         method: "POST",
@@ -364,7 +563,7 @@ export default function Journal() {
                           currency: draftCurrency,
                           fxRate: draftFx,
                           memo: draftMemo,
-                          inventoryImpact,
+                          inventoryImpact: false,
                           lines: draftLines.map((l) => ({
                             accountId: l.accountId,
                             description: l.description || undefined,
@@ -490,6 +689,182 @@ export default function Journal() {
             )}
           </div>
       </div>
+
+      {invModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold">{invMode === "receipt" ? "库存入库明细" : "库存出库明细"}</div>
+              <div className="text-xs text-zinc-500">分录存货金额：{invMode === "receipt" ? invExpectedTxn.toFixed(2) : invExpectedBase.toFixed(2) + "(本位)"}</div>
+            </div>
+
+            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs text-zinc-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">商品</th>
+                    <th className="px-3 py-2 text-right">数量</th>
+                    {invMode === "receipt" ? <th className="px-3 py-2 text-right">单价({draftCurrency})</th> : <th className="px-3 py-2 text-right">FIFO 成本(本位)</th>}
+                    <th className="px-3 py-2 text-right">金额</th>
+                    <th className="px-3 py-2 text-left">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invEditingDetails.map((r) => {
+                    const q = invQuoteByRow[r.rowId];
+                    const qty = Number(r.qty) || 0;
+                    const unit = Number(r.unitCostTxn) || 0;
+                    const amtTxn = Math.round(qty * unit * 100) / 100;
+                    const costBase = q?.base == null ? null : Number(q.base);
+                    const costTxn = costBase == null ? null : Math.round((costBase / (draftFx || 1)) * 100) / 100;
+                    return (
+                      <tr key={r.rowId} className="border-t border-zinc-100">
+                        <td className="px-3 py-2">
+                          <select
+                            className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                            value={r.itemId}
+                            onChange={(e) => {
+                              const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, itemId: e.target.value } : x));
+                              setInvEditingDetails(next);
+                            }}
+                          >
+                            <option value="">请选择</option>
+                            {inventoryItems.map((it) => (
+                              <option key={it.id} value={it.id}>
+                                {it.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                            type="number"
+                            step="0.0001"
+                            value={r.qty}
+                            onChange={(e) => {
+                              const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, qty: Number(e.target.value) || 0 } : x));
+                              setInvEditingDetails(next);
+                            }}
+                          />
+                        </td>
+                        {invMode === "receipt" ? (
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                              type="number"
+                              step="0.0001"
+                              value={r.unitCostTxn}
+                              onChange={(e) => {
+                                const next = invEditingDetails.map((x) => (x.rowId === r.rowId ? { ...x, unitCostTxn: Number(e.target.value) || 0 } : x));
+                                setInvEditingDetails(next);
+                              }}
+                            />
+                          </td>
+                        ) : (
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {q?.err ? <span className="text-red-700">{q.err}</span> : costBase == null ? "-" : costBase.toFixed(2)}
+                          </td>
+                        )}
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          {invMode === "receipt" ? `${amtTxn.toFixed(2)} ${draftCurrency}` : costTxn == null ? "-" : `${costTxn.toFixed(2)} ${draftCurrency}`}
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                            disabled={invEditingDetails.length <= 1}
+                            onClick={() => {
+                              setInvEditingDetails(invEditingDetails.filter((x) => x.rowId !== r.rowId));
+                              setInvQuoteByRow((prev) => {
+                                const next = { ...prev };
+                                delete next[r.rowId];
+                                return next;
+                              });
+                            }}
+                            type="button"
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {invMode === "receipt" ? (
+              <div className="mt-3 text-sm">
+                <div>
+                  明细合计：{invEditingTotals.totalTxn.toFixed(2)} {draftCurrency}；分录金额：{invExpectedTxn.toFixed(2)} {draftCurrency}
+                </div>
+                {Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100 ? (
+                  <div className="mt-1 text-sm text-red-700">明细合计必须与分录中 1500 Inventory 的借方金额一致。</div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="mt-3 text-sm">
+                <div>
+                  FIFO 合计：{invEditingTotals.totalQuoteBase.toFixed(2)} (本位)；分录金额：{invExpectedBase.toFixed(2)} (本位)
+                </div>
+                {invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.err) ? (
+                  <div className="mt-1 text-sm text-red-700">存在库存不足或数据错误，请调整商品/数量。</div>
+                ) : null}
+                {invEditingDetails.some((r) => r.itemId && r.qty > 0 && invQuoteByRow[r.rowId]?.base == null && !invQuoteByRow[r.rowId]?.err) ? (
+                  <div className="mt-1 text-xs text-zinc-500">正在计算 FIFO 成本…</div>
+                ) : null}
+                {Math.round(invEditingTotals.totalQuoteBase * 100) / 100 !== Math.round(invExpectedBase * 100) / 100 ? (
+                  <div className="mt-1 text-sm text-red-700">FIFO 合计必须与分录中 1500 Inventory 的贷方金额一致（以本位比较）。</div>
+                ) : null}
+              </div>
+            )}
+
+            <div className="mt-3 flex items-center justify-between">
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                onClick={() => {
+                  setInvEditingDetails([
+                    ...invEditingDetails,
+                    { rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: 1, unitCostTxn: invMode === "receipt" ? 1 : 0 },
+                  ]);
+                }}
+                type="button"
+              >
+                增加行
+              </button>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  onClick={() => setInvModalOpen(false)}
+                  disabled={busy}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={
+                    busy ||
+                    invEditingDetails.some((r) => !r.itemId || r.qty <= 0 || (invMode === "receipt" && r.unitCostTxn <= 0)) ||
+                    (invMode === "receipt"
+                      ? Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100
+                      : invEditingDetails.some((r) => invQuoteByRow[r.rowId]?.base == null || invQuoteByRow[r.rowId]?.err) ||
+                        Math.round(invEditingTotals.totalQuoteBase * 100) / 100 !== Math.round(invExpectedBase * 100) / 100)
+                  }
+                  onClick={() => {
+                    setInvDetails(invEditingDetails);
+                    setInvConfirmed({ mode: invMode, expectedTxn: invExpectedTxn, expectedBase: invExpectedBase, quoteBase: invMode === "shipment" ? invEditingTotals.totalQuoteBase : 0 });
+                    setInvModalOpen(false);
+                  }}
+                  type="button"
+                >
+                  确认
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

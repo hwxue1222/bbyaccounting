@@ -199,11 +199,19 @@ export async function ensureMigrated(): Promise<void> {
       move_date DATE NOT NULL,
       qty NUMERIC(18,4) NOT NULL,
       unit_cost_base NUMERIC(18,6),
+      unit_cost_txn NUMERIC(18,6),
+      currency_code TEXT,
+      fx_rate NUMERIC(18,8),
+      status TEXT NOT NULL DEFAULT 'posted',
       entry_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_inventory_moves_item ON inventory_moves(org_id, item_id, move_date)`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS unit_cost_txn NUMERIC(18,6)`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS currency_code TEXT`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,8)`;
+  await sql`ALTER TABLE inventory_moves ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'posted'`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS fixed_assets (
