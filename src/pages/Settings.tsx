@@ -11,6 +11,7 @@ type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: numb
 export default function Settings() {
   const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg } = useAuthStore();
   const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
+  const [rightTab, setRightTab] = useState<"accounts" | "costCenters" | "currencies" | "fxRates">("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -223,7 +224,56 @@ export default function Settings() {
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
+            <div className="grid grid-cols-4 gap-1">
+              <button
+                className={
+                  rightTab === "accounts"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setRightTab("accounts")}
+              >
+                科目
+              </button>
+              <button
+                className={
+                  rightTab === "costCenters"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setRightTab("costCenters")}
+              >
+                Cost Center
+              </button>
+              <button
+                className={
+                  rightTab === "currencies"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setRightTab("currencies")}
+              >
+                币种
+              </button>
+              <button
+                className={
+                  rightTab === "fxRates"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setRightTab("fxRates")}
+              >
+                汇率
+              </button>
+            </div>
+          </div>
+
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (rightTab === "accounts" ? "" : "hidden")}>
             <div className="text-sm font-semibold">Chart of Accounts</div>
 
             <div className="mt-3 grid gap-3 md:grid-cols-5">
@@ -319,7 +369,7 @@ export default function Settings() {
             </div>
           </div>
 
-          {editingAccountId ? (
+          {editingAccountId && rightTab === "accounts" ? (
             <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold">编辑科目</div>
@@ -392,7 +442,7 @@ export default function Settings() {
             </div>
           ) : null}
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (rightTab === "costCenters" ? "" : "hidden")}>
             <div className="text-sm font-semibold">Cost Centers</div>
 
             <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -448,7 +498,7 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (rightTab === "currencies" ? "" : "hidden")}>
             <div className="text-sm font-semibold">Currencies</div>
             {active ? <div className="mt-1 text-xs text-zinc-600">Base currency: {active.baseCurrency}（默认）</div> : null}
 
@@ -513,7 +563,7 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (rightTab === "fxRates" ? "" : "hidden")}>
             <div className="text-sm font-semibold">FX Rates</div>
 
             <div className="mt-3 grid gap-3 md:grid-cols-4">
