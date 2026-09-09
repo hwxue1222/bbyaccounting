@@ -37,6 +37,19 @@ app.use(cookieParser())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+/**
+ * liveness
+ */
+app.use(
+  '/api/health',
+  (_req: Request, res: Response, _next: NextFunction): void => {
+    res.status(200).json({
+      success: true,
+      message: 'ok',
+    })
+  },
+)
+
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
     await ensureMigrated()
@@ -58,15 +71,12 @@ app.use('/api/fixed-assets', fixedAssetsRoutes)
 app.use('/api/reports', reportRoutes)
 
 /**
- * health
+ * readiness (depends on DB)
  */
 app.use(
-  '/api/health',
-  (req: Request, res: Response, _next: NextFunction): void => {
-    res.status(200).json({
-      success: true,
-      message: 'ok',
-    })
+  '/api/ready',
+  async (_req: Request, res: Response): Promise<void> => {
+    res.status(200).json({ success: true, message: 'ready' })
   },
 )
 
@@ -74,10 +84,16 @@ app.use(
  * error handler middleware
  */
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
-  res.status(500).json({
-    success: false,
-    error: 'Server internal error',
-  })
+  const msg = typeof error?.message === 'string' ? error.message : ''
+  const safe =
+    msg.includes('Missing DATABASE_URL')
+      ? 'Missing DATABASE_URL'
+      : msg.includes('ECONNREFUSED')
+        ? 'Database connection failed'
+        : msg.includes('password authentication failed')
+          ? 'Database authentication failed'
+          : 'Server internal error'
+  res.status(500).json({ success: false, error: safe })
 })
 
 /**

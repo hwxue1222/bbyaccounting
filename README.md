@@ -43,6 +43,41 @@ pnpm run dev
 - 需要外部 PostgreSQL（推荐 Vercel Postgres / Neon 等），并在 Vercel 项目环境变量中设置 `DATABASE_URL` 与 `JWT_SECRET`。
 - API 入口为 `api/index.ts`，前端通过 `vercel.json` 的 rewrites 访问 `/api/*`。
 
+### 使用 Neon（推荐）
+
+1) 安装并登录 Neon CLI
+
+```bash
+npm i -g neon@latest
+neon login
+```
+
+2) 在项目根目录启用 Neon 的配置（本仓库已包含 `neon.ts`）
+
+```bash
+pnpm install
+neon skills -y
+neon mcp -y
+neon link --project-id floral-math-85388538 --branch production -y
+neon config init
+neon deploy
+```
+
+3) 在 Vercel 设置环境变量并重新部署
+
+- `DATABASE_URL`: Neon 提供的 Postgres 连接串（建议使用 pooled 连接串，并包含 `sslmode=require`）
+- `JWT_SECRET`: 随机长字符串（建议 32+ 字符）
+- `APP_ORIGIN`: `https://bbyaccounting.vercel.app`（有自定义域名就填自定义域名；多域名用英文逗号分隔）
+
+Vercel → Project → Settings → Environment Variables 添加完成后，去 Deployments 选择最新一条部署记录 `Redeploy`。
+
+4) 部署后验证
+
+- `https://<你的域名>/api/health` 应返回 `{"success":true,"message":"ok"}`
+- `https://<你的域名>/api/ready` 应返回 `{"success":true,"message":"ready"}`
+
+如果 `/api/ready` 返回 `Missing DATABASE_URL` 或 `Database authentication failed`，说明 Vercel 环境变量未配置或数据库连接不可用。
+
 ## 常用命令
 
 ```bash

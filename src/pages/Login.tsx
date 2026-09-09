@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -9,6 +9,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("BBY Demo");
   const [baseCurrency, setBaseCurrency] = useState("SGD");
+  const [backendReady, setBackendReady] = useState<null | { ok: boolean; message?: string }>(null);
 
   const disabled = useMemo(() => {
     if (status === "loading") return true;
@@ -16,6 +17,29 @@ export default function Login() {
     if (mode === "register" && !orgName.trim()) return true;
     return false;
   }, [status, email, password, mode, orgName]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/ready", { credentials: "include" });
+        const json = (await res.json().catch(() => null)) as any;
+        if (cancelled) return;
+        if (!res.ok || json?.success === false) {
+          const msg = typeof json?.error === "string" ? json.error : `HTTP ${res.status}`;
+          setBackendReady({ ok: false, message: msg });
+          return;
+        }
+        setBackendReady({ ok: true });
+      } catch (e: any) {
+        if (cancelled) return;
+        setBackendReady({ ok: false, message: typeof e?.message === "string" ? e.message : "Backend not reachable" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (status === "authed") {
     return <Navigate to="/" replace />;
@@ -54,6 +78,14 @@ export default function Login() {
           </div>
 
           <div className="space-y-3">
+            {backendReady && !backendReady.ok ? (
+              <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                后端未就绪：{backendReady.message || "unknown error"}
+                <div className="mt-1 text-xs text-amber-700">
+                  Vercel 需要配置 `DATABASE_URL`、`JWT_SECRET`，并将 `APP_ORIGIN` 设为当前域名。
+                </div>
+              </div>
+            ) : null}
             <div>
               <label className="text-xs text-zinc-600">邮箱</label>
               <input
@@ -123,4 +155,3 @@ export default function Login() {
     </div>
   );
 }
-
