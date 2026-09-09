@@ -10,6 +10,7 @@ type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: numb
 
 export default function Settings() {
   const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg } = useAuthStore();
+  const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -81,7 +82,46 @@ export default function Settings() {
     <AppShell title="设置">
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                className={
+                  leftTab === "switch"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setLeftTab("switch")}
+              >
+                公司切换
+              </button>
+              <button
+                className={
+                  leftTab === "profile"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setLeftTab("profile")}
+              >
+                公司资料
+              </button>
+              <button
+                className={
+                  leftTab === "invite"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setLeftTab("invite")}
+              >
+                邀请用户
+              </button>
+            </div>
+          </div>
+
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (leftTab === "switch" ? "" : "hidden")}
+          >
             <div className="text-sm font-semibold">公司与切换</div>
             <div className="mt-3 flex items-center gap-2">
               <select
@@ -102,7 +142,8 @@ export default function Settings() {
             {active ? <div className="mt-2 text-sm text-zinc-600">Base currency: {active.baseCurrency}</div> : null}
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (leftTab === "profile" ? "" : "hidden")}
+          >
             <div className="text-sm font-semibold">公司资料</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div className="md:col-span-2">
@@ -134,7 +175,8 @@ export default function Settings() {
             </button>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (leftTab === "invite" ? "" : "hidden")}
+          >
             <div className="text-sm font-semibold">邀请用户</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
