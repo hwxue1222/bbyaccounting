@@ -882,19 +882,25 @@ export default function Journal() {
                 </tr>
               </thead>
               <tbody>
-                {entries
-                  .filter((e) => !e.isSystem)
-                  .map((e) => (
+                {entries.map((e) => (
                   <tr
                     key={e.id}
                     className={
                       "cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
+                      (e.isSystem ? "bg-amber-50/40 " : "") +
                       (selectedId === e.id ? "bg-blue-50" : "")
                     }
                     onClick={() => setSelectedId(e.id)}
                   >
                     <td className="px-3 py-2">{e.entryDate}</td>
-                    <td className="px-3 py-2 text-sm">{e.voucherNo || "-"}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span>{e.voucherNo || "-"}</span>
+                        {e.isSystem ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">系统</span>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-3 py-2">
                       <span
                         className={
@@ -917,7 +923,7 @@ export default function Journal() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                          disabled={busy}
+                          disabled={busy || Boolean(e.isSystem)}
                           type="button"
                           onClick={async (ev) => {
                             ev.preventDefault();
@@ -930,7 +936,7 @@ export default function Journal() {
                         </button>
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                          disabled={busy}
+                          disabled={busy || Boolean(e.isSystem)}
                           type="button"
                           onClick={async (ev) => {
                             ev.preventDefault();
