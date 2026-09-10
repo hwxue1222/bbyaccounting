@@ -62,8 +62,8 @@ export default function Reports() {
         setRows(r.rows);
       } else {
         const accountParam = accountId ? `accountId=${encodeURIComponent(accountId)}&` : "";
-        const r = await api<{ lines: any[] }>(`/api/reports/gl?${accountParam}start=${start}&end=${end}${ccParam}`);
-        setRows(r.lines);
+        const r = await api<{ sections: any[] }>(`/api/reports/gl?${accountParam}start=${start}&end=${end}${ccParam}`);
+        setRows(r.sections);
       }
     } catch (e: any) {
       setErr(e.message);
@@ -112,6 +112,46 @@ export default function Reports() {
 
     return rows;
   }, [rows, tab, hideZero]);
+
+  function fmtBalance(net: number) {
+    const n = Number(net || 0);
+    const abs = Math.abs(n);
+    const side = n >= 0 ? "Dr" : "Cr";
+    return `${abs.toFixed(2)} ${side}`;
+  }
+
+  const glRows = useMemo(() => {
+    if (tab !== "gl") return [] as any[];
+
+    const sections = Array.isArray(displayRows) ? (displayRows as any[]) : [];
+    const out: any[] = [];
+    const isZero = (x: number) => Math.round(Number(x || 0) * 100) / 100 === 0;
+
+    for (const s of sections) {
+      const accountsIn = Array.isArray(s.accounts) ? s.accounts : [];
+      const accounts = hideZero
+        ? accountsIn.filter((a: any) => {
+            const opening = Number(a.openingNet || 0);
+            const closing = Number(a.closingNet || 0);
+            const pd = Number(a.periodDebit || 0);
+            const pc = Number(a.periodCredit || 0);
+            return !(isZero(opening) && isZero(closing) && isZero(pd) && isZero(pc));
+          })
+        : accountsIn;
+
+      if (!accounts.length) continue;
+
+      out.push({ kind: "section", label: s.label || s.type });
+      for (const a of accounts) {
+        out.push({ kind: "account", accountCode: a.accountCode, accountName: a.accountName });
+        out.push({ kind: "opening", balanceNet: Number(a.openingNet || 0) });
+        for (const l of a.lines || []) out.push(l);
+        out.push({ kind: "closing", balanceNet: Number(a.closingNet || 0) });
+      }
+    }
+
+    return out;
+  }, [tab, displayRows, hideZero]);
 
   return (
     <AppShell title={tr("报表", "Reports")}>
@@ -201,11 +241,13 @@ export default function Reports() {
             <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
               {tab === "gl" ? (
                 <tr>
-                  {!accountId ? <th className="px-3 py-2 text-left">科目</th> : null}
+                  <th className="px-3 py-2 text-left">科目</th>
                   <th className="px-3 py-2 text-left">日期</th>
                   <th className="px-3 py-2 text-left">摘要</th>
+                  <th className="px-3 py-2 text-left">成本中心</th>
                   <th className="px-3 py-2 text-right">借</th>
                   <th className="px-3 py-2 text-right">贷</th>
+                  <th className="px-3 py-2 text-right">余额</th>
                 </tr>
               ) : tab === "tb" ? (
                 <tr>
@@ -231,52 +273,103 @@ export default function Reports() {
               )}
             </thead>
             <tbody>
-              {displayRows.map((r, idx) =>
-                tab === "gl" ? (
-                  <tr key={idx} className="border-t border-zinc-100">
-                    {!accountId ? <td className="px-3 py-2">{r.accountCode ? `${r.accountCode} ${r.accountName || ""}`.trim() : ""}</td> : null}
-                    <td className="px-3 py-2">{r.entryDate}</td>
-                    <td className="px-3 py-2">{r.memo || r.description || ""}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.creditBase ?? 0).toFixed(2)}</td>
-                  </tr>
-                ) : tab === "tb" ? (
-                  <tr key={idx} className="border-t border-zinc-100">
-                    <td className="px-3 py-2">{r.code}</td>
-                    <td className="px-3 py-2">{r.name}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.openingDebit ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.openingCredit ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.periodDebit ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.periodCredit ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.closingDebit ?? 0).toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.closingCredit ?? 0).toFixed(2)}</td>
-                  </tr>
-                ) : tab === "pl" ? (
-                  <tr
-                    key={idx}
-                    className={
-                      ("border-t border-zinc-100 " +
-                        (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
+              {tab === "gl"
+                ? glRows.map((r, idx) => {
+                    if (r.kind === "section") {
+                      return (
+                        <tr key={idx} className="border-t border-zinc-100 bg-zinc-50 font-semibold">
+                          <td className="px-3 py-2" colSpan={7}>
+                            {r.label}
+                          </td>
+                        </tr>
+                      );
                     }
-                  >
-                    <td className={"px-3 py-2 " + (r.isHeader ? "text-zinc-900" : "")}>{r.isHeader ? r.name : `${r.code ? `${r.code} ` : ""}${r.name || ""}`.trim()}</td>
-                    <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
-                  </tr>
-                ) : (
-                  <tr
-                    key={idx}
-                    className={
-                      ("border-t border-zinc-100 " +
-                        (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
+                    if (r.kind === "account") {
+                      return (
+                        <tr key={idx} className="border-t border-zinc-100 bg-white font-semibold">
+                          <td className="px-3 py-2" colSpan={7}>
+                            {`${r.accountCode} ${r.accountName}`.trim()}
+                          </td>
+                        </tr>
+                      );
                     }
-                  >
-                    <td className="px-3 py-2" style={{ paddingLeft: `${8 + (Number(r.indent || 0) * 16)}px` }}>
-                      {r.label || r.name || ""}
-                    </td>
-                    <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
-                  </tr>
-                ),
-              )}
+                    if (r.kind === "opening") {
+                      return (
+                        <tr key={idx} className="border-t border-zinc-100 bg-white">
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-zinc-600">Opening Balance</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                          <td className="px-3 py-2 text-right">{fmtBalance(Number(r.balanceNet || 0))}</td>
+                        </tr>
+                      );
+                    }
+                    if (r.kind === "closing") {
+                      return (
+                        <tr key={idx} className="border-t border-zinc-100 bg-zinc-50 font-medium">
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-zinc-700">Closing Balance</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                          <td className="px-3 py-2 text-right">{fmtBalance(Number(r.balanceNet || 0))}</td>
+                        </tr>
+                      );
+                    }
+                    const cc = r.costCenterCode ? `${r.costCenterCode} ${r.costCenterName || ""}`.trim() : "";
+                    return (
+                      <tr key={idx} className="border-t border-zinc-100">
+                        <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2">{r.entryDate}</td>
+                        <td className="px-3 py-2">{r.memo || r.description || ""}</td>
+                        <td className="px-3 py-2">{cc}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.creditBase ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{fmtBalance(Number(r.balanceNet || 0))}</td>
+                      </tr>
+                    );
+                  })
+                : displayRows.map((r, idx) =>
+                    tab === "tb" ? (
+                      <tr key={idx} className="border-t border-zinc-100">
+                        <td className="px-3 py-2">{r.code}</td>
+                        <td className="px-3 py-2">{r.name}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.openingDebit ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.openingCredit ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.periodDebit ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.periodCredit ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.closingDebit ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{Number(r.closingCredit ?? 0).toFixed(2)}</td>
+                      </tr>
+                    ) : tab === "pl" ? (
+                      <tr
+                        key={idx}
+                        className={
+                          ("border-t border-zinc-100 " +
+                            (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
+                        }
+                      >
+                        <td className={"px-3 py-2 " + (r.isHeader ? "text-zinc-900" : "")}>{r.isHeader ? r.name : `${r.code ? `${r.code} ` : ""}${r.name || ""}`.trim()}</td>
+                        <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
+                      </tr>
+                    ) : (
+                      <tr
+                        key={idx}
+                        className={
+                          ("border-t border-zinc-100 " +
+                            (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
+                        }
+                      >
+                        <td className="px-3 py-2" style={{ paddingLeft: `${8 + Number(r.indent || 0) * 16}px` }}>
+                          {r.label || r.name || ""}
+                        </td>
+                        <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
+                      </tr>
+                    ),
+                  )}
             </tbody>
           </table>
         </div>

@@ -928,132 +928,147 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
   const costCenterId = q.data.costCenterId;
 
   const accountId = q.data.accountId;
-  const baseWhere = {
-    orgId,
-    start: q.data.start,
-    end: q.data.end,
+
+  const ccWhere =
+    costCenterId === undefined
+      ? sql``
+      : costCenterId === "__none__"
+        ? sql`AND l.cost_center_id IS NULL`
+        : sql`AND l.cost_center_id = ${costCenterId}`;
+
+  const accWhere = accountId ? sql`AND a.id = ${accountId}` : sql``;
+
+  const accounts = (await sql`
+    SELECT id as "accountId", code as "accountCode", name as "accountName", type as "accountType", normal_balance as "normalBalance"
+    FROM accounts a
+    WHERE a.org_id = ${orgId} AND a.is_active = true
+    ${accWhere}
+    ORDER BY a.code ASC
+  `) as any[];
+
+  const openingRows = (await sql`
+    SELECT
+      l.account_id as "accountId",
+      COALESCE(SUM(l.debit_base - l.credit_base), 0) as "openingNet"
+    FROM journal_lines l
+    JOIN journal_entries e ON e.id = l.entry_id
+    WHERE l.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date < ${q.data.start}
+      ${ccWhere}
+    GROUP BY l.account_id
+  `) as any[];
+
+  const openingByAccount = new Map<string, number>();
+  for (const r of openingRows) {
+    openingByAccount.set(String(r.accountId), Number(r.openingNet || 0));
+  }
+
+  const lineRows = (await sql`
+    SELECT
+      l.account_id as "accountId",
+      to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
+      e.id as "entryId",
+      e.memo,
+      l.description,
+      l.cost_center_id as "costCenterId",
+      cc.code as "costCenterCode",
+      cc.name as "costCenterName",
+      l.debit_base as "debitBase",
+      l.credit_base as "creditBase"
+    FROM journal_lines l
+    JOIN journal_entries e ON e.id = l.entry_id
+    LEFT JOIN cost_centers cc ON cc.id = l.cost_center_id
+    WHERE l.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date >= ${q.data.start}
+      AND e.entry_date <= ${q.data.end}
+      ${ccWhere}
+      ${accountId ? sql`AND l.account_id = ${accountId}` : sql``}
+    ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
+  `) as any[];
+
+  const linesByAccount = new Map<string, any[]>();
+  for (const r of lineRows) {
+    const id = String(r.accountId);
+    const arr = linesByAccount.get(id) ?? [];
+    arr.push(r);
+    linesByAccount.set(id, arr);
+  }
+
+  const typeOrder = ["asset", "liability", "equity", "income", "cogs", "expense"];
+  const typeLabel: Record<string, string> = {
+    asset: "Assets",
+    liability: "Liabilities",
+    equity: "Equity",
+    income: "Sales",
+    cogs: "Cost",
+    expense: "Expense",
   };
 
-  const lines =
-    accountId === undefined
-      ? costCenterId === undefined
-        ? await sql`
-            SELECT
-              e.entry_date as "entryDate",
-              e.id as "entryId",
-              e.memo,
-              a.code as "accountCode",
-              a.name as "accountName",
-              l.description,
-              l.debit_base as "debitBase",
-              l.credit_base as "creditBase"
-            FROM journal_lines l
-            JOIN journal_entries e ON e.id = l.entry_id
-            JOIN accounts a ON a.id = l.account_id
-            WHERE l.org_id = ${baseWhere.orgId}
-              AND e.status = 'posted'
-              AND e.entry_date >= ${baseWhere.start}
-              AND e.entry_date <= ${baseWhere.end}
-            ORDER BY a.code ASC, e.entry_date ASC, e.created_at ASC, l.line_no ASC
-          `
-        : costCenterId === "__none__"
-          ? await sql`
-              SELECT
-                e.entry_date as "entryDate",
-                e.id as "entryId",
-                e.memo,
-                a.code as "accountCode",
-                a.name as "accountName",
-                l.description,
-                l.debit_base as "debitBase",
-                l.credit_base as "creditBase"
-              FROM journal_lines l
-              JOIN journal_entries e ON e.id = l.entry_id
-              JOIN accounts a ON a.id = l.account_id
-              WHERE l.org_id = ${baseWhere.orgId}
-                AND e.status = 'posted'
-                AND e.entry_date >= ${baseWhere.start}
-                AND e.entry_date <= ${baseWhere.end}
-                AND l.cost_center_id IS NULL
-              ORDER BY a.code ASC, e.entry_date ASC, e.created_at ASC, l.line_no ASC
-            `
-          : await sql`
-              SELECT
-                e.entry_date as "entryDate",
-                e.id as "entryId",
-                e.memo,
-                a.code as "accountCode",
-                a.name as "accountName",
-                l.description,
-                l.debit_base as "debitBase",
-                l.credit_base as "creditBase"
-              FROM journal_lines l
-              JOIN journal_entries e ON e.id = l.entry_id
-              JOIN accounts a ON a.id = l.account_id
-              WHERE l.org_id = ${baseWhere.orgId}
-                AND e.status = 'posted'
-                AND e.entry_date >= ${baseWhere.start}
-                AND e.entry_date <= ${baseWhere.end}
-                AND l.cost_center_id = ${costCenterId}
-              ORDER BY a.code ASC, e.entry_date ASC, e.created_at ASC, l.line_no ASC
-            `
-      : costCenterId === undefined
-        ? await sql`
-            SELECT
-              e.entry_date as "entryDate",
-              e.id as "entryId",
-              e.memo,
-              l.description,
-              l.debit_base as "debitBase",
-              l.credit_base as "creditBase"
-            FROM journal_lines l
-            JOIN journal_entries e ON e.id = l.entry_id
-            WHERE l.org_id = ${baseWhere.orgId}
-              AND l.account_id = ${accountId}
-              AND e.status = 'posted'
-              AND e.entry_date >= ${baseWhere.start}
-              AND e.entry_date <= ${baseWhere.end}
-            ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
-          `
-        : costCenterId === "__none__"
-          ? await sql`
-              SELECT
-                e.entry_date as "entryDate",
-                e.id as "entryId",
-                e.memo,
-                l.description,
-                l.debit_base as "debitBase",
-                l.credit_base as "creditBase"
-              FROM journal_lines l
-              JOIN journal_entries e ON e.id = l.entry_id
-              WHERE l.org_id = ${baseWhere.orgId}
-                AND l.account_id = ${accountId}
-                AND e.status = 'posted'
-                AND e.entry_date >= ${baseWhere.start}
-                AND e.entry_date <= ${baseWhere.end}
-                AND l.cost_center_id IS NULL
-              ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
-            `
-          : await sql`
-              SELECT
-                e.entry_date as "entryDate",
-                e.id as "entryId",
-                e.memo,
-                l.description,
-                l.debit_base as "debitBase",
-                l.credit_base as "creditBase"
-              FROM journal_lines l
-              JOIN journal_entries e ON e.id = l.entry_id
-              WHERE l.org_id = ${baseWhere.orgId}
-                AND l.account_id = ${accountId}
-                AND e.status = 'posted'
-                AND e.entry_date >= ${baseWhere.start}
-                AND e.entry_date <= ${baseWhere.end}
-                AND l.cost_center_id = ${costCenterId}
-              ORDER BY e.entry_date ASC, e.created_at ASC, l.line_no ASC
-            `;
+  const accountsSorted = accounts
+    .slice()
+    .sort((a, b) => {
+      const ta = String(a.accountType);
+      const tb = String(b.accountType);
+      const ia = typeOrder.indexOf(ta);
+      const ib = typeOrder.indexOf(tb);
+      const da = ia === -1 ? 999 : ia;
+      const db = ib === -1 ? 999 : ib;
+      if (da !== db) return da - db;
+      return String(a.accountCode).localeCompare(String(b.accountCode));
+    });
 
-  res.status(200).json({ success: true, data: { lines } });
+  const sections: any[] = [];
+  const sectionByType = new Map<string, any>();
+  for (const a of accountsSorted) {
+    const t = String(a.accountType);
+    if (!sectionByType.has(t)) {
+      const s = { type: t, label: typeLabel[t] ?? t, accounts: [] as any[] };
+      sectionByType.set(t, s);
+      sections.push(s);
+    }
+    const openingNet = openingByAccount.get(String(a.accountId)) ?? 0;
+    let runningNet = openingNet;
+    let periodDebit = 0;
+    let periodCredit = 0;
+    const tx = (linesByAccount.get(String(a.accountId)) ?? []).map((x) => {
+      const debit = Number(x.debitBase || 0);
+      const credit = Number(x.creditBase || 0);
+      periodDebit += debit;
+      periodCredit += credit;
+      runningNet = runningNet + (debit - credit);
+      return {
+        kind: "txn",
+        entryDate: String(x.entryDate),
+        entryId: String(x.entryId),
+        memo: x.memo == null ? null : String(x.memo),
+        description: x.description == null ? null : String(x.description),
+        costCenterId: x.costCenterId == null ? null : String(x.costCenterId),
+        costCenterCode: x.costCenterCode == null ? null : String(x.costCenterCode),
+        costCenterName: x.costCenterName == null ? null : String(x.costCenterName),
+        debitBase: debit,
+        creditBase: credit,
+        balanceNet: runningNet,
+      };
+    });
+
+    const closingNet = runningNet;
+    (sectionByType.get(t) as any).accounts.push({
+      accountId: String(a.accountId),
+      accountCode: String(a.accountCode),
+      accountName: String(a.accountName),
+      accountType: t,
+      normalBalance: String(a.normalBalance),
+      openingNet,
+      closingNet,
+      periodDebit,
+      periodCredit,
+      lines: tx,
+    });
+  }
+
+  res.status(200).json({ success: true, data: { sections } });
 });
 
 export default router;
