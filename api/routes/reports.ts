@@ -331,7 +331,8 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
     cost_period AS (
       SELECT
         l.fixed_asset_id as asset_id,
-        COALESCE(SUM(l.debit_base - l.credit_base), 0) as amount
+        COALESCE(SUM(l.debit_base), 0) as debit,
+        COALESCE(SUM(l.credit_base), 0) as credit
       FROM journal_lines l
       JOIN journal_entries e ON e.id = l.entry_id
       JOIN assets a ON a.id = l.fixed_asset_id
@@ -391,14 +392,14 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
       to_char(a.acquisition_date, 'YYYY-MM-DD') as "acquisitionDate",
       a.status,
       COALESCE(co.amount, 0) as "openingCost",
-      GREATEST(COALESCE(cp.amount, 0), 0) as "additions",
-      GREATEST(-COALESCE(cp.amount, 0), 0) as "disposals",
-      (COALESCE(co.amount, 0) + GREATEST(COALESCE(cp.amount, 0), 0) - GREATEST(-COALESCE(cp.amount, 0), 0)) as "closingCost",
+      COALESCE(cp.debit, 0) as "additions",
+      COALESCE(cp.credit, 0) as "disposals",
+      (COALESCE(co.amount, 0) + COALESCE(cp.debit, 0) - COALESCE(cp.credit, 0)) as "closingCost",
       COALESCE(ao.amount, 0) as "openingAccumDep",
       COALESCE(dp.amount, 0) as "depExpense",
       COALESCE(adp.amount, 0) as "accumDepDisposed",
       (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0)) as "closingAccumDep",
-      ((COALESCE(co.amount, 0) + GREATEST(COALESCE(cp.amount, 0), 0) - GREATEST(-COALESCE(cp.amount, 0), 0)) - (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0))) as "netBookValue"
+      ((COALESCE(co.amount, 0) + COALESCE(cp.debit, 0) - COALESCE(cp.credit, 0)) - (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0))) as "netBookValue"
     FROM assets a
     LEFT JOIN cost_open co ON co.asset_id = a.id
     LEFT JOIN cost_period cp ON cp.asset_id = a.id
