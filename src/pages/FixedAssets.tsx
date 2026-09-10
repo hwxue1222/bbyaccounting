@@ -259,6 +259,11 @@ export default function FixedAssets() {
     );
   }
 
+  function fmtDisposal(v: unknown): string {
+    const n = Math.abs(Number(v) || 0);
+    return `(${n.toFixed(2)})`;
+  }
+
   async function refresh() {
     const [{ accounts }, { assets }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
@@ -880,8 +885,8 @@ export default function FixedAssets() {
                           </button>
                         </td>
                         <td className="px-3 py-2">{e.assetNos || ""}</td>
-                        <td className="px-3 py-2 text-right">{Number(e.costDisposed || 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(e.accumDepDisposed || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{fmtDisposal(e.costDisposed)}</td>
+                        <td className="px-3 py-2 text-right">{fmtDisposal(e.accumDepDisposed)}</td>
                       </tr>
                     ))
                   ) : (
@@ -965,11 +970,11 @@ export default function FixedAssets() {
                             </td>
                             <td className="px-3 py-2 text-right">{r.openingCost.toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{r.additions.toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right">{r.disposals.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{fmtDisposal(r.disposals)}</td>
                             <td className="px-3 py-2 text-right">{r.closingCost.toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{r.openingAccumDep.toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{r.depExpense.toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right">{r.accumDepDisposed.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{fmtDisposal(r.accumDepDisposed)}</td>
                             <td className="px-3 py-2 text-right">{r.closingAccumDep.toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{r.netBookValue.toFixed(2)}</td>
                           </tr>
@@ -978,11 +983,11 @@ export default function FixedAssets() {
                           <td className="px-3 py-2 font-medium">小计（本位 {baseCurrency}）</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.openingCost.toFixed(2)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.additions.toFixed(2)}</td>
-                          <td className="px-3 py-2 text-right font-medium">{totals.disposals.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{fmtDisposal(totals.disposals)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.closingCost.toFixed(2)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.openingAccumDep.toFixed(2)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.depExpense.toFixed(2)}</td>
-                          <td className="px-3 py-2 text-right font-medium">{totals.accumDepDisposed.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{fmtDisposal(totals.accumDepDisposed)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.closingAccumDep.toFixed(2)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.netBookValue.toFixed(2)}</td>
                         </tr>
@@ -1001,11 +1006,11 @@ export default function FixedAssets() {
                       <td className="px-3 py-2 font-medium">合计（本位 {baseCurrency}）</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingCost.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.additions.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.disposals.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtDisposal(scheduleTotals.disposals)}</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingCost.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingAccumDep.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.depExpense.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.accumDepDisposed.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtDisposal(scheduleTotals.accumDepDisposed)}</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingAccumDep.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-medium">{scheduleTotals.netBookValue.toFixed(2)}</td>
                     </tr>
