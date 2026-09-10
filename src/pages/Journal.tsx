@@ -103,6 +103,10 @@ export default function Journal() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [postDraftId, setPostDraftId] = useState<string | null>(null);
 
+  const [recurringEnabled, setRecurringEnabled] = useState(false);
+  const [recurringEveryMonths, setRecurringEveryMonths] = useState(1);
+  const [recurringCount, setRecurringCount] = useState(1);
+
   const [faPurchaseOpen, setFaPurchaseOpen] = useState(false);
   const [faPurchaseForm, setFaPurchaseForm] = useState({
     category: "",
@@ -191,6 +195,9 @@ export default function Journal() {
     setFaPurchaseLineIdx(null);
     setFaDepOpen(false);
     setFaDepLineIdx(null);
+    setRecurringEnabled(false);
+    setRecurringEveryMonths(1);
+    setRecurringCount(1);
     void refreshNextVoucherNo(true);
   }
 
@@ -690,6 +697,52 @@ export default function Journal() {
             />
           </div>
         </div>
+
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="flex items-center gap-2 text-sm text-zinc-800">
+            <input
+              type="checkbox"
+              checked={recurringEnabled}
+              onChange={(e) => setRecurringEnabled(e.target.checked)}
+              disabled={readOnly}
+            />
+            Recurring
+          </label>
+
+          {recurringEnabled ? (
+            <>
+              <div className="w-48">
+                <label className="text-xs text-zinc-600">每隔（月）</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={recurringEveryMonths}
+                  onChange={(e) => setRecurringEveryMonths(Number(e.target.value) || 1)}
+                  disabled={readOnly}
+                >
+                  {[1, 2, 3, 6, 12].map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-48">
+                <label className="text-xs text-zinc-600">次数</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={recurringCount}
+                  onChange={(e) => setRecurringCount(Math.max(1, Math.min(120, Number(e.target.value) || 1)))}
+                  type="number"
+                  min={1}
+                  max={120}
+                  step={1}
+                  disabled={readOnly}
+                />
+              </div>
+              <div className="text-xs text-zinc-500">从当前日期开始生成 {recurringCount} 张凭证</div>
+            </>
+          ) : null}
+        </div>
         <div className="mt-1 text-xs text-zinc-500">基准币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
 
         <div className="mt-4 overflow-auto rounded-lg border border-zinc-100">
@@ -1083,6 +1136,12 @@ export default function Journal() {
                           salvageBase: v.salvageBase,
                         }))
                       : undefined,
+                    recurring: recurringEnabled
+                      ? {
+                          everyMonths: Math.max(1, Math.min(24, Number(recurringEveryMonths) || 1)),
+                          count: Math.max(1, Math.min(120, Number(recurringCount) || 1)),
+                        }
+                      : undefined,
                     lines: effectiveLines.map((l, idx) => ({
                       accountId: l.accountId,
                       description: l.description || undefined,
@@ -1093,13 +1152,28 @@ export default function Journal() {
                     })),
                   };
 
+                  if (recurringEnabled) {
+                    const hasInv = Boolean(inventoryDetails?.length);
+                    const hasFaPurchases = Boolean(Object.keys(faPurchaseByLineIdx).length);
+                    if (hasInv || hasFaPurchases) {
+                      throw new Error("Recurring 暂不支持库存/购置自动生成，请用普通过账。");
+                    }
+                  }
+
                   const resp = editingEntryId
                     ? await api<{ entry: { id: string } }>(`/api/journals/${encodeURIComponent(editingEntryId)}` as any, { method: "PUT", json: reqBody })
-                    : await api<{ entry: { id: string } }>("/api/journals/post", { method: "POST", json: reqBody });
+                    : await api<{ entry?: { id: string }; entries?: Array<{ id: string; entryDate: string; voucherNo: string | null }> }>("/api/journals/post", { method: "POST", json: reqBody });
 
                   resetDraftEntry();
                   await refresh();
-                  setSelectedId(resp.entry.id);
+                  const firstId = (resp as any)?.entry?.id || (resp as any)?.entries?.[0]?.id;
+                  if (firstId) {
+                    setSelectedId(firstId);
+                  }
+                  const seriesCount = Array.isArray((resp as any)?.entries) ? (resp as any).entries.length : 0;
+                  if (seriesCount > 1) {
+                    window.alert(`已生成 ${seriesCount} 张凭证`);
+                  }
                   if (editModalOpen) {
                     setEditModalOpen(false);
                   }

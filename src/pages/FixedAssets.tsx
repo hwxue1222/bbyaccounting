@@ -587,29 +587,9 @@ export default function FixedAssets() {
         </div>
 
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "depreciate" ? "" : "hidden")}>
-          <div className="text-sm font-semibold">按期折旧（生成折旧分录）</div>
+          <div className="text-sm font-semibold">折旧分录</div>
           <div className="mt-3 flex gap-2">
             <input className="w-40 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={period} onChange={(e) => setPeriod(e.target.value)} type="month" />
-            <button
-              className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
-              disabled={busy || !/^\d{4}-\d{2}$/.test(period)}
-              onClick={async () => {
-                setBusy(true);
-                setErr(null);
-                try {
-                  await api("/api/fixed-assets/depreciate", { method: "POST", json: { period } });
-                  await refresh();
-                  await refreshSchedule(scheduleStart, scheduleEnd);
-                  await refreshDepEntries(period);
-                } catch (e: any) {
-                  setErr(e.message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              生成折旧
-            </button>
           </div>
 
           <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
@@ -629,9 +609,9 @@ export default function FixedAssets() {
                     <tr key={e.entryId} className="border-t border-zinc-100">
                       <td className="px-3 py-2">{e.entryDate}</td>
                       <td className="px-3 py-2">
-                        <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(e.entryId)}`}>
+                        <button className="text-blue-700 hover:underline" onClick={() => openJournalModal(e.entryId)} type="button">
                           {e.voucherNo || "-"}
-                        </a>
+                        </button>
                       </td>
                       <td className="px-3 py-2">{e.assetNos || ""}</td>
                       <td className="px-3 py-2">{e.memo || ""}</td>

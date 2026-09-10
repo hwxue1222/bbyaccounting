@@ -12,6 +12,11 @@ import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory 
 const router = Router();
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
 
+const recurringSchema = z.object({
+  everyMonths: z.number().int().min(1).max(24),
+  count: z.number().int().min(1).max(120),
+});
+
 function makeErrorId(): string {
   try {
     return crypto.randomUUID();
@@ -1066,6 +1071,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     shipmentInventoryAccountId: z.string().uuid().optional(),
     shipmentCogsAccountId: z.string().uuid().optional(),
     fixedAssetPurchases: z.array(fixedAssetPurchaseSchema).optional(),
+    recurring: recurringSchema.optional(),
     lines: z.array(lineSchema).min(2),
   });
 
@@ -1082,7 +1088,30 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
   const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
   const fixedAssetPurchases = parsed.data.fixedAssetPurchases;
+  const recurring = parsed.data.recurring;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
+
+  const addMonthsYmd = (ymd: string, monthsToAdd: number) => {
+    const m = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(ymd);
+    if (!m) throw new Error("Invalid entryDate");
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const baseFirst = new Date(Date.UTC(y, mo - 1, 1));
+    const targetFirst = new Date(Date.UTC(baseFirst.getUTCFullYear(), baseFirst.getUTCMonth() + monthsToAdd, 1));
+    const lastDay = new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth() + 1, 0)).getUTCDate();
+    const day = Math.min(d, lastDay);
+    const out = new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth(), day));
+    const yy = out.getUTCFullYear();
+    const mm = String(out.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(out.getUTCDate()).padStart(2, "0");
+    return `${yy}-${mm}-${dd}`;
+  };
+
+  if (recurring && (effectiveInventoryImpact || fixedAssetPurchases?.length)) {
+    res.status(400).json({ success: false, error: "Recurring 暂不支持库存/购置自动生成，请用普通过账。" });
+    return;
+  }
 
   const userLines = lines.filter((l) => !isSystemAutoLine(l.description));
 
@@ -1244,6 +1273,62 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
           if (String(e?.code || "") === "23505") continue;
           throw e;
         }
+      }
+
+      if (recurring) {
+        const entries: any[] = [];
+        const rootEntryId = String(entry.id);
+        entries.push(entry);
+
+        for (const l of normalizedLines) {
+          await trx`
+            INSERT INTO journal_lines (
+              org_id, entry_id, line_no, account_id, description, cost_center_id,
+              debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
+            ) VALUES (
+              ${orgId}, ${entry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
+              ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${l.fixedAssetId || null}
+            )
+          `;
+        }
+
+        const everyMonths = Number(recurring.everyMonths);
+        const count = Number(recurring.count);
+        for (let i = 1; i < count; i += 1) {
+          const nextDate = addMonthsYmd(entryDate, i * everyMonths);
+          let nextEntry: any = null;
+          while (!nextEntry) {
+            const vn = await issueVoucherNo(trx, orgId);
+            try {
+              nextEntry = (
+                await trx`
+                  INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+                  VALUES (${orgId}, ${nextDate}, 'posted', ${vn}, ${rootEntryId}, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, false, now())
+                  RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
+                `
+              )[0] as any;
+              break;
+            } catch (e: any) {
+              if (String(e?.code || "") === "23505") continue;
+              throw e;
+            }
+          }
+
+          for (const l of normalizedLines) {
+            await trx`
+              INSERT INTO journal_lines (
+                org_id, entry_id, line_no, account_id, description, cost_center_id,
+                debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
+              ) VALUES (
+                ${orgId}, ${nextEntry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
+                ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${l.fixedAssetId || null}
+              )
+            `;
+          }
+          entries.push(nextEntry);
+        }
+
+        return { entry: entries[0], entries };
       }
 
       const fixedAssetIdByLineNo = new Map<number, string>();
@@ -1450,7 +1535,11 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       return entry;
     });
 
-    res.status(200).json({ success: true, data: { entry: created } });
+    if ((created as any)?.entries) {
+      res.status(200).json({ success: true, data: created });
+    } else {
+      res.status(200).json({ success: true, data: { entry: created } });
+    }
   } catch (e: any) {
     const msg = typeof e?.message === "string" ? e.message : "Post failed";
     if (
