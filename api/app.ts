@@ -61,8 +61,36 @@ app.use(
   },
 )
 
+/**
+ * readiness (depends on DB)
+ */
+app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    await ensureMigrated()
+    res.status(200).json({ success: true, message: 'ready' })
+  } catch (error: any) {
+    const msg = typeof error?.message === 'string' ? error.message : ''
+    const errorId = crypto.randomUUID()
+    const mapped =
+      msg.includes('Missing DATABASE_URL')
+        ? { status: 503, error: 'Missing DATABASE_URL' }
+        : msg.includes('Missing JWT_SECRET')
+          ? { status: 503, error: 'Missing JWT_SECRET' }
+          : msg.includes('ECONNREFUSED')
+            ? { status: 503, error: 'Database connection failed' }
+            : msg.includes('password authentication failed')
+              ? { status: 503, error: 'Database authentication failed' }
+              : { status: 500, error: 'Server internal error' }
+    res.status(mapped.status).json({ success: false, error: mapped.error, errorId })
+  }
+})
+
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
+    if (req.path === '/api/health' || req.path === '/api/ready') {
+      next()
+      return
+    }
     await ensureMigrated()
     next()
   } catch (e) {
@@ -81,16 +109,6 @@ app.use('/api/inventory', inventoryRoutes)
 app.use('/api/fixed-assets', fixedAssetsRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/users', usersRoutes)
-
-/**
- * readiness (depends on DB)
- */
-app.use(
-  '/api/ready',
-  async (_req: Request, res: Response): Promise<void> => {
-    res.status(200).json({ success: true, message: 'ready' })
-  },
-)
 
 /**
  * error handler middleware
