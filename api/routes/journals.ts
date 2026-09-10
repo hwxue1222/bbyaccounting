@@ -140,6 +140,7 @@ async function upsertSystemCogsEntry(
   fxRate: number,
   cogsAccId: string,
   invAccId: string,
+  costCenterId: string | null,
   costTxn: number,
   costBase: number,
 ) {
@@ -176,7 +177,7 @@ async function upsertSystemCogsEntry(
       org_id, entry_id, line_no, account_id, description, cost_center_id,
       debit_txn, credit_txn, debit_base, credit_base
     ) VALUES (
-      ${orgId}, ${sysEntry.id}, 1, ${cogsAccId}, 'COGS (FIFO)', NULL,
+      ${orgId}, ${sysEntry.id}, 1, ${cogsAccId}, 'COGS (FIFO)', ${costCenterId},
       ${costTxn}, 0, ${costBase}, 0
     )
   `;
@@ -185,7 +186,7 @@ async function upsertSystemCogsEntry(
       org_id, entry_id, line_no, account_id, description, cost_center_id,
       debit_txn, credit_txn, debit_base, credit_base
     ) VALUES (
-      ${orgId}, ${sysEntry.id}, 2, ${invAccId}, 'Inventory (FIFO)', NULL,
+      ${orgId}, ${sysEntry.id}, 2, ${invAccId}, 'Inventory (FIFO)', ${costCenterId},
       0, ${costTxn}, 0, ${costBase}
     )
   `;
@@ -553,6 +554,8 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
         if (inventoryMode === "shipment") {
           const fx = Number(fxRate);
           let totalBaseAll = 0;
+          const linkedCostCenterId =
+            normalizedLines.find((l) => l.lineNo === linkLineNo)?.costCenterId ?? null;
           for (const d of inventoryDetails as any[]) {
             const itemId = String(d.itemId);
             const qtyRequested = Number(d.qty);
@@ -662,6 +665,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
                 fxRate,
                 cogsAccId,
                 invAccId,
+                linkedCostCenterId,
                 costTxn,
                 costBase,
               );
@@ -927,6 +931,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         if (inventoryMode === "shipment") {
           const fx = Number(fxRate);
           let totalBaseAll = 0;
+          const linkedCostCenterId =
+            normalizedLines.find((l) => l.lineNo === linkLineNo)?.costCenterId ?? null;
 
           for (const d of inventoryDetails as any[]) {
             const itemId = String(d.itemId);
@@ -1042,6 +1048,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
                 fxRate,
                 cogsAccId,
                 invAccId,
+                linkedCostCenterId,
                 costTxn,
                 costBase,
               );

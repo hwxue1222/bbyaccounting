@@ -41,38 +41,29 @@ async function getOrgName(sql: ReturnType<typeof getSql>, orgId: string): Promis
 }
 
 async function fetchAccountBalancesAsOf(sql: ReturnType<typeof getSql>, orgId: string, asOf: string, costCenterId?: string) {
-  const base = sql`
+  const ccJoin =
+    costCenterId === undefined
+      ? sql``
+      : costCenterId === "__none__"
+        ? sql`AND l.cost_center_id IS NULL`
+        : sql`AND l.cost_center_id = ${costCenterId}`;
+
+  return sql`
     SELECT
       a.id,
       a.code,
       a.name,
       a.type,
       a.normal_balance as "normalBalance",
-      COALESCE(SUM(l.debit_base - l.credit_base), 0) as balance
+      COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN (l.debit_base - l.credit_base) ELSE 0 END), 0) as balance
     FROM accounts a
-    LEFT JOIN journal_lines l ON l.account_id = a.id AND l.org_id = a.org_id
-    LEFT JOIN journal_entries e ON e.id = l.entry_id AND e.status = 'posted' AND e.entry_date <= ${asOf}
+    LEFT JOIN journal_lines l ON l.account_id = a.id AND l.org_id = a.org_id ${ccJoin}
+    LEFT JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = a.org_id AND e.status = 'posted' AND e.entry_date <= ${asOf}
     WHERE a.org_id = ${orgId}
       AND a.is_active = true
+    GROUP BY a.id, a.code, a.name, a.type, a.normal_balance
+    ORDER BY a.code ASC
   `;
-
-  const filtered =
-    costCenterId === undefined
-      ? sql`${base}
-          GROUP BY a.id, a.code, a.name, a.type, a.normal_balance
-          ORDER BY a.code ASC
-        `
-      : costCenterId === "__none__"
-        ? sql`${base} AND l.cost_center_id IS NULL
-            GROUP BY a.id, a.code, a.name, a.type, a.normal_balance
-            ORDER BY a.code ASC
-          `
-        : sql`${base} AND l.cost_center_id = ${costCenterId}
-            GROUP BY a.id, a.code, a.name, a.type, a.normal_balance
-            ORDER BY a.code ASC
-          `;
-
-  return filtered;
 }
 
 async function computeNetProfit(sql: ReturnType<typeof getSql>, orgId: string, start: string, end: string, costCenterId?: string): Promise<number> {
