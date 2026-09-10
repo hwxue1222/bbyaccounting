@@ -99,6 +99,7 @@ export default function Journal() {
   ]);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [postDraftId, setPostDraftId] = useState<string | null>(null);
 
   const txnDiff = useMemo(() => {
     const debit = draftLines.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
@@ -115,6 +116,7 @@ export default function Journal() {
     setDraftVoucherNo("");
     setVoucherTouched(false);
     setEditingEntryId(null);
+    setPostDraftId(null);
     setInvDetails([]);
     setInvConfirmed(null);
     setInvLineIdx(null);
@@ -276,6 +278,52 @@ export default function Journal() {
     setEditModalOpen(true);
   }
 
+  async function loadDraftForPosting(entryId: string) {
+    if (editingEntryId && editingEntryId !== entryId) {
+      setErr("请先保存或取消当前编辑。");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const d = await api<EntryDetail>(`/api/journals/${entryId}`);
+      if (d.entry.status !== "draft") {
+        throw new Error("仅支持对草稿凭证使用“新建”");
+      }
+      setPostDraftId(entryId);
+      setEditingEntryId(null);
+      setEditModalOpen(false);
+      setDraftDate(d.entry.entryDate);
+      setDraftCurrency(String(d.entry.currency || "").toUpperCase());
+      setDraftFx(Number(d.entry.fxRate) || 1);
+      setDraftMemo(d.entry.memo || "");
+      setDraftVoucherNo(d.entry.voucherNo || "");
+      setVoucherTouched(true);
+      setDraftLines(
+        d.lines.map((l) => {
+          const debit = Number(l.debitTxn) || 0;
+          const credit = Number(l.creditTxn) || 0;
+          return {
+            accountId: l.accountId,
+            description: l.description || "",
+            costCenterId: l.costCenterId || "",
+            debitTxn: debit > 0 ? debit.toFixed(2) : "",
+            creditTxn: credit > 0 ? credit.toFixed(2) : "",
+          };
+        }),
+      );
+      setInvDetails([]);
+      setInvConfirmed(null);
+      setInvLineIdx(null);
+      setSelectedId(entryId);
+      setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function getInventoryLinkInfoByLine(line: { debitTxn: string; creditTxn: string }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
     const debit = Number(line.debitTxn) || 0;
     const credit = Number(line.creditTxn) || 0;
@@ -430,9 +478,12 @@ export default function Journal() {
 
   function renderEditorCard() {
     const voucherEmpty = !draftVoucherNo.trim();
+    const readOnly = Boolean(postDraftId);
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold">{editingEntryId ? "编辑凭证" : "新建凭证（直接过账）"}</div>
+        <div className="text-sm font-semibold">
+          {editingEntryId ? "编辑凭证" : postDraftId ? "新建凭证（从草稿过账）" : "新建凭证（直接过账）"}
+        </div>
         <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <div>在任意分录行的借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
           <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
@@ -446,6 +497,7 @@ export default function Journal() {
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
               value={draftDate}
               onChange={(e) => setDraftDate(e.target.value)}
+              disabled={readOnly}
             />
           </div>
           <div className="w-44">
@@ -461,6 +513,7 @@ export default function Journal() {
                 setDraftVoucherNo(e.target.value.toUpperCase());
               }}
               placeholder="自动生成，可修改"
+              disabled={readOnly}
             />
           </div>
           <div className="w-28">
@@ -469,6 +522,7 @@ export default function Journal() {
               className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
               value={draftCurrency}
               onChange={(e) => setDraftCurrency(e.target.value.toUpperCase())}
+              disabled={readOnly}
             >
               {enabledCurrencies.map((c) => (
                 <option key={c} value={c}>
@@ -485,11 +539,12 @@ export default function Journal() {
               onChange={(e) => setDraftFx(e.target.value === "" ? 1 : Number(e.target.value) || 1)}
               type="number"
               step="0.0001"
+              disabled={readOnly}
             />
           </div>
           <button
             className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-            disabled={!draftDate.trim() || !draftCurrency.trim()}
+            disabled={readOnly || !draftDate.trim() || !draftCurrency.trim()}
             onClick={async () => {
               setErr(null);
               try {
@@ -508,6 +563,7 @@ export default function Journal() {
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
               value={draftMemo}
               onChange={(e) => setDraftMemo(e.target.value)}
+              disabled={readOnly}
             />
           </div>
         </div>
@@ -540,6 +596,7 @@ export default function Journal() {
                         next[idx] = { ...l, accountId: e.target.value };
                         setDraftLines(next);
                       }}
+                      disabled={readOnly}
                     >
                       <option value="__new_account__">+ 新增科目</option>
                       <option value="">请选择</option>
@@ -559,6 +616,7 @@ export default function Journal() {
                         next[idx] = { ...l, description: e.target.value };
                         setDraftLines(next);
                       }}
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-3 py-2">
@@ -570,6 +628,7 @@ export default function Journal() {
                         next[idx] = { ...l, costCenterId: e.target.value };
                         setDraftLines(next);
                       }}
+                      disabled={readOnly}
                     >
                       <option value="">(无)</option>
                       {costCenters.map((c) => (
@@ -591,6 +650,7 @@ export default function Journal() {
                         }}
                         type="number"
                         step="0.01"
+                        disabled={readOnly}
                       />
                       <button
                         className={
@@ -630,7 +690,7 @@ export default function Journal() {
                             setErr(e.message);
                           }
                         }}
-                        disabled={busy}
+                        disabled={busy || readOnly}
                         type="button"
                       >
                         {(() => {
@@ -655,6 +715,7 @@ export default function Journal() {
                         }}
                         type="number"
                         step="0.01"
+                        disabled={readOnly}
                       />
                       <button
                         className={
@@ -691,7 +752,7 @@ export default function Journal() {
                             setErr(e.message);
                           }
                         }}
-                        disabled={busy}
+                        disabled={busy || readOnly}
                         type="button"
                       >
                         {(() => {
@@ -718,6 +779,7 @@ export default function Journal() {
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
               onClick={() => setDraftLines([...draftLines, { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" }])}
+              disabled={busy || readOnly}
               type="button"
             >
               增加行
@@ -819,6 +881,15 @@ export default function Journal() {
 
                 setBusy(true);
                 try {
+                  if (postDraftId) {
+                    const id = postDraftId;
+                    await api(`/api/journals/${encodeURIComponent(id)}/post` as any, { method: "POST" });
+                    resetDraftEntry();
+                    await refresh();
+                    setSelectedId(id);
+                    return;
+                  }
+
                   const inventoryDetails =
                     invDetails.length && invLineIdx != null
                       ? invDetails.map((d) =>
@@ -1027,10 +1098,14 @@ export default function Journal() {
                           onClick={async (ev) => {
                             ev.preventDefault();
                             ev.stopPropagation();
+                            if (e.status === "draft") {
+                              await loadDraftForPosting(e.id);
+                              return;
+                            }
                             await openEditModal(e.id);
                           }}
                         >
-                          编辑
+                          {e.status === "draft" ? "新建" : "编辑"}
                         </button>
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
@@ -1092,6 +1167,34 @@ export default function Journal() {
                     >
                       编辑
                     </button>
+                    {detail.entry.status === "draft" ? (
+                      <button
+                        className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (editingEntryId) {
+                            setErr("请先保存或取消当前编辑。");
+                            return;
+                          }
+                          const ok = window.confirm("确认过账该草稿凭证？过账后会影响报表与库存（如有）。");
+                          if (!ok) return;
+                          setBusy(true);
+                          setErr(null);
+                          try {
+                            await api(`/api/journals/${encodeURIComponent(detail.entry.id)}/post` as any, { method: "POST" });
+                            await refresh();
+                            await loadDetail(detail.entry.id);
+                          } catch (e: any) {
+                            setErr(e.message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        type="button"
+                      >
+                        过账
+                      </button>
+                    ) : null}
                     <button
                       className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
                       disabled={busy}

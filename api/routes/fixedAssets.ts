@@ -54,6 +54,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       LIMIT 1
     ) p ON true
     WHERE fixed_assets.org_id = ${orgId}
+      AND fixed_assets.status <> 'draft'
     ORDER BY acquisition_date DESC
   `;
   res.status(200).json({ success: true, data: { assets: rows } });
@@ -108,10 +109,10 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       await trx`
         INSERT INTO fixed_assets (
           org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
-          asset_account_id, accum_dep_account_id, dep_expense_account_id
+          status, asset_account_id, accum_dep_account_id, dep_expense_account_id
         ) VALUES (
           ${orgId}, ${parsed.data.name.trim()}, ${parsed.data.acquisitionDate}, ${costBase}, ${parsed.data.usefulLifeMonths}, ${parsed.data.salvageBase},
-          ${assetAccountId}, ${accumDepAccountId}, ${depExpenseAccountId}
+          'draft', ${assetAccountId}, ${accumDepAccountId}, ${depExpenseAccountId}
         )
         RETURNING id
       `
@@ -119,9 +120,9 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-        VALUES (${orgId}, ${parsed.data.acquisitionDate}, 'posted', ${voucherNo}, NULL, false, ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo ? parsed.data.memo.trim() : 'Fixed asset purchase'}, ${req.auth!.userId}, false, now())
-        RETURNING id
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact)
+        VALUES (${orgId}, ${parsed.data.acquisitionDate}, 'draft', ${voucherNo}, NULL, false, ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo ? parsed.data.memo.trim() : 'Fixed asset purchase'}, ${req.auth!.userId}, false)
+        RETURNING id, voucher_no as "voucherNo"
       `
     )[0] as any;
 
@@ -134,7 +135,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       VALUES (${orgId}, ${entry.id}, 2, ${parsed.data.offsetAccountId}, 'Fixed asset offset', 0, ${parsed.data.costTxn}, 0, ${costBase})
     `;
 
-    return { assetId: asset.id, entryId: entry.id, costBase };
+    return { assetId: asset.id, entryId: entry.id, voucherNo: entry.voucherNo, costBase };
   });
 
   res.status(200).json({ success: true, data: created });

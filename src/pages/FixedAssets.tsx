@@ -321,13 +321,15 @@ export default function FixedAssets() {
               setErr(null);
               try {
                 const memo = assetForm.memo.trim();
-                await api("/api/fixed-assets", {
+                const r = await api<{ entryId: string; voucherNo?: string | null }>("/api/fixed-assets", {
                   method: "POST",
                   json: { ...assetForm, memo: memo ? memo : undefined },
                 });
-                await refresh();
-                await refreshSchedule(scheduleStart, scheduleEnd);
-                setTab("list");
+                const entryId = (r as any).entryId || (r as any)?.data?.entryId;
+                if (!entryId) {
+                  throw new Error("保存草稿失败：未返回凭证 ID");
+                }
+                window.location.href = "/journal";
               } catch (e: any) {
                 setErr(e.message);
               } finally {
@@ -335,7 +337,7 @@ export default function FixedAssets() {
               }
             }}
           >
-            新增并过账
+            保存草稿
           </button>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>

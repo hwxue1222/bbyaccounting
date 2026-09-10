@@ -309,6 +309,7 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
         dep_expense_account_id
       FROM fixed_assets
       WHERE org_id = ${orgId}
+        AND status <> 'draft'
         AND acquisition_date <= ${q.data.end}
         AND (disposed_at IS NULL OR disposed_at >= ${q.data.start})
     ),

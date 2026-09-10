@@ -963,14 +963,45 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   try {
     const created = await sql.begin(async (trx) => {
-      const voucherNo = parsed.data.voucherNo?.trim() || (await issueVoucherNo(trx, orgId));
-      const entry = (
-        await trx`
-          INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-          VALUES (${orgId}, ${entryDate}, 'posted', ${voucherNo}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
-          RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
-        `
-      )[0] as any;
+      const issuedVoucherNo = await issueVoucherNo(trx, orgId);
+      const providedVoucherNo = parsed.data.voucherNo?.trim() || "";
+      const candidates = Array.from(new Set([providedVoucherNo, issuedVoucherNo].filter(Boolean)));
+      let entry: any = null;
+
+      for (const vn of candidates) {
+        try {
+          entry = (
+            await trx`
+              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
+            `
+          )[0] as any;
+          break;
+        } catch (e: any) {
+          if (String(e?.code || "") === "23505" && vn === providedVoucherNo && candidates.length > 1) {
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      while (!entry) {
+        const vn = await issueVoucherNo(trx, orgId);
+        try {
+          entry = (
+            await trx`
+              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
+            `
+          )[0] as any;
+          break;
+        } catch (e: any) {
+          if (String(e?.code || "") === "23505") continue;
+          throw e;
+        }
+      }
 
       for (const l of normalizedLines) {
         await trx`
@@ -1140,7 +1171,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
                 orgId,
                 String(req.auth!.userId),
                 entry.id,
-                voucherNo,
+                entry.voucherNo,
                 entryDate,
                 currency,
                 fxRate,
@@ -1417,11 +1448,12 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   }
 
   const created = await sql.begin(async (trx) => {
+    const voucherNo = await issueVoucherNo(trx, orgId);
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, inventory_impact)
-        VALUES (${orgId}, ${entryDate}, 'draft', ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact})
-        RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, currency_code as "currency", fx_rate as "fxRate", memo
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact)
+        VALUES (${orgId}, ${entryDate}, 'draft', ${voucherNo}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact})
+        RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
       `
     )[0];
 
@@ -1557,6 +1589,13 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
 
   try {
     await sql.begin(async (trx) => {
+      const vRows = await trx`SELECT voucher_no as "voucherNo" FROM journal_entries WHERE id = ${id} AND org_id = ${orgId} LIMIT 1`;
+      const currentVoucherNo = (vRows[0] as any)?.voucherNo as string | null | undefined;
+      if (!currentVoucherNo) {
+        const voucherNo = await issueVoucherNo(trx, orgId);
+        await trx`UPDATE journal_entries SET voucher_no = ${voucherNo} WHERE id = ${id} AND org_id = ${orgId}`;
+      }
+
       if (entry.inventoryImpact) {
         const moves = await trx`
           SELECT id, item_id as "itemId", move_type as "moveType", qty, unit_cost_base as "unitCostBase", entry_line_no as "entryLineNo"
@@ -1661,6 +1700,16 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
       }
 
       await trx`UPDATE journal_entries SET status = 'posted', posted_at = now() WHERE id = ${id} AND org_id = ${orgId}`;
+
+      const faIds = await trx`
+        SELECT DISTINCT fixed_asset_id as id
+        FROM journal_lines
+        WHERE org_id = ${orgId} AND entry_id = ${id} AND fixed_asset_id IS NOT NULL
+      `;
+      const ids = (faIds as any[]).map((r) => r.id).filter(Boolean);
+      if (ids.length) {
+        await trx`UPDATE fixed_assets SET status = 'active' WHERE org_id = ${orgId} AND id = ANY(${ids}::uuid[]) AND status = 'draft'`;
+      }
     });
 
     res.status(200).json({ success: true });
