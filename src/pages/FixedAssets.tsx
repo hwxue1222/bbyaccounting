@@ -37,6 +37,15 @@ type ScheduleRow = {
 
 type ScheduleTotals = Omit<ScheduleRow, "assetId" | "name" | "acquisitionDate" | "status">;
 
+type DepEntryRow = {
+  entryId: string;
+  entryDate: string;
+  voucherNo: string | null;
+  memo: string | null;
+  debitBase: string;
+  creditBase: string;
+};
+
 export default function FixedAssets() {
   const { activeOrgId, orgSwitching, orgs } = useAuthStore();
   const tr = useTr();
@@ -74,6 +83,8 @@ export default function FixedAssets() {
     return `${y}-${m}`;
   });
 
+  const [depEntries, setDepEntries] = useState<DepEntryRow[]>([]);
+
   const [disposeForm, setDisposeForm] = useState({
     assetId: "",
     date: new Date().toISOString().slice(0, 10),
@@ -101,12 +112,21 @@ export default function FixedAssets() {
     setScheduleTotals((r.totals || null) as any);
   }
 
+  async function refreshDepEntries(p: string) {
+    if (!/^\d{4}-\d{2}$/.test(p)) {
+      setDepEntries([]);
+      return;
+    }
+    const r = await api<{ entries: DepEntryRow[] }>(`/api/fixed-assets/depreciation/entries?period=${encodeURIComponent(p)}`);
+    setDepEntries((r.entries || []) as any);
+  }
+
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     setErr(null);
     setAssets([]);
     refresh()
-      .then(() => refreshSchedule(scheduleStart, scheduleEnd))
+      .then(() => Promise.all([refreshSchedule(scheduleStart, scheduleEnd), refreshDepEntries(period)]))
       .catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
 
@@ -334,6 +354,7 @@ export default function FixedAssets() {
                   await api("/api/fixed-assets/depreciate", { method: "POST", json: { period } });
                   await refresh();
                   await refreshSchedule(scheduleStart, scheduleEnd);
+                  await refreshDepEntries(period);
                 } catch (e: any) {
                   setErr(e.message);
                 } finally {
@@ -343,6 +364,59 @@ export default function FixedAssets() {
             >
               生成折旧
             </button>
+            <button
+              className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+              disabled={busy || !/^\d{4}-\d{2}$/.test(period)}
+              onClick={async () => {
+                setBusy(true);
+                setErr(null);
+                try {
+                  await refreshDepEntries(period);
+                } catch (e: any) {
+                  setErr(e.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              type="button"
+            >
+              刷新分录
+            </button>
+          </div>
+
+          <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 text-xs text-zinc-600">
+                <tr>
+                  <th className="px-3 py-2 text-left">日期</th>
+                  <th className="px-3 py-2 text-left">分录号</th>
+                  <th className="px-3 py-2 text-left">备注</th>
+                  <th className="px-3 py-2 text-right">借（本位 {baseCurrency}）</th>
+                </tr>
+              </thead>
+              <tbody>
+                {depEntries.length ? (
+                  depEntries.map((e) => (
+                    <tr key={e.entryId} className="border-t border-zinc-100">
+                      <td className="px-3 py-2">{e.entryDate}</td>
+                      <td className="px-3 py-2">
+                        <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(e.entryId)}`}>
+                          {e.voucherNo || "-"}
+                        </a>
+                      </td>
+                      <td className="px-3 py-2">{e.memo || ""}</td>
+                      <td className="px-3 py-2 text-right">{Number(e.debitBase || 0).toFixed(2)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={4}>
+                      暂无 61xx 分录
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>
