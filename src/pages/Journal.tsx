@@ -174,6 +174,11 @@ export default function Journal() {
     await refreshNextVoucherNo();
   }
 
+  async function refreshEntriesOnly() {
+    const { entries } = await api<{ entries: any[] }>("/api/journals");
+    setEntries(entries as any);
+  }
+
   async function deleteEntry(id: string) {
     await api(`/api/journals/${id}` as any, { method: "DELETE" });
     if (selectedId === id) {
@@ -1199,9 +1204,8 @@ export default function Journal() {
                       const entryId = (r as any).entryId || (r as any)?.data?.entryId;
                       if (!entryId) throw new Error("保存草稿失败：未返回凭证 ID");
                       setFaPurchaseOpen(false);
-                      resetDraftEntry();
-                      await refresh();
                       setSelectedId(String(entryId));
+                      await refreshEntriesOnly();
                     } catch (e: any) {
                       setErr(e.message);
                     } finally {
