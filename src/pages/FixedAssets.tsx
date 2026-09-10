@@ -274,6 +274,16 @@ export default function FixedAssets() {
   }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    if (tab !== "depreciate") return;
+    if (!/^\d{4}-\d{2}$/.test(period)) return;
+    const t = setTimeout(() => {
+      refreshDepEntries(period).catch((e) => setErr(e.message));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [activeOrgId, orgSwitching, tab, period]);
+
+  useEffect(() => {
     if (!activeOrgId) return;
     const mode = params.get("mode");
     if (mode === "purchase") {
@@ -579,7 +589,7 @@ export default function FixedAssets() {
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "depreciate" ? "" : "hidden")}>
           <div className="text-sm font-semibold">按期折旧（生成折旧分录）</div>
           <div className="mt-3 flex gap-2">
-            <input className="w-40 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" />
+            <input className="w-40 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={period} onChange={(e) => setPeriod(e.target.value)} type="month" />
             <button
               className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
               disabled={busy || !/^\d{4}-\d{2}$/.test(period)}
@@ -599,24 +609,6 @@ export default function FixedAssets() {
               }}
             >
               生成折旧
-            </button>
-            <button
-              className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-              disabled={busy || !/^\d{4}-\d{2}$/.test(period)}
-              onClick={async () => {
-                setBusy(true);
-                setErr(null);
-                try {
-                  await refreshDepEntries(period);
-                } catch (e: any) {
-                  setErr(e.message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              type="button"
-            >
-              刷新分录
             </button>
           </div>
 
