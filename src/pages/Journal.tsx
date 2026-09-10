@@ -41,6 +41,35 @@ type EntryDetail = {
   attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; createdAt: string }>;
 };
 
+type AssistJournalSuggestion = {
+  draft: {
+    entryDate: string;
+    currency: string;
+    fxRate: number;
+    memo: string;
+    lines: Array<{ accountId: string; description?: string; costCenterId: string | null; debitTxn: number; creditTxn: number }>;
+    inventoryLinkLineNo?: number;
+    inventoryDetails?: Array<
+      | { moveType: "receipt"; itemId: string; qty: number; unitCostTxn: number }
+      | { moveType: "shipment"; itemId: string; qty: number }
+    >;
+  };
+  preview: {
+    entryDate: string;
+    currency: string;
+    fxRate: number;
+    memo: string;
+    lines: Array<{ accountCode: string; accountName: string; description?: string; debitTxn: number; creditTxn: number }>;
+    inventoryLinkLineNo?: number;
+    inventoryDetails?: Array<
+      | { moveType: "receipt"; itemId: string; qty: number; unitCostTxn: number }
+      | { moveType: "shipment"; itemId: string; qty: number }
+    >;
+  };
+  warnings: string[];
+  missing: string[];
+};
+
 export default function Journal() {
   const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
@@ -57,6 +86,12 @@ export default function Journal() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [assistOpen, setAssistOpen] = useState(false);
+  const [assistText, setAssistText] = useState("");
+  const [assistBusy, setAssistBusy] = useState(false);
+  const [assistErr, setAssistErr] = useState<string | null>(null);
+  const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
+
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
     const active = orgs.find((o) => o.orgId === activeOrgId);
@@ -68,6 +103,16 @@ export default function Journal() {
     const uniq = Array.from(new Set([baseCurrency, ...list]));
     return uniq.sort();
   }, [currencies, baseCurrency]);
+
+  const invItemLabelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of inventoryItems) {
+      const sku = it.sku ? String(it.sku) : "";
+      const label = `${sku ? sku + " " : ""}${it.name}`.trim();
+      m.set(String(it.id), label);
+    }
+    return m;
+  }, [inventoryItems]);
 
   const [draftCurrency, setDraftCurrency] = useState("SGD");
   const [draftFx, setDraftFx] = useState(1);
@@ -513,6 +558,92 @@ export default function Journal() {
     return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
+  async function runAssistSuggest() {
+    const text = assistText.trim();
+    if (!text) {
+      setAssistErr("请输入要生成分录的描述。");
+      return;
+    }
+    setAssistBusy(true);
+    setAssistErr(null);
+    setAssistSuggestion(null);
+    try {
+      const r = await api<{ suggestion: AssistJournalSuggestion }>("/api/assist/journal-suggest", {
+        method: "POST",
+        json: { text, memo: draftMemo || undefined, entryDate: draftDate || undefined },
+        timeoutMs: 90_000,
+      });
+      setAssistSuggestion(r.suggestion);
+    } catch (e: any) {
+      setAssistErr(e.message);
+    } finally {
+      setAssistBusy(false);
+    }
+  }
+
+  function applyAssistSuggestion(s: AssistJournalSuggestion) {
+    setErr(null);
+    setDraftDate(s.draft.entryDate);
+    setDraftCurrency(String(s.draft.currency || "").toUpperCase());
+    setDraftFx(Number(s.draft.fxRate) || 1);
+    setDraftMemo(s.draft.memo || "");
+    setDraftLines(
+      (s.draft.lines || []).map((l) => {
+        const debit = Number(l.debitTxn) || 0;
+        const credit = Number(l.creditTxn) || 0;
+        return {
+          accountId: String(l.accountId || ""),
+          description: l.description ? String(l.description) : "",
+          costCenterId: l.costCenterId ? String(l.costCenterId) : "",
+          debitTxn: debit > 0 ? debit.toFixed(2) : "",
+          creditTxn: credit > 0 ? credit.toFixed(2) : "",
+        };
+      }),
+    );
+    setFixedAssetIdByLineIdx({});
+    setFaPurchaseByLineIdx({});
+    setFaPurchaseLineIdx(null);
+    setFaDisposeCostLineIdx(null);
+    setFaDisposeAccumLineIdx(null);
+
+    const inv = s.draft.inventoryDetails;
+    const link = Number(s.draft.inventoryLinkLineNo);
+    if (Array.isArray(inv) && inv.length) {
+      const mode = inv[0].moveType === "shipment" ? "shipment" : "receipt";
+      const lineIdx = Number.isFinite(link) && link > 0 ? link - 1 : 0;
+      const det = inv
+        .map((d) => {
+          const qty = Number((d as any).qty) || 0;
+          if (qty <= 0) return null;
+          if (mode === "receipt") {
+            const unit = (d as any).moveType === "receipt" ? Number((d as any).unitCostTxn) || 0 : 0;
+            return { rowId: newRowId(), itemId: String((d as any).itemId || ""), qty: String(Math.trunc(qty)), unitCostTxn: unit > 0 ? String(unit) : "" };
+          }
+          return { rowId: newRowId(), itemId: String((d as any).itemId || ""), qty: String(Math.trunc(qty)), unitCostTxn: "" };
+        })
+        .filter(Boolean) as any[];
+
+      setInvMode(mode);
+      setInvLineIdx(lineIdx);
+      const line = (s.draft.lines || [])[lineIdx];
+      const debit = Number(line?.debitTxn) || 0;
+      const credit = Number(line?.creditTxn) || 0;
+      const defaultSide: "debit" | "credit" = credit > 0 ? "credit" : "debit";
+      const expectedTxn = defaultSide === "credit" ? credit : debit;
+      const fx = Number(s.draft.fxRate) || 1;
+      const expectedBase = Math.round(expectedTxn * fx * 100) / 100;
+      setInvDefaultSide(defaultSide);
+      setInvExpectedTxn(expectedTxn);
+      setInvExpectedBase(expectedBase);
+      setInvDetails(det);
+      setInvConfirmed({ mode, expectedTxn, expectedBase, quoteBase: mode === "shipment" ? expectedBase : 0 });
+    } else {
+      setInvDetails([]);
+      setInvConfirmed(null);
+      setInvLineIdx(null);
+    }
+  }
+
   function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
     if (!line) {
@@ -753,6 +884,21 @@ export default function Journal() {
             />
             Recurring
           </label>
+
+          <button
+            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+            disabled={readOnly || busy}
+            onClick={() => {
+              setAssistErr(null);
+              setAssistSuggestion(null);
+              setAssistText((prev) => prev || "");
+              setAssistOpen(true);
+            }}
+            type="button"
+          >
+            对话生成分录
+          </button>
+          <div className="text-xs text-zinc-500">仅填入草稿，需你确认后再点“过账”。</div>
 
           {recurringEnabled ? (
             <>
@@ -1319,6 +1465,174 @@ export default function Journal() {
               <div className="mt-3">
                 {renderEditorCard()}
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {assistOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+            onMouseDown={() => {
+              setAssistOpen(false);
+              setAssistBusy(false);
+            }}
+          >
+            <div
+              className="w-full max-w-4xl rounded-xl bg-white p-4 shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">对话生成分录（不会自动过账）</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  disabled={assistBusy}
+                  onClick={() => {
+                    setAssistOpen(false);
+                  }}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="mt-3">
+                <label className="text-xs text-zinc-600">描述（例如：9/10 银行转账付房租 2000，含税/不含税…）</label>
+                <textarea
+                  className="mt-1 h-28 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistText}
+                  onChange={(e) => setAssistText(e.target.value)}
+                  placeholder="用一句话描述业务，系统会生成借贷平衡的分录草稿。"
+                />
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={assistBusy || !assistText.trim()}
+                  onClick={() => {
+                    void runAssistSuggest();
+                  }}
+                  type="button"
+                >
+                  {assistBusy ? "生成中…" : "生成建议"}
+                </button>
+                <div className="text-xs text-zinc-500">生成后你可以修改，再手动点击“过账”。</div>
+              </div>
+
+              {assistErr ? <div className="mt-3 text-sm text-red-700">{assistErr}</div> : null}
+
+              {assistSuggestion ? (
+                <div className="mt-4">
+                  {assistSuggestion.missing?.length ? (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      缺少项：{assistSuggestion.missing.join("；")}
+                    </div>
+                  ) : null}
+                  {assistSuggestion.warnings?.length ? (
+                    <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      提示：{assistSuggestion.warnings.join("；")}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-4">
+                    <div>
+                      <div className="text-xs text-zinc-600">日期</div>
+                      <div className="mt-1 text-sm">{assistSuggestion.preview.entryDate}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-zinc-600">币种</div>
+                      <div className="mt-1 text-sm">{assistSuggestion.preview.currency}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-zinc-600">汇率</div>
+                      <div className="mt-1 text-sm">{String(assistSuggestion.preview.fxRate)}</div>
+                    </div>
+                    <div className="md:col-span-1">
+                      <div className="text-xs text-zinc-600">备注</div>
+                      <div className="mt-1 text-sm">{assistSuggestion.preview.memo || ""}</div>
+                    </div>
+                  </div>
+
+                  {assistSuggestion.preview.inventoryDetails?.length ? (
+                    <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
+                      库存明细：行 {assistSuggestion.preview.inventoryLinkLineNo || 1}，{assistSuggestion.preview.inventoryDetails[0].moveType}，{assistSuggestion.preview.inventoryDetails.length} 条
+                    </div>
+                  ) : null}
+
+                  <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-50 text-xs text-zinc-600">
+                        <tr>
+                          <th className="px-3 py-2 text-left">科目</th>
+                          <th className="px-3 py-2 text-left">摘要</th>
+                          <th className="px-3 py-2 text-right">借</th>
+                          <th className="px-3 py-2 text-right">贷</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {assistSuggestion.preview.lines.map((l, i) => (
+                          <tr key={i} className="border-t border-zinc-100">
+                            <td className="px-3 py-2">{l.accountCode} {l.accountName}</td>
+                            <td className="px-3 py-2">{l.description || ""}</td>
+                            <td className="px-3 py-2 text-right">{l.debitTxn > 0 ? Number(l.debitTxn).toFixed(2) : ""}</td>
+                            <td className="px-3 py-2 text-right">{l.creditTxn > 0 ? Number(l.creditTxn).toFixed(2) : ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {assistSuggestion.preview.inventoryDetails?.length ? (
+                    <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+                      <table className="w-full text-sm">
+                        <thead className="bg-zinc-50 text-xs text-zinc-600">
+                          <tr>
+                            <th className="px-3 py-2 text-left">库存项目</th>
+                            <th className="px-3 py-2 text-right">数量</th>
+                            <th className="px-3 py-2 text-right">单价（交易币）</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assistSuggestion.preview.inventoryDetails.map((d, i) => (
+                            <tr key={i} className="border-t border-zinc-100">
+                              <td className="px-3 py-2">{invItemLabelById.get(String((d as any).itemId)) || String((d as any).itemId)}</td>
+                              <td className="px-3 py-2 text-right">{String((d as any).qty)}</td>
+                              <td className="px-3 py-2 text-right">{"unitCostTxn" in d ? Number((d as any).unitCostTxn || 0).toFixed(2) : ""}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                      disabled={assistBusy}
+                      onClick={() => {
+                        setAssistSuggestion(null);
+                        setAssistErr(null);
+                      }}
+                      type="button"
+                    >
+                      重新生成
+                    </button>
+                    <button
+                      className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                      disabled={assistBusy}
+                      onClick={() => {
+                        applyAssistSuggestion(assistSuggestion);
+                        setAssistOpen(false);
+                      }}
+                      type="button"
+                    >
+                      应用到分录
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
