@@ -435,6 +435,14 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     creditTxn: z.number().nonnegative().default(0),
   });
 
+  const fixedAssetPurchaseSchema = z.object({
+    lineNo: z.number().int().positive(),
+    name: z.string().min(1),
+    acquisitionDate: z.string().min(10),
+    usefulLifeMonths: z.number().int().positive(),
+    salvageBase: z.number().nonnegative().default(0),
+  });
+
   const inventoryDetailReceiptSchema = z.object({
     moveType: z.literal("receipt"),
     itemId: z.string().uuid(),
@@ -458,6 +466,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     inventoryLinkLineNo: z.number().int().positive().optional(),
     shipmentInventoryAccountId: z.string().uuid().optional(),
     shipmentCogsAccountId: z.string().uuid().optional(),
+    fixedAssetPurchases: z.array(fixedAssetPurchaseSchema).optional(),
     lines: z.array(lineSchema).min(2),
   });
 
@@ -473,6 +482,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
   const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
   const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
+  const fixedAssetPurchases = parsed.data.fixedAssetPurchases;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
   const userLines = lines.filter((l) => !isSystemAutoLine(l.description));
@@ -559,6 +569,31 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     }
   }
 
+  let accumDepAccountId: string | null = null;
+  let depExpenseAccountId: string | null = null;
+  if (fixedAssetPurchases?.length) {
+    const uniqueLineNos = new Set(fixedAssetPurchases.map((p) => p.lineNo));
+    if (uniqueLineNos.size !== fixedAssetPurchases.length) {
+      res.status(400).json({ success: false, error: "Duplicate fixed asset purchase lineNo" });
+      return;
+    }
+    const maxLineNo = Math.max(...normalizedLines.map((l) => l.lineNo));
+    for (const p of fixedAssetPurchases) {
+      if (!(p.lineNo >= 1 && p.lineNo <= maxLineNo)) {
+        res.status(400).json({ success: false, error: "Invalid fixed asset purchase lineNo" });
+        return;
+      }
+    }
+    const accumAcc = await sql`SELECT id FROM accounts WHERE org_id = ${orgId} AND code = '1610' LIMIT 1`;
+    const depExpAcc = await sql`SELECT id FROM accounts WHERE org_id = ${orgId} AND code = '6100' LIMIT 1`;
+    accumDepAccountId = accumAcc[0]?.id || null;
+    depExpenseAccountId = depExpAcc[0]?.id || null;
+    if (!accumDepAccountId || !depExpenseAccountId) {
+      res.status(400).json({ success: false, error: "Missing default fixed asset accounts" });
+      return;
+    }
+  }
+
   try {
     const updated = await sql.begin(async (trx) => {
       const existingRows = await trx`
@@ -578,6 +613,17 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
         throw new Error("Only posted entries can be edited currently");
       }
 
+      const existingFixedAssets = await trx`
+        SELECT line_no as "lineNo", account_id as "accountId", debit_base as "debitBase", credit_base as "creditBase", fixed_asset_id as "fixedAssetId"
+        FROM journal_lines
+        WHERE org_id = ${orgId} AND entry_id = ${id} AND fixed_asset_id IS NOT NULL
+      `;
+      const preservedFixedAssetIdByKey = new Map<string, string>();
+      for (const r of existingFixedAssets as any[]) {
+        const k = `${Number(r.lineNo)}:${String(r.accountId)}:${round2(Number(r.debitBase || 0))}:${round2(Number(r.creditBase || 0))}`;
+        if (r.fixedAssetId) preservedFixedAssetIdByKey.set(k, String(r.fixedAssetId));
+      }
+
       await rollbackInventoryByEntryId(trx, orgId, id);
 
       await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${id}`;
@@ -595,14 +641,43 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
         WHERE org_id = ${orgId} AND id = ${id}
       `;
 
+      const fixedAssetIdByLineNo = new Map<number, string>();
+      if (fixedAssetPurchases?.length && accumDepAccountId && depExpenseAccountId) {
+        for (const p of fixedAssetPurchases) {
+          const line = normalizedLines.find((l) => l.lineNo === p.lineNo);
+          if (!line) {
+            throw new Error("Invalid fixed asset purchase lineNo");
+          }
+          const costBase = round2(Number(line.debitBase) > 0 ? line.debitBase : line.creditBase);
+          if (!(costBase > 0)) {
+            throw new Error("Fixed asset cost must be greater than 0");
+          }
+          const asset = (
+            await trx`
+              INSERT INTO fixed_assets (
+                org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
+                status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+              ) VALUES (
+                ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
+                'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId}
+              )
+              RETURNING id
+            `
+          )[0] as any;
+          fixedAssetIdByLineNo.set(p.lineNo, asset.id);
+        }
+      }
+
       for (const l of normalizedLines) {
+        const key = `${l.lineNo}:${l.accountId}:${round2(Number(l.debitBase || 0))}:${round2(Number(l.creditBase || 0))}`;
+        const fixedAssetId = fixedAssetIdByLineNo.get(l.lineNo) || preservedFixedAssetIdByKey.get(key) || null;
         await trx`
           INSERT INTO journal_lines (
             org_id, entry_id, line_no, account_id, description, cost_center_id,
-            debit_txn, credit_txn, debit_base, credit_base
+            debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
           ) VALUES (
             ${orgId}, ${id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
-            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}
+            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${fixedAssetId}
           )
         `;
       }
@@ -798,7 +873,13 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
       res.status(404).json({ success: false, error: msg });
       return;
     }
-    if (msg.includes("Cannot rollback") || msg.includes("Insufficient stock") || msg.includes("Unbalanced") || msg.includes("Only posted")) {
+    if (
+      msg.includes("Cannot rollback") ||
+      msg.includes("Insufficient stock") ||
+      msg.includes("Unbalanced") ||
+      msg.includes("Only posted") ||
+      msg.toLowerCase().includes("fixed asset")
+    ) {
       res.status(400).json({ success: false, error: msg });
       return;
     }
@@ -827,6 +908,14 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     creditTxn: z.number().nonnegative().default(0),
   });
 
+  const fixedAssetPurchaseSchema = z.object({
+    lineNo: z.number().int().positive(),
+    name: z.string().min(1),
+    acquisitionDate: z.string().min(10),
+    usefulLifeMonths: z.number().int().positive(),
+    salvageBase: z.number().nonnegative().default(0),
+  });
+
   const inventoryDetailReceiptSchema = z.object({
     moveType: z.literal("receipt"),
     itemId: z.string().uuid(),
@@ -850,6 +939,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     inventoryLinkLineNo: z.number().int().positive().optional(),
     shipmentInventoryAccountId: z.string().uuid().optional(),
     shipmentCogsAccountId: z.string().uuid().optional(),
+    fixedAssetPurchases: z.array(fixedAssetPurchaseSchema).optional(),
     lines: z.array(lineSchema).min(2),
   });
 
@@ -865,6 +955,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
   const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
   const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
+  const fixedAssetPurchases = parsed.data.fixedAssetPurchases;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
   const userLines = lines.filter((l) => !isSystemAutoLine(l.description));
@@ -961,6 +1052,31 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     }
   }
 
+  let accumDepAccountId: string | null = null;
+  let depExpenseAccountId: string | null = null;
+  if (fixedAssetPurchases?.length) {
+    const uniqueLineNos = new Set(fixedAssetPurchases.map((p) => p.lineNo));
+    if (uniqueLineNos.size !== fixedAssetPurchases.length) {
+      res.status(400).json({ success: false, error: "Duplicate fixed asset purchase lineNo" });
+      return;
+    }
+    const maxLineNo = Math.max(...normalizedLines.map((l) => l.lineNo));
+    for (const p of fixedAssetPurchases) {
+      if (!(p.lineNo >= 1 && p.lineNo <= maxLineNo)) {
+        res.status(400).json({ success: false, error: "Invalid fixed asset purchase lineNo" });
+        return;
+      }
+    }
+    const accumAcc = await sql`SELECT id FROM accounts WHERE org_id = ${orgId} AND code = '1610' LIMIT 1`;
+    const depExpAcc = await sql`SELECT id FROM accounts WHERE org_id = ${orgId} AND code = '6100' LIMIT 1`;
+    accumDepAccountId = accumAcc[0]?.id || null;
+    depExpenseAccountId = depExpAcc[0]?.id || null;
+    if (!accumDepAccountId || !depExpenseAccountId) {
+      res.status(400).json({ success: false, error: "Missing default fixed asset accounts" });
+      return;
+    }
+  }
+
   try {
     const created = await sql.begin(async (trx) => {
       const issuedVoucherNo = await issueVoucherNo(trx, orgId);
@@ -1003,14 +1119,41 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         }
       }
 
+      const fixedAssetIdByLineNo = new Map<number, string>();
+      if (fixedAssetPurchases?.length && accumDepAccountId && depExpenseAccountId) {
+        for (const p of fixedAssetPurchases) {
+          const line = normalizedLines.find((l) => l.lineNo === p.lineNo);
+          if (!line) {
+            throw new Error("Invalid fixed asset purchase lineNo");
+          }
+          const costBase = round2(Number(line.debitBase) > 0 ? line.debitBase : line.creditBase);
+          if (!(costBase > 0)) {
+            throw new Error("Fixed asset cost must be greater than 0");
+          }
+          const asset = (
+            await trx`
+              INSERT INTO fixed_assets (
+                org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
+                status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+              ) VALUES (
+                ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
+                'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId}
+              )
+              RETURNING id
+            `
+          )[0] as any;
+          fixedAssetIdByLineNo.set(p.lineNo, asset.id);
+        }
+      }
+
       for (const l of normalizedLines) {
         await trx`
           INSERT INTO journal_lines (
             org_id, entry_id, line_no, account_id, description, cost_center_id,
-            debit_txn, credit_txn, debit_base, credit_base
+            debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
           ) VALUES (
             ${orgId}, ${entry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
-            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}
+            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${fixedAssetIdByLineNo.get(l.lineNo) || null}
           )
         `;
       }
@@ -1194,7 +1337,13 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     res.status(200).json({ success: true, data: { entry: created } });
   } catch (e: any) {
     const msg = typeof e?.message === "string" ? e.message : "Post failed";
-    if (msg.includes("Insufficient stock") || msg.includes("Missing shipment cost accounts") || msg.includes("Inventory cost mismatch") || msg.includes("Inventory")) {
+    if (
+      msg.includes("Insufficient stock") ||
+      msg.includes("Missing shipment cost accounts") ||
+      msg.includes("Inventory cost mismatch") ||
+      msg.includes("Inventory") ||
+      msg.toLowerCase().includes("fixed asset")
+    ) {
       res.status(400).json({ success: false, error: msg });
       return;
     }
@@ -1525,6 +1674,24 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
   const sql = getSql();
   const id = req.params.id;
 
+  const fixedAssetPurchaseSchema = z.object({
+    lineNo: z.number().int().positive(),
+    name: z.string().min(1),
+    acquisitionDate: z.string().min(10),
+    usefulLifeMonths: z.number().int().positive(),
+    salvageBase: z.number().nonnegative().default(0),
+  });
+  const parsedBody = z
+    .object({
+      fixedAssetPurchases: z.array(fixedAssetPurchaseSchema).optional(),
+    })
+    .safeParse(req.body && typeof req.body === "object" ? req.body : {});
+  if (!parsedBody.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+  const fixedAssetPurchases = parsedBody.data.fixedAssetPurchases;
+
   const entryRows = await sql`
     SELECT id, status, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", currency_code as "currency", fx_rate as "fxRate", inventory_impact as "inventoryImpact"
     FROM journal_entries
@@ -1587,6 +1754,37 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
     }
   }
 
+  let accumDepAccountId: string | null = null;
+  let depExpenseAccountId: string | null = null;
+  if (fixedAssetPurchases?.length) {
+    const uniqueLineNos = new Set(fixedAssetPurchases.map((p) => p.lineNo));
+    if (uniqueLineNos.size !== fixedAssetPurchases.length) {
+      res.status(400).json({ success: false, error: "Duplicate fixed asset purchase lineNo" });
+      return;
+    }
+    const lineNos = fixedAssetPurchases.map((p) => p.lineNo);
+    const existingLines = await sql`
+      SELECT DISTINCT line_no as "lineNo"
+      FROM journal_lines
+      WHERE org_id = ${orgId} AND entry_id = ${id} AND line_no = ANY(${lineNos}::int[])
+    `;
+    const existingSet = new Set((existingLines as any[]).map((r) => Number(r.lineNo)));
+    for (const ln of lineNos) {
+      if (!existingSet.has(Number(ln))) {
+        res.status(400).json({ success: false, error: "Invalid fixed asset purchase lineNo" });
+        return;
+      }
+    }
+    const accumAcc = await sql`SELECT id FROM accounts WHERE org_id = ${orgId} AND code = '1610' LIMIT 1`;
+    const depExpAcc = await sql`SELECT id FROM accounts WHERE org_id = ${orgId} AND code = '6100' LIMIT 1`;
+    accumDepAccountId = accumAcc[0]?.id || null;
+    depExpenseAccountId = depExpAcc[0]?.id || null;
+    if (!accumDepAccountId || !depExpenseAccountId) {
+      res.status(400).json({ success: false, error: "Missing default fixed asset accounts" });
+      return;
+    }
+  }
+
   try {
     await sql.begin(async (trx) => {
       const vRows = await trx`SELECT voucher_no as "voucherNo" FROM journal_entries WHERE id = ${id} AND org_id = ${orgId} LIMIT 1`;
@@ -1594,6 +1792,42 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
       if (!currentVoucherNo) {
         const voucherNo = await issueVoucherNo(trx, orgId);
         await trx`UPDATE journal_entries SET voucher_no = ${voucherNo} WHERE id = ${id} AND org_id = ${orgId}`;
+      }
+
+      if (fixedAssetPurchases?.length && accumDepAccountId && depExpenseAccountId) {
+        for (const p of fixedAssetPurchases) {
+          const lineRows = await trx`
+            SELECT account_id as "accountId", debit_base as "debitBase", credit_base as "creditBase"
+            FROM journal_lines
+            WHERE org_id = ${orgId} AND entry_id = ${id} AND line_no = ${p.lineNo}
+            LIMIT 1
+          `;
+          const line = (lineRows as any[])[0];
+          if (!line) {
+            throw new Error("Invalid fixed asset purchase lineNo");
+          }
+          const costBase = round2(Number(line.debitBase) > 0 ? Number(line.debitBase) : Number(line.creditBase));
+          if (!(costBase > 0)) {
+            throw new Error("Fixed asset cost must be greater than 0");
+          }
+          const asset = (
+            await trx`
+              INSERT INTO fixed_assets (
+                org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
+                status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+              ) VALUES (
+                ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
+                'active', ${String(line.accountId)}, ${accumDepAccountId}, ${depExpenseAccountId}
+              )
+              RETURNING id
+            `
+          )[0] as any;
+          await trx`
+            UPDATE journal_lines
+            SET fixed_asset_id = ${asset.id}
+            WHERE org_id = ${orgId} AND entry_id = ${id} AND line_no = ${p.lineNo}
+          `;
+        }
       }
 
       if (entry.inventoryImpact) {
@@ -1720,7 +1954,8 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
       msg.includes("Inventory cost mismatch") ||
       msg.includes("Inventory impact") ||
       msg.includes("Inventory shipment") ||
-      msg.includes("Missing inventory")
+      msg.includes("Missing inventory") ||
+      msg.toLowerCase().includes("fixed asset")
     ) {
       res.status(400).json({ success: false, error: msg });
       return;

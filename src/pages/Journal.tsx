@@ -113,6 +113,27 @@ export default function Journal() {
     offsetAccountId: "",
     memo: "",
   });
+  const [faPurchaseByLineIdx, setFaPurchaseByLineIdx] = useState<
+    Record<
+      number,
+      {
+        name: string;
+        acquisitionDate: string;
+        usefulLifeMonths: number;
+        salvageBase: number;
+        memo: string;
+      }
+    >
+  >({});
+  const [faPurchaseLineIdx, setFaPurchaseLineIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    setFaPurchaseByLineIdx((prev) => {
+      const entries = Object.entries(prev).filter(([k]) => Number(k) >= 0 && Number(k) < draftLines.length);
+      if (entries.length === Object.keys(prev).length) return prev;
+      return Object.fromEntries(entries.map(([k, v]) => [Number(k), v]));
+    });
+  }, [draftLines.length]);
 
   const txnDiff = useMemo(() => {
     const debit = draftLines.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
@@ -139,6 +160,8 @@ export default function Journal() {
     setInvModalOpen(false);
     setEditModalOpen(false);
     setFaPurchaseOpen(false);
+    setFaPurchaseByLineIdx({});
+    setFaPurchaseLineIdx(null);
     void refreshNextVoucherNo(true);
   }
 
@@ -205,6 +228,8 @@ export default function Journal() {
       setDraftMemo(d.entry.memo || "");
       setDraftVoucherNo(d.entry.voucherNo || "");
       setVoucherTouched(true);
+      setFaPurchaseByLineIdx({});
+      setFaPurchaseLineIdx(null);
 
       const nextLines = d.lines.map((l) => {
         const debit = Number(l.debitTxn) || 0;
@@ -343,23 +368,25 @@ export default function Journal() {
     }
   }
 
-  function openFixedAssetPurchaseModal(amountTxn: number) {
+  function openFixedAssetPurchaseModal(lineIdx: number, amountTxn: number) {
     const other = draftLines.find((l) => {
       if (!l.accountId) return false;
       const acc = accounts.find((a) => a.id === l.accountId);
       const code = acc?.code ? String(acc.code) : "";
       return !code.startsWith("16");
     });
+    const existing = faPurchaseByLineIdx[lineIdx];
+    setFaPurchaseLineIdx(lineIdx);
     setFaPurchaseForm({
-      name: "",
-      acquisitionDate: draftDate,
+      name: existing?.name || "",
+      acquisitionDate: existing?.acquisitionDate || draftDate,
       costTxn: Number.isFinite(amountTxn) && amountTxn > 0 ? amountTxn : 0,
       currency: draftCurrency,
       fxRate: Number(draftFx) || 1,
-      usefulLifeMonths: 36,
-      salvageBase: 0,
+      usefulLifeMonths: existing?.usefulLifeMonths || 36,
+      salvageBase: existing?.salvageBase || 0,
       offsetAccountId: other?.accountId || "",
-      memo: draftMemo || "",
+      memo: existing?.memo || draftMemo || "",
     });
     setFaPurchaseOpen(true);
   }
@@ -706,7 +733,7 @@ export default function Journal() {
                             setInvConfirmed(null);
                             setInvLineIdx(null);
                             const amount = Number(l.debitTxn) || 0;
-                            openFixedAssetPurchaseModal(amount);
+                            openFixedAssetPurchaseModal(idx, amount);
                             return;
                           }
                           if (code.startsWith("61")) {
@@ -975,6 +1002,15 @@ export default function Journal() {
                     memo: draftMemo,
                     inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
                     inventoryDetails,
+                    fixedAssetPurchases: Object.entries(faPurchaseByLineIdx).length
+                      ? Object.entries(faPurchaseByLineIdx).map(([k, v]) => ({
+                          lineNo: Number(k) + 1,
+                          name: v.name,
+                          acquisitionDate: v.acquisitionDate,
+                          usefulLifeMonths: v.usefulLifeMonths,
+                          salvageBase: v.salvageBase,
+                        }))
+                      : undefined,
                     lines: effectiveLines.map((l) => ({
                       accountId: l.accountId,
                       description: l.description || undefined,
@@ -1063,7 +1099,7 @@ export default function Journal() {
           <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 p-4">
             <div className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">新增资产（生成草稿分录）</div>
+                <div className="text-sm font-semibold">新增资产（随分录过账生成记录）</div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={busy}
@@ -1189,28 +1225,78 @@ export default function Journal() {
                     !(Number(faPurchaseForm.costTxn) > 0) ||
                     !(Number(faPurchaseForm.usefulLifeMonths) > 0)
                   }
-                  onClick={async () => {
-                    setBusy(true);
+                  onClick={() => {
                     setErr(null);
-                    try {
-                      const memo = String(faPurchaseForm.memo || "").trim();
-                      const r = await api<{ assetId: string; entryId: string }>("/api/fixed-assets", {
-                        method: "POST",
-                        json: {
-                          ...faPurchaseForm,
-                          memo: memo ? memo : undefined,
-                        },
-                      });
-                      const entryId = (r as any).entryId || (r as any)?.data?.entryId;
-                      if (!entryId) throw new Error("保存草稿失败：未返回凭证 ID");
-                      setFaPurchaseOpen(false);
-                      setSelectedId(String(entryId));
-                      await refreshEntriesOnly();
-                    } catch (e: any) {
-                      setErr(e.message);
-                    } finally {
-                      setBusy(false);
+                    const lineIdx = faPurchaseLineIdx;
+                    if (lineIdx == null) {
+                      setErr("保存失败：未关联分录行");
+                      return;
                     }
+
+                    const costTxn = Number(faPurchaseForm.costTxn) || 0;
+                    if (!(costTxn > 0)) {
+                      setErr("金额必须大于 0");
+                      return;
+                    }
+
+                    const memo = String(faPurchaseForm.memo || "").trim();
+
+                    setDraftDate(faPurchaseForm.acquisitionDate);
+                    setDraftCurrency(String(faPurchaseForm.currency || "").toUpperCase());
+                    setDraftFx(Number(faPurchaseForm.fxRate) || 1);
+                    if (memo) {
+                      setDraftMemo(memo);
+                    }
+
+                    setFaPurchaseByLineIdx((prev) => ({
+                      ...prev,
+                      [lineIdx]: {
+                        name: faPurchaseForm.name.trim() || "(未命名资产)",
+                        acquisitionDate: faPurchaseForm.acquisitionDate,
+                        usefulLifeMonths: Number(faPurchaseForm.usefulLifeMonths) || 0,
+                        salvageBase: Number(faPurchaseForm.salvageBase) || 0,
+                        memo: memo,
+                      },
+                    }));
+
+                    const next = [...draftLines];
+                    const debitLine = next[lineIdx];
+                    if (!debitLine) {
+                      setErr("保存失败：分录行不存在");
+                      return;
+                    }
+                    next[lineIdx] = {
+                      ...debitLine,
+                      debitTxn: costTxn.toFixed(2),
+                      creditTxn: "",
+                    };
+
+                    const targetAccountId = faPurchaseForm.offsetAccountId;
+                    const isEmptyLine = (l: { accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string }) =>
+                      !l.accountId && !l.description && !l.costCenterId && !l.debitTxn && !l.creditTxn;
+
+                    let creditIdx = next.findIndex((l, i) => i !== lineIdx && l.accountId === targetAccountId);
+                    if (creditIdx < 0) {
+                      creditIdx = next.findIndex((l, i) => i !== lineIdx && isEmptyLine(l));
+                    }
+                    if (creditIdx < 0 && next.length === 2) {
+                      creditIdx = lineIdx === 0 ? 1 : 0;
+                    }
+                    if (creditIdx < 0) {
+                      creditIdx = next.length;
+                      next.push({ accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" });
+                    }
+
+                    const creditLine = next[creditIdx];
+                    next[creditIdx] = {
+                      ...creditLine,
+                      accountId: targetAccountId,
+                      creditTxn: costTxn.toFixed(2),
+                      debitTxn: "",
+                    };
+
+                    setDraftLines(next);
+                    setFaPurchaseOpen(false);
                   }}
                   type="button"
                 >
