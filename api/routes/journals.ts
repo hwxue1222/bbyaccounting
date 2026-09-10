@@ -99,30 +99,83 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
   `) as any[];
 
   if (receiptMoves.length) {
-    const layerIds = receiptMoves.map((m) => (m.createdLayerId ? String(m.createdLayerId) : ""));
-    if (layerIds.some((x) => !x)) {
-      throw new Error("Cannot rollback receipt without created_layer_id");
+    const missingMoveIds: string[] = [];
+    const layerIdByMoveId = new Map<string, string>();
+
+    for (const m of receiptMoves) {
+      const moveId = String(m.id);
+      const layerId = m.createdLayerId ? String(m.createdLayerId) : null;
+      if (layerId) {
+        layerIdByMoveId.set(moveId, layerId);
+      } else {
+        missingMoveIds.push(moveId);
+      }
     }
+
+    if (missingMoveIds.length) {
+      const rows = (await trx`
+        SELECT source_move_id as "moveId", id as "layerId", qty_remaining as "qtyRemaining"
+        FROM inventory_layers
+        WHERE org_id = ${orgId} AND source_move_id = ANY(${missingMoveIds}::uuid[])
+        FOR UPDATE
+      `) as any[];
+
+      const foundByMove = new Map<string, { layerId: string; qtyRemaining: number }>();
+      for (const r of rows) {
+        const moveId = String(r.moveId);
+        const layerId = String(r.layerId);
+        const qtyRemaining = Number(r.qtyRemaining);
+        if (foundByMove.has(moveId)) {
+          throw new Error("Cannot rollback receipt: multiple layers for one move");
+        }
+        foundByMove.set(moveId, { layerId, qtyRemaining });
+      }
+
+      for (const moveId of missingMoveIds) {
+        const found = foundByMove.get(moveId);
+        if (!found) {
+          throw new Error("Cannot rollback receipt without created_layer_id (legacy entry)");
+        }
+        layerIdByMoveId.set(moveId, found.layerId);
+        await trx`
+          UPDATE inventory_moves
+          SET created_layer_id = ${found.layerId}
+          WHERE org_id = ${orgId} AND id = ${moveId} AND created_layer_id IS NULL
+        `;
+      }
+    }
+
+    const layerIds = receiptMoves.map((m) => {
+      const moveId = String(m.id);
+      const layerId = layerIdByMoveId.get(moveId);
+      if (!layerId) throw new Error("Cannot rollback receipt without created_layer_id");
+      return layerId;
+    });
+
     const layers = (await trx`
       SELECT id, qty_remaining as "qtyRemaining"
       FROM inventory_layers
       WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])
       FOR UPDATE
     `) as any[];
+
     const remainingById = new Map<string, number>();
     for (const l of layers) {
       remainingById.set(String(l.id), Number(l.qtyRemaining));
     }
+
     for (const m of receiptMoves) {
-      const layerId = String(m.createdLayerId);
+      const moveId = String(m.id);
+      const layerId = layerIdByMoveId.get(moveId);
       const qty = Number(m.qty);
-      const remaining = remainingById.get(layerId);
+      const remaining = layerId ? remainingById.get(layerId) : undefined;
       if (remaining == null || !Number.isFinite(remaining)) throw new Error("Receipt layer missing");
       if (!Number.isFinite(qty) || qty <= 0) throw new Error("Invalid receipt qty");
       if (round6(remaining) !== round6(qty)) {
         throw new Error("Cannot rollback receipt: layer already consumed");
       }
     }
+
     await trx`DELETE FROM inventory_layers WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])`;
   }
 
