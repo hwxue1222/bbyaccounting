@@ -141,6 +141,12 @@ export default function Journal() {
   const [faDepOpen, setFaDepOpen] = useState(false);
   const [faDepLineIdx, setFaDepLineIdx] = useState<number | null>(null);
   const [faDepForm, setFaDepForm] = useState({ assetId: "", amountTxn: 0 });
+  const [faDisposeOpen, setFaDisposeOpen] = useState(false);
+  const [faDisposeKind, setFaDisposeKind] = useState<"cost" | "accumDep">("cost");
+  const [faDisposeLineIdx, setFaDisposeLineIdx] = useState<number | null>(null);
+  const [faDisposeForm, setFaDisposeForm] = useState({ assetId: "", amountTxn: 0 });
+  const [faDisposeCostLineIdx, setFaDisposeCostLineIdx] = useState<number | null>(null);
+  const [faDisposeAccumLineIdx, setFaDisposeAccumLineIdx] = useState<number | null>(null);
   const [fixedAssets, setFixedAssets] = useState<
     Array<{
       id: string;
@@ -148,8 +154,10 @@ export default function Journal() {
       category: string | null;
       name: string;
       status: string;
+      costBase: number;
       depExpenseAccountId: string | null;
       accumDepAccountId: string | null;
+      assetAccountId: string | null;
     }>
   >([]);
 
@@ -196,6 +204,10 @@ export default function Journal() {
     setFaPurchaseLineIdx(null);
     setFaDepOpen(false);
     setFaDepLineIdx(null);
+    setFaDisposeOpen(false);
+    setFaDisposeLineIdx(null);
+    setFaDisposeCostLineIdx(null);
+    setFaDisposeAccumLineIdx(null);
     setRecurringEnabled(false);
     setRecurringEveryMonths(1);
     setRecurringCount(1);
@@ -211,8 +223,10 @@ export default function Journal() {
         category: a.category ? String(a.category) : null,
         name: String(a.name || ""),
         status: String(a.status || ""),
+        costBase: Number(a.costBase || 0),
         depExpenseAccountId: a.depExpenseAccountId ? String(a.depExpenseAccountId) : null,
         accumDepAccountId: a.accumDepAccountId ? String(a.accumDepAccountId) : null,
+        assetAccountId: a.assetAccountId ? String(a.assetAccountId) : null,
       })),
     );
   }
@@ -225,6 +239,30 @@ export default function Journal() {
       refreshFixedAssets().catch((e) => setErr(e.message));
     }
     setFaDepOpen(true);
+  }
+
+  async function openFixedAssetDisposeModal(kind: "cost" | "accumDep", lineIdx: number, amountTxn: number) {
+    setFaDisposeKind(kind);
+    setFaDisposeLineIdx(lineIdx);
+    const existingId = fixedAssetIdByLineIdx[lineIdx] || "";
+    setFaDisposeForm({ assetId: existingId, amountTxn: Number.isFinite(amountTxn) && amountTxn > 0 ? amountTxn : 0 });
+    if (!fixedAssets.length) {
+      refreshFixedAssets().catch((e) => setErr(e.message));
+    }
+    setFaDisposeOpen(true);
+
+    const targetAssetId = existingId;
+    if (!targetAssetId) return;
+    try {
+      const snap = await api<{ costBase: number; accumDepBase: number }>(
+        `/api/fixed-assets/${encodeURIComponent(targetAssetId)}/disposal-snapshot?date=${encodeURIComponent(draftDate)}`,
+      );
+      const base = kind === "cost" ? Number(snap.costBase || 0) : Number(snap.accumDepBase || 0);
+      const txn = (Number(draftFx) || 1) > 0 ? Math.round((base / (Number(draftFx) || 1)) * 100) / 100 : Math.round(base * 100) / 100;
+      setFaDisposeForm((prev) => ({ ...prev, amountTxn: txn }));
+    } catch {
+      // ignore
+    }
   }
 
   async function refreshNextVoucherNo(force?: boolean): Promise<string> {
@@ -858,7 +896,15 @@ export default function Journal() {
                           setErr(null);
                           const acc = accounts.find((a) => a.id === l.accountId);
                           const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("16")) {
+                          if (code.startsWith("161")) {
+                            setInvDetails([]);
+                            setInvConfirmed(null);
+                            setInvLineIdx(null);
+                            const amount = Number(l.debitTxn) || 0;
+                            void openFixedAssetDisposeModal("accumDep", idx, amount);
+                            return;
+                          }
+                          if (code.startsWith("16") && !code.startsWith("161")) {
                             setInvDetails([]);
                             setInvConfirmed(null);
                             setInvLineIdx(null);
@@ -891,7 +937,8 @@ export default function Journal() {
                         {(() => {
                           const acc = accounts.find((a) => a.id === l.accountId);
                           const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("16")) return "购买";
+                          if (code.startsWith("161")) return "处置";
+                          if (code.startsWith("16") && !code.startsWith("161")) return "购买";
                           if (code.startsWith("61")) return "折旧";
                           return "库存";
                         })()}
@@ -921,11 +968,16 @@ export default function Journal() {
                           setErr(null);
                           const acc = accounts.find((a) => a.id === l.accountId);
                           const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("16")) {
+                          if (code.startsWith("16") || code.startsWith("161")) {
                             setInvDetails([]);
                             setInvConfirmed(null);
                             setInvLineIdx(null);
-                            navigate(`/fixed-assets?mode=dispose&date=${encodeURIComponent(draftDate)}`);
+                            const amount = Number(l.creditTxn) || 0;
+                            if (code.startsWith("161")) {
+                              void openFixedAssetDisposeModal("accumDep", idx, amount);
+                            } else {
+                              void openFixedAssetDisposeModal("cost", idx, amount);
+                            }
                             return;
                           }
                           if (code.startsWith("61")) {
@@ -953,7 +1005,7 @@ export default function Journal() {
                         {(() => {
                           const acc = accounts.find((a) => a.id === l.accountId);
                           const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("16")) return "处置";
+                          if (code.startsWith("16") || code.startsWith("161")) return "处置";
                           if (code.startsWith("61")) return "折旧";
                           return "库存";
                         })()}
@@ -1099,6 +1151,10 @@ export default function Journal() {
                     return;
                   }
 
+                  if ((faDisposeCostLineIdx != null) !== (faDisposeAccumLineIdx != null)) {
+                    throw new Error("处置需要同时选择成本行与累计折旧行。");
+                  }
+
                   const inventoryDetails =
                     invDetails.length && invLineIdx != null
                       ? invDetails.map((d) =>
@@ -1157,6 +1213,10 @@ export default function Journal() {
                           salvageBase: v.salvageBase,
                         }))
                       : undefined,
+                    fixedAssetDisposal:
+                      faDisposeCostLineIdx != null && faDisposeAccumLineIdx != null
+                        ? { costLineNo: faDisposeCostLineIdx + 1, accumDepLineNo: faDisposeAccumLineIdx + 1 }
+                        : undefined,
                     recurring: recurringEnabled
                       ? {
                           everyMonths: Math.max(1, Math.min(24, Number(recurringEveryMonths) || 1)),
@@ -1670,6 +1730,176 @@ export default function Journal() {
                       [creditIdx]: asset.id,
                     }));
                     setFaDepOpen(false);
+                  }}
+                  type="button"
+                >
+                  保存草稿
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {faDisposeOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+            onMouseDown={() => {
+              setErr(null);
+              setFaDisposeOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">处置（选择资产）</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    setFaDisposeOpen(false);
+                  }}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">处置资产</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={faDisposeForm.assetId}
+                    onChange={async (e) => {
+                      const id = e.target.value;
+                      setFaDisposeForm((prev) => ({ ...prev, assetId: id }));
+                      if (!id) return;
+                      try {
+                        const snap = await api<{ costBase: number; accumDepBase: number }>(
+                          `/api/fixed-assets/${encodeURIComponent(id)}/disposal-snapshot?date=${encodeURIComponent(draftDate)}`,
+                        );
+                        const base = faDisposeKind === "cost" ? Number(snap.costBase || 0) : Number(snap.accumDepBase || 0);
+                        const txn = (Number(draftFx) || 1) > 0 ? Math.round((base / (Number(draftFx) || 1)) * 100) / 100 : Math.round(base * 100) / 100;
+                        setFaDisposeForm((prev) => ({ ...prev, amountTxn: txn }));
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  >
+                    <option value="">请选择</option>
+                    {fixedAssets
+                      .filter((a) => a.status === "active")
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {(a.assetNo ? `${a.assetNo} · ` : "") + a.name + (a.category ? ` (${a.category})` : "")}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-zinc-600">类型</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faDisposeKind === "cost" ? "成本（16xx）" : "累计折旧（161x）"}
+                    disabled
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">金额（交易币）</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faDisposeForm.amountTxn}
+                    onChange={(e) => setFaDisposeForm({ ...faDisposeForm, amountTxn: Number(e.target.value) || 0 })}
+                    type="number"
+                    step="0.01"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    setFaDisposeOpen(false);
+                  }}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={busy || !faDisposeForm.assetId || !(Number(faDisposeForm.amountTxn) > 0) || faDisposeLineIdx == null}
+                  onClick={() => {
+                    setErr(null);
+                    const lineIdx = faDisposeLineIdx;
+                    if (lineIdx == null) {
+                      setErr("保存失败：未关联分录行");
+                      return;
+                    }
+                    const amountTxn = Number(faDisposeForm.amountTxn) || 0;
+                    if (!(amountTxn > 0)) {
+                      setErr("金额必须大于 0");
+                      return;
+                    }
+                    const asset = fixedAssets.find((x) => x.id === faDisposeForm.assetId);
+                    if (!asset || asset.status !== "active") {
+                      setErr("资产无效");
+                      return;
+                    }
+                    if (faDisposeKind === "cost") {
+                      if (!asset.assetAccountId) {
+                        setErr("该资产缺少资产科目设置");
+                        return;
+                      }
+                      if (faDisposeAccumLineIdx != null) {
+                        const otherId = fixedAssetIdByLineIdx[faDisposeAccumLineIdx];
+                        if (otherId && otherId !== asset.id) {
+                          setErr("处置的成本与累计折旧必须选择同一个固定资产");
+                          return;
+                        }
+                      }
+                      const next = [...draftLines];
+                      const line = next[lineIdx];
+                      if (!line) {
+                        setErr("保存失败：分录行不存在");
+                        return;
+                      }
+                      next[lineIdx] = { ...line, accountId: asset.assetAccountId, creditTxn: amountTxn.toFixed(2), debitTxn: "" };
+                      setDraftLines(next);
+                      setFixedAssetIdByLineIdx((prev) => ({ ...prev, [lineIdx]: asset.id }));
+                      setFaDisposeCostLineIdx(lineIdx);
+                    } else {
+                      if (!asset.accumDepAccountId) {
+                        setErr("该资产缺少累计折旧科目设置");
+                        return;
+                      }
+                      if (faDisposeCostLineIdx != null) {
+                        const otherId = fixedAssetIdByLineIdx[faDisposeCostLineIdx];
+                        if (otherId && otherId !== asset.id) {
+                          setErr("处置的成本与累计折旧必须选择同一个固定资产");
+                          return;
+                        }
+                      }
+                      const next = [...draftLines];
+                      const line = next[lineIdx];
+                      if (!line) {
+                        setErr("保存失败：分录行不存在");
+                        return;
+                      }
+                      next[lineIdx] = { ...line, accountId: asset.accumDepAccountId, debitTxn: amountTxn.toFixed(2), creditTxn: "" };
+                      setDraftLines(next);
+                      setFixedAssetIdByLineIdx((prev) => ({ ...prev, [lineIdx]: asset.id }));
+                      setFaDisposeAccumLineIdx(lineIdx);
+                    }
+                    setFaDisposeOpen(false);
                   }}
                   type="button"
                 >

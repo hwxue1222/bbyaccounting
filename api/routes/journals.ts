@@ -17,6 +17,11 @@ const recurringSchema = z.object({
   count: z.number().int().min(1).max(120),
 });
 
+const fixedAssetDisposalSchema = z.object({
+  costLineNo: z.number().int().positive(),
+  accumDepLineNo: z.number().int().positive(),
+});
+
 function makeErrorId(): string {
   try {
     return crypto.randomUUID();
@@ -1071,6 +1076,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     shipmentInventoryAccountId: z.string().uuid().optional(),
     shipmentCogsAccountId: z.string().uuid().optional(),
     fixedAssetPurchases: z.array(fixedAssetPurchaseSchema).optional(),
+    fixedAssetDisposal: fixedAssetDisposalSchema.optional(),
     recurring: recurringSchema.optional(),
     lines: z.array(lineSchema).min(2),
   });
@@ -1088,6 +1094,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
   const shipmentCogsAccountId = parsed.data.shipmentCogsAccountId;
   const fixedAssetPurchases = parsed.data.fixedAssetPurchases;
+  const fixedAssetDisposal = parsed.data.fixedAssetDisposal;
   const recurring = parsed.data.recurring;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
@@ -1110,6 +1117,11 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   if (recurring && (effectiveInventoryImpact || fixedAssetPurchases?.length)) {
     res.status(400).json({ success: false, error: "Recurring 暂不支持库存/购置自动生成，请用普通过账。" });
+    return;
+  }
+
+  if (recurring && fixedAssetDisposal) {
+    res.status(400).json({ success: false, error: "Recurring 暂不支持处置自动生成，请用普通过账。" });
     return;
   }
 
@@ -1230,6 +1242,58 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     if (!accumDepAccountId || !depExpenseAccountId) {
       res.status(400).json({ success: false, error: "Missing default fixed asset accounts" });
       return;
+    }
+  }
+
+  const fixedAssetIds = Array.from(new Set(normalizedLines.map((l) => (l.fixedAssetId ? String(l.fixedAssetId) : "")).filter(Boolean)));
+  let fixedAssetById = new Map<
+    string,
+    {
+      id: string;
+      status: string;
+      assetAccountId: string | null;
+      accumDepAccountId: string | null;
+      depExpenseAccountId: string | null;
+    }
+  >();
+  if (fixedAssetIds.length) {
+    const rows = (await sql`
+      SELECT id, status, asset_account_id as "assetAccountId", accum_dep_account_id as "accumDepAccountId", dep_expense_account_id as "depExpenseAccountId"
+      FROM fixed_assets
+      WHERE org_id = ${orgId} AND id = ANY(${fixedAssetIds}::uuid[])
+    `) as any[];
+    fixedAssetById = new Map(
+      rows.map((r) => [
+        String(r.id),
+        {
+          id: String(r.id),
+          status: String(r.status || ""),
+          assetAccountId: r.assetAccountId ? String(r.assetAccountId) : null,
+          accumDepAccountId: r.accumDepAccountId ? String(r.accumDepAccountId) : null,
+          depExpenseAccountId: r.depExpenseAccountId ? String(r.depExpenseAccountId) : null,
+        },
+      ]),
+    );
+    if (fixedAssetById.size !== fixedAssetIds.length) {
+      res.status(400).json({ success: false, error: "Invalid fixedAssetId" });
+      return;
+    }
+    for (const l of normalizedLines) {
+      if (!l.fixedAssetId) continue;
+      const a = fixedAssetById.get(String(l.fixedAssetId));
+      if (!a) {
+        res.status(400).json({ success: false, error: "Invalid fixedAssetId" });
+        return;
+      }
+      if (a.status !== "active") {
+        res.status(409).json({ success: false, error: "Asset is not active" });
+        return;
+      }
+      const okAccount = l.accountId === a.assetAccountId || l.accountId === a.accumDepAccountId || l.accountId === a.depExpenseAccountId;
+      if (!okAccount) {
+        res.status(400).json({ success: false, error: "Fixed asset linked line account mismatch" });
+        return;
+      }
     }
   }
 
@@ -1529,6 +1593,49 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
           } catch {
             // ignore
           }
+        }
+      }
+
+      if (fixedAssetDisposal) {
+        const costLine = normalizedLines.find((l) => l.lineNo === Number(fixedAssetDisposal.costLineNo));
+        const accumLine = normalizedLines.find((l) => l.lineNo === Number(fixedAssetDisposal.accumDepLineNo));
+        if (!costLine || !accumLine) {
+          throw new Error("Invalid fixed asset disposal lineNo");
+        }
+        const costAssetId = costLine.fixedAssetId ? String(costLine.fixedAssetId) : "";
+        const accumAssetId = accumLine.fixedAssetId ? String(accumLine.fixedAssetId) : "";
+        if (!costAssetId || !accumAssetId || costAssetId !== accumAssetId) {
+          throw new Error("处置固定资产不一致，无法过账");
+        }
+        const a = fixedAssetById.get(costAssetId);
+        if (!a) {
+          throw new Error("Invalid fixedAssetId");
+        }
+        if (!a.assetAccountId || !a.accumDepAccountId) {
+          throw new Error("Fixed asset accounts not set");
+        }
+        if (String(costLine.accountId) !== String(a.assetAccountId)) {
+          throw new Error("处置成本行科目不匹配");
+        }
+        if (String(accumLine.accountId) !== String(a.accumDepAccountId)) {
+          throw new Error("处置累计折旧行科目不匹配");
+        }
+        if (!(Number(costLine.creditBase) > 0) || !(Number(accumLine.debitBase) > 0)) {
+          throw new Error("处置金额必须大于 0");
+        }
+
+        const updated = await trx`
+          UPDATE fixed_assets
+          SET status = 'disposed', disposed_at = ${entryDate}
+          WHERE org_id = ${orgId} AND id = ${costAssetId} AND status = 'active'
+          RETURNING id
+        `;
+        if (!updated.length) {
+          const recheck = await trx`SELECT status FROM fixed_assets WHERE org_id = ${orgId} AND id = ${costAssetId} LIMIT 1`;
+          if (!recheck.length) {
+            throw new Error("Invalid fixedAssetId");
+          }
+          throw new Error("Asset is not active");
         }
       }
 

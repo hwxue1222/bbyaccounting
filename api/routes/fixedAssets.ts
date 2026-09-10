@@ -497,6 +497,110 @@ router.get("/depreciation/entries", requireAuth, async (req: AuthedRequest, res:
   res.status(200).json({ success: true, data: { period: q.data.period, entries: rows } });
 });
 
+router.get("/disposal/entries", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const q = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).safeParse({ period: req.query.period });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid period" });
+    return;
+  }
+
+  const sql = getSql();
+  const start = q.data.period + "-01";
+  const rows = await sql`
+    WITH bounds AS (
+      SELECT
+        ${start}::date as start_date,
+        (date_trunc('month', ${start}::date) + interval '1 month' - interval '1 day')::date as end_date
+    )
+    SELECT
+      e.id as "entryId",
+      to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
+      e.voucher_no as "voucherNo",
+      e.memo,
+      COALESCE(string_agg(DISTINCT fa.asset_no, ', ' ORDER BY fa.asset_no), '') as "assetNos",
+      COALESCE(SUM(CASE WHEN l.account_id = fa.asset_account_id THEN l.credit_base ELSE 0 END), 0) as "costDisposed",
+      COALESCE(SUM(CASE WHEN l.account_id = fa.accum_dep_account_id THEN l.debit_base ELSE 0 END), 0) as "accumDepDisposed"
+    FROM journal_entries e
+    JOIN bounds b ON true
+    JOIN journal_lines l ON l.org_id = ${orgId} AND l.entry_id = e.id AND l.fixed_asset_id IS NOT NULL
+    JOIN fixed_assets fa ON fa.org_id = ${orgId} AND fa.id = l.fixed_asset_id
+    WHERE e.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date >= b.start_date
+      AND e.entry_date <= b.end_date
+    GROUP BY e.id
+    HAVING COALESCE(SUM(CASE WHEN l.account_id = fa.asset_account_id THEN l.credit_base ELSE 0 END), 0) > 0
+    ORDER BY e.entry_date DESC, e.voucher_no DESC NULLS LAST, e.id DESC
+  `;
+
+  res.status(200).json({ success: true, data: { period: q.data.period, entries: rows } });
+});
+
+router.get("/:id/disposal-snapshot", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const id = String(req.params.id || "");
+  if (!id) {
+    res.status(400).json({ success: false, error: "Missing id" });
+    return;
+  }
+
+  const q = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).safeParse({ date: req.query.date });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid date" });
+    return;
+  }
+
+  const sql = getSql();
+  const assetRows = await sql`
+    SELECT asset_account_id as "assetAccountId", accum_dep_account_id as "accumDepAccountId"
+    FROM fixed_assets
+    WHERE org_id = ${orgId} AND id = ${id}
+    LIMIT 1
+  `;
+  const a = assetRows[0] as any;
+  if (!a) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+  const assetAccountId = a.assetAccountId ? String(a.assetAccountId) : null;
+  const accumDepAccountId = a.accumDepAccountId ? String(a.accumDepAccountId) : null;
+  if (!assetAccountId || !accumDepAccountId) {
+    res.status(400).json({ success: false, error: "Fixed asset accounts not set" });
+    return;
+  }
+
+  const date = q.data.date;
+  const costRows = await sql`
+    SELECT COALESCE(SUM(l.debit_base - l.credit_base), 0) as amount
+    FROM journal_lines l
+    JOIN journal_entries e ON e.org_id = ${orgId} AND e.id = l.entry_id
+    WHERE l.org_id = ${orgId}
+      AND l.fixed_asset_id = ${id}
+      AND l.account_id = ${assetAccountId}
+      AND e.status = 'posted'
+      AND e.entry_date <= ${date}
+  `;
+  const accumRows = await sql`
+    SELECT COALESCE(SUM(l.credit_base - l.debit_base), 0) as amount
+    FROM journal_lines l
+    JOIN journal_entries e ON e.org_id = ${orgId} AND e.id = l.entry_id
+    WHERE l.org_id = ${orgId}
+      AND l.fixed_asset_id = ${id}
+      AND l.account_id = ${accumDepAccountId}
+      AND e.status = 'posted'
+      AND e.entry_date <= ${date}
+  `;
+  const costBase = Number((costRows[0] as any)?.amount || 0);
+  const accumDepBase = Number((accumRows[0] as any)?.amount || 0);
+  res.status(200).json({ success: true, data: { costBase, accumDepBase } });
+});
+
 router.post("/:id/dispose", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
