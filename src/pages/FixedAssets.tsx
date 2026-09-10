@@ -70,6 +70,7 @@ type DepEntryRow = {
   memo: string | null;
   debitBase: string;
   creditBase: string;
+  assetNos?: string | null;
 };
 
 export default function FixedAssets() {
@@ -389,14 +390,8 @@ export default function FixedAssets() {
                           <th className="px-3 py-2 text-left">分录号</th>
                           <th className="px-3 py-2 text-right">金额（交易币）</th>
                           <th className="px-3 py-2 text-left">币种</th>
-                          <th className="px-3 py-2 text-right">汇率</th>
                           <th className="px-3 py-2 text-right">成本（本位）</th>
-                          <th className="px-3 py-2 text-right">残值（本位）</th>
                           <th className="px-3 py-2 text-right">折旧月数</th>
-                          <th className="px-3 py-2 text-left">贷方科目</th>
-                          <th className="px-3 py-2 text-left">资产科目</th>
-                          <th className="px-3 py-2 text-left">累计折旧</th>
-                          <th className="px-3 py-2 text-left">折旧费用</th>
                           <th className="px-3 py-2 text-left">备注</th>
                           <th className="px-3 py-2 text-left">状态</th>
                           <th className="px-3 py-2 text-right">操作</th>
@@ -423,42 +418,8 @@ export default function FixedAssets() {
                             </td>
                             <td className="px-3 py-2 text-right">{Number(a.purchaseCostTxn || 0).toFixed(2)}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{a.purchaseCurrency || "-"}</td>
-                            <td className="px-3 py-2 text-right">{Number(a.purchaseFxRate || 0) ? Number(a.purchaseFxRate).toFixed(6) : "-"}</td>
                             <td className="px-3 py-2 text-right">{Number(a.costBase || 0).toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right">{Number(a.salvageValueBase || 0).toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{Number(a.usefulLifeMonths || 0)}</td>
-                            <td className="px-3 py-2 whitespace-nowrap">
-                              {a.purchaseOffsetAccountId
-                                ? (() => {
-                                    const acc = accounts.find((x) => x.id === a.purchaseOffsetAccountId);
-                                    return acc ? `${acc.code} ${acc.name}` : a.purchaseOffsetAccountId;
-                                  })()
-                                : "-"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap">
-                              {a.assetAccountId
-                                ? (() => {
-                                    const acc = accounts.find((x) => x.id === a.assetAccountId);
-                                    return acc ? `${acc.code} ${acc.name}` : a.assetAccountId;
-                                  })()
-                                : "-"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap">
-                              {a.accumDepAccountId
-                                ? (() => {
-                                    const acc = accounts.find((x) => x.id === a.accumDepAccountId);
-                                    return acc ? `${acc.code} ${acc.name}` : a.accumDepAccountId;
-                                  })()
-                                : "-"}
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap">
-                              {a.depExpenseAccountId
-                                ? (() => {
-                                    const acc = accounts.find((x) => x.id === a.depExpenseAccountId);
-                                    return acc ? `${acc.code} ${acc.name}` : a.depExpenseAccountId;
-                                  })()
-                                : "-"}
-                            </td>
                             <td className="px-3 py-2">{a.purchaseMemo || ""}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{a.status}</td>
                             <td className="px-3 py-2 text-right">
@@ -665,6 +626,7 @@ export default function FixedAssets() {
                 <tr>
                   <th className="px-3 py-2 text-left">日期</th>
                   <th className="px-3 py-2 text-left">分录号</th>
+                  <th className="px-3 py-2 text-left">资产编号</th>
                   <th className="px-3 py-2 text-left">备注</th>
                   <th className="px-3 py-2 text-right">借（本位 {baseCurrency}）</th>
                 </tr>
@@ -679,13 +641,14 @@ export default function FixedAssets() {
                           {e.voucherNo || "-"}
                         </a>
                       </td>
+                      <td className="px-3 py-2">{e.assetNos || ""}</td>
                       <td className="px-3 py-2">{e.memo || ""}</td>
                       <td className="px-3 py-2 text-right">{Number(e.debitBase || 0).toFixed(2)}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={4}>
+                    <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={5}>
                       暂无 61xx 分录
                     </td>
                   </tr>

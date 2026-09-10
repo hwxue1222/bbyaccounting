@@ -478,16 +478,18 @@ router.get("/depreciation/entries", requireAuth, async (req: AuthedRequest, res:
       e.voucher_no as "voucherNo",
       e.memo,
       COALESCE(SUM(l.debit_base), 0) as "debitBase",
-      COALESCE(SUM(l.credit_base), 0) as "creditBase"
+      COALESCE(SUM(l.credit_base), 0) as "creditBase",
+      COALESCE(string_agg(DISTINCT fa.asset_no, ', ' ORDER BY fa.asset_no), '') as "assetNos"
     FROM journal_entries e
     JOIN bounds b ON true
     JOIN journal_lines l ON l.org_id = ${orgId} AND l.entry_id = e.id
-    JOIN accounts a ON a.org_id = ${orgId} AND a.id = l.account_id
+    JOIN accounts acc ON acc.org_id = ${orgId} AND acc.id = l.account_id
+    LEFT JOIN fixed_assets fa ON fa.org_id = ${orgId} AND fa.id = l.fixed_asset_id
     WHERE e.org_id = ${orgId}
       AND e.status = 'posted'
       AND e.entry_date >= b.start_date
       AND e.entry_date <= b.end_date
-      AND a.code LIKE '61%'
+      AND acc.code LIKE '61%'
     GROUP BY e.id
     ORDER BY e.entry_date DESC, e.voucher_no DESC NULLS LAST, e.id DESC
   `;
