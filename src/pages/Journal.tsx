@@ -1104,8 +1104,19 @@ export default function Journal() {
         ) : null}
 
         {faPurchaseOpen ? (
-          <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 p-4">
-            <div className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl">
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+            onMouseDown={() => {
+              setErr(null);
+              setFaPurchaseOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-semibold">新增资产（随分录过账生成记录）</div>
                 <button
