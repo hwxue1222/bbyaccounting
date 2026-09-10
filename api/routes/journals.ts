@@ -93,6 +93,9 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
     SELECT
       id,
       created_layer_id as "createdLayerId",
+      item_id as "itemId",
+      move_date as "moveDate",
+      unit_cost_base as "unitCostBase",
       qty
     FROM inventory_moves
     WHERE org_id = ${orgId} AND entry_id = ${entryId} AND status = 'posted' AND move_type = 'receipt'
@@ -131,9 +134,47 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
         foundByMove.set(moveId, { layerId, qtyRemaining });
       }
 
+      const entryLayers = (await trx`
+        SELECT id as "layerId", item_id as "itemId", received_date as "receivedDate", unit_cost_base as "unitCostBase", qty_remaining as "qtyRemaining"
+        FROM inventory_layers
+        WHERE org_id = ${orgId} AND source_entry_id = ${entryId}
+        FOR UPDATE
+      `) as any[];
+
       for (const moveId of missingMoveIds) {
         const found = foundByMove.get(moveId);
         if (!found) {
+          const m = receiptMoves.find((x) => String(x.id) === moveId);
+          const qty = m ? Number(m.qty) : NaN;
+          const unitCostBase = m?.unitCostBase == null ? null : Number(m.unitCostBase);
+          const candidates = m
+            ? entryLayers.filter((l) => {
+                if (String(l.itemId) !== String(m.itemId)) return false;
+                if (String(l.receivedDate) !== String(m.moveDate)) return false;
+                const rem = Number(l.qtyRemaining);
+                if (!Number.isFinite(rem) || !Number.isFinite(qty)) return false;
+                if (round6(rem) !== round6(qty)) return false;
+                if (unitCostBase == null) return true;
+                const uc = Number(l.unitCostBase);
+                return Number.isFinite(uc) && round6(uc) === round6(unitCostBase);
+              })
+            : [];
+
+          if (candidates.length === 1) {
+            const layerId = String(candidates[0].layerId);
+            layerIdByMoveId.set(moveId, layerId);
+            await trx`
+              UPDATE inventory_moves
+              SET created_layer_id = ${layerId}
+              WHERE org_id = ${orgId} AND id = ${moveId} AND created_layer_id IS NULL
+            `;
+            continue;
+          }
+
+          if (entryLayers.length === 0) {
+            continue;
+          }
+
           throw new Error("Cannot rollback receipt without created_layer_id (legacy entry)");
         }
         layerIdByMoveId.set(moveId, found.layerId);
@@ -145,38 +186,42 @@ async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: stri
       }
     }
 
-    const layerIds = receiptMoves.map((m) => {
-      const moveId = String(m.id);
-      const layerId = layerIdByMoveId.get(moveId);
-      if (!layerId) throw new Error("Cannot rollback receipt without created_layer_id");
-      return layerId;
-    });
+    const layerIds = receiptMoves
+      .map((m) => {
+        const moveId = String(m.id);
+        const layerId = layerIdByMoveId.get(moveId);
+        return layerId ? String(layerId) : null;
+      })
+      .filter(Boolean) as string[];
 
-    const layers = (await trx`
-      SELECT id, qty_remaining as "qtyRemaining"
-      FROM inventory_layers
-      WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])
-      FOR UPDATE
-    `) as any[];
+    if (layerIds.length) {
+      const layers = (await trx`
+        SELECT id, qty_remaining as "qtyRemaining"
+        FROM inventory_layers
+        WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])
+        FOR UPDATE
+      `) as any[];
 
-    const remainingById = new Map<string, number>();
-    for (const l of layers) {
-      remainingById.set(String(l.id), Number(l.qtyRemaining));
-    }
-
-    for (const m of receiptMoves) {
-      const moveId = String(m.id);
-      const layerId = layerIdByMoveId.get(moveId);
-      const qty = Number(m.qty);
-      const remaining = layerId ? remainingById.get(layerId) : undefined;
-      if (remaining == null || !Number.isFinite(remaining)) throw new Error("Receipt layer missing");
-      if (!Number.isFinite(qty) || qty <= 0) throw new Error("Invalid receipt qty");
-      if (round6(remaining) !== round6(qty)) {
-        throw new Error("Cannot rollback receipt: layer already consumed");
+      const remainingById = new Map<string, number>();
+      for (const l of layers) {
+        remainingById.set(String(l.id), Number(l.qtyRemaining));
       }
-    }
 
-    await trx`DELETE FROM inventory_layers WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])`;
+      for (const m of receiptMoves) {
+        const moveId = String(m.id);
+        const layerId = layerIdByMoveId.get(moveId);
+        if (!layerId) continue;
+        const qty = Number(m.qty);
+        const remaining = remainingById.get(layerId);
+        if (remaining == null || !Number.isFinite(remaining)) throw new Error("Receipt layer missing");
+        if (!Number.isFinite(qty) || qty <= 0) throw new Error("Invalid receipt qty");
+        if (round6(remaining) !== round6(qty)) {
+          throw new Error("Cannot rollback receipt: layer already consumed");
+        }
+      }
+
+      await trx`DELETE FROM inventory_layers WHERE org_id = ${orgId} AND id = ANY(${layerIds}::uuid[])`;
+    }
   }
 
   await trx`DELETE FROM inventory_moves WHERE org_id = ${orgId} AND entry_id = ${entryId} AND status = 'posted'`;
