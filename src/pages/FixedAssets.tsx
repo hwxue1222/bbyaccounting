@@ -118,6 +118,11 @@ export default function FixedAssets() {
   const [journalErr, setJournalErr] = useState<string | null>(null);
   const [journalLoading, setJournalLoading] = useState(false);
 
+  const [editMetaOpen, setEditMetaOpen] = useState(false);
+  const [editMetaAssetId, setEditMetaAssetId] = useState<string | null>(null);
+  const [editMetaCategory, setEditMetaCategory] = useState<string>("");
+  const [editMetaAssetNo, setEditMetaAssetNo] = useState<string>("");
+
   const [disposeForm, setDisposeForm] = useState({
     assetId: "",
     date: new Date().toISOString().slice(0, 10),
@@ -236,6 +241,15 @@ export default function FixedAssets() {
 
   async function deleteAsset(id: string) {
     await api(`/api/fixed-assets/${encodeURIComponent(id)}` as any, { method: "DELETE" });
+    await refresh();
+    await refreshSchedule(scheduleStart, scheduleEnd);
+  }
+
+  async function updateAssetMeta(id: string, category: string, assetNo: string) {
+    await api(`/api/fixed-assets/${encodeURIComponent(id)}` as any, {
+      method: "PATCH",
+      json: { category, assetNo: assetNo.trim() || undefined },
+    });
     await refresh();
     await refreshSchedule(scheduleStart, scheduleEnd);
   }
@@ -448,6 +462,20 @@ export default function FixedAssets() {
                             <td className="px-3 py-2">{a.purchaseMemo || ""}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{a.status}</td>
                             <td className="px-3 py-2 text-right">
+                              <button
+                                className="mr-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                                disabled={busy}
+                                onClick={() => {
+                                  setErr(null);
+                                  setEditMetaAssetId(a.id);
+                                  setEditMetaCategory(String(a.category || ""));
+                                  setEditMetaAssetNo(String(a.assetNo || ""));
+                                  setEditMetaOpen(true);
+                                }}
+                                type="button"
+                              >
+                                编辑
+                              </button>
                               <button
                                 className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
                                 disabled={busy}
@@ -882,6 +910,93 @@ export default function FixedAssets() {
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>
       </div>
+
+      {editMetaOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+          onMouseDown={() => {
+            setEditMetaOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-xl rounded-xl bg-white p-4 shadow-xl"
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold">编辑资产信息</div>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                type="button"
+                onClick={() => setEditMetaOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <label className="text-xs text-zinc-600">大类</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                  value={editMetaCategory}
+                  onChange={(e) => setEditMetaCategory(e.target.value)}
+                >
+                  <option value="">请选择</option>
+                  <option value="Machinery and Equipment">Machinery and Equipment</option>
+                  <option value="Vehicles">Vehicles</option>
+                  <option value="Computer">Computer</option>
+                  <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                  <option value="Renovation">Renovation</option>
+                  <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-zinc-600">固定资产编号</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={editMetaAssetNo}
+                  onChange={(e) => setEditMetaAssetNo(e.target.value.toUpperCase())}
+                  placeholder={editMetaCategory ? "例如：FA-COM00001" : "请先选择大类"}
+                />
+                <div className="mt-1 text-xs text-zinc-500">留空则保持当前值不变。</div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                type="button"
+                disabled={busy}
+                onClick={() => setEditMetaOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                type="button"
+                disabled={busy || !editMetaAssetId || !editMetaCategory.trim()}
+                onClick={async () => {
+                  if (!editMetaAssetId) return;
+                  setBusy(true);
+                  setErr(null);
+                  try {
+                    await updateAssetMeta(editMetaAssetId, editMetaCategory, editMetaAssetNo);
+                    setEditMetaOpen(false);
+                  } catch (e: any) {
+                    setErr(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {journalModalOpen ? (
         <div

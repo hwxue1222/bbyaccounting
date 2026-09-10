@@ -954,7 +954,21 @@ export default function Journal() {
                 try {
                   if (postDraftId) {
                     const id = postDraftId;
-                    await api(`/api/journals/${encodeURIComponent(id)}/post` as any, { method: "POST" });
+                    const fixedAssetPurchases = Object.entries(faPurchaseByLineIdx).length
+                      ? Object.entries(faPurchaseByLineIdx).map(([k, v]) => ({
+                          lineNo: Number(k) + 1,
+                          category: v.category,
+                          assetNo: v.assetNo || undefined,
+                          name: v.name,
+                          acquisitionDate: v.acquisitionDate,
+                          usefulLifeMonths: v.usefulLifeMonths,
+                          salvageBase: v.salvageBase,
+                        }))
+                      : undefined;
+                    await api(`/api/journals/${encodeURIComponent(id)}/post` as any, {
+                      method: "POST",
+                      json: fixedAssetPurchases ? { fixedAssetPurchases } : undefined,
+                    });
                     resetDraftEntry();
                     await refresh();
                     setSelectedId(id);

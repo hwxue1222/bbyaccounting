@@ -88,6 +88,98 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { assets: rows } });
 });
 
+router.patch("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const id = String(req.params.id || "");
+  if (!id) {
+    res.status(400).json({ success: false, error: "Missing id" });
+    return;
+  }
+
+  const bodySchema = z
+    .object({
+      category: z
+        .preprocess(
+          (v) => (typeof v === "string" ? v.trim() : v),
+          z.enum(FIXED_ASSET_CATEGORIES as unknown as [string, ...string[]]),
+        )
+        .optional(),
+      assetNo: z
+        .preprocess(
+          (v) => {
+            if (typeof v !== "string") return undefined;
+            const s = v.trim().toUpperCase();
+            return s ? s : undefined;
+          },
+          z.string().min(5).max(32).optional(),
+        )
+        .optional(),
+    })
+    .refine((x) => Boolean(x.category || x.assetNo), { message: "No updates" });
+
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+  try {
+    const updated = await sql.begin(async (trx) => {
+      const existing = await trx`
+        SELECT id, asset_no as "assetNo", category
+        FROM fixed_assets
+        WHERE org_id = ${orgId} AND id = ${id}
+        LIMIT 1
+      `;
+      if (!existing.length) {
+        throw new Error("Not found");
+      }
+
+      const desiredNo = parsed.data.assetNo ? String(parsed.data.assetNo) : null;
+      if (desiredNo) {
+        const dup = await trx`
+          SELECT id
+          FROM fixed_assets
+          WHERE org_id = ${orgId} AND asset_no = ${desiredNo} AND id <> ${id}
+          LIMIT 1
+        `;
+        if (dup.length) {
+          throw new Error("固定资产编号已存在");
+        }
+      }
+
+      const nextCategory = parsed.data.category ? normalizeFixedAssetCategory(parsed.data.category) : null;
+      const nextNo = desiredNo;
+
+      const rows = await trx`
+        UPDATE fixed_assets
+        SET
+          category = COALESCE(${nextCategory}, category),
+          asset_no = COALESCE(${nextNo}, asset_no)
+        WHERE org_id = ${orgId} AND id = ${id}
+        RETURNING id, asset_no as "assetNo", category
+      `;
+      return rows[0] as any;
+    });
+
+    res.status(200).json({ success: true, data: updated });
+  } catch (e: any) {
+    const msg = typeof e?.message === "string" ? e.message : "Update failed";
+    if (msg === "Not found") {
+      res.status(404).json({ success: false, error: msg });
+      return;
+    }
+    if (msg.includes("编号已存在")) {
+      res.status(409).json({ success: false, error: msg });
+      return;
+    }
+    res.status(500).json({ success: false, error: "Server internal error" });
+  }
+});
+
 router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
