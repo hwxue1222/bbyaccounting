@@ -101,6 +101,19 @@ export default function Journal() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [postDraftId, setPostDraftId] = useState<string | null>(null);
 
+  const [faPurchaseOpen, setFaPurchaseOpen] = useState(false);
+  const [faPurchaseForm, setFaPurchaseForm] = useState({
+    name: "",
+    acquisitionDate: new Date().toISOString().slice(0, 10),
+    costTxn: 0,
+    currency: "",
+    fxRate: 1,
+    usefulLifeMonths: 36,
+    salvageBase: 0,
+    offsetAccountId: "",
+    memo: "",
+  });
+
   const txnDiff = useMemo(() => {
     const debit = draftLines.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
     const credit = draftLines.reduce((s, l) => s + (Number(l.creditTxn) || 0), 0);
@@ -125,6 +138,7 @@ export default function Journal() {
     setInvQuoteByRow({});
     setInvModalOpen(false);
     setEditModalOpen(false);
+    setFaPurchaseOpen(false);
     void refreshNextVoucherNo(true);
   }
 
@@ -322,6 +336,27 @@ export default function Journal() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function openFixedAssetPurchaseModal(amountTxn: number) {
+    const other = draftLines.find((l) => {
+      if (!l.accountId) return false;
+      const acc = accounts.find((a) => a.id === l.accountId);
+      const code = acc?.code ? String(acc.code) : "";
+      return !code.startsWith("16");
+    });
+    setFaPurchaseForm({
+      name: "",
+      acquisitionDate: draftDate,
+      costTxn: Number.isFinite(amountTxn) && amountTxn > 0 ? amountTxn : 0,
+      currency: draftCurrency,
+      fxRate: Number(draftFx) || 1,
+      usefulLifeMonths: 36,
+      salvageBase: 0,
+      offsetAccountId: other?.accountId || "",
+      memo: draftMemo || "",
+    });
+    setFaPurchaseOpen(true);
   }
 
   function getInventoryLinkInfoByLine(line: { debitTxn: string; creditTxn: string }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
@@ -666,9 +701,7 @@ export default function Journal() {
                             setInvConfirmed(null);
                             setInvLineIdx(null);
                             const amount = Number(l.debitTxn) || 0;
-                            navigate(
-                              `/fixed-assets?mode=purchase&date=${encodeURIComponent(draftDate)}&amount=${encodeURIComponent(String(amount))}&currency=${encodeURIComponent(draftCurrency)}&fx=${encodeURIComponent(String(draftFx))}`,
-                            );
+                            openFixedAssetPurchaseModal(amount);
                             return;
                           }
                           if (code.startsWith("61")) {
@@ -1016,6 +1049,169 @@ export default function Journal() {
               </div>
               <div className="mt-3">
                 {renderEditorCard()}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {faPurchaseOpen ? (
+          <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 p-4">
+            <div className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">新增资产（生成草稿分录）</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    setFaPurchaseOpen(false);
+                  }}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="text-xs text-zinc-600">名称</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.name}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">购置日</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.acquisitionDate}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, acquisitionDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">金额（交易币）</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.costTxn}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, costTxn: Number(e.target.value) || 0 })}
+                    type="number"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">币种</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.currency}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, currency: e.target.value.toUpperCase() })}
+                    maxLength={3}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">汇率</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.fxRate}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, fxRate: Number(e.target.value) || 1 })}
+                    type="number"
+                    step="0.0001"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">折旧月数</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.usefulLifeMonths}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, usefulLifeMonths: Number(e.target.value) || 0 })}
+                    type="number"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">残值（本位）</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.salvageBase}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, salvageBase: Number(e.target.value) || 0 })}
+                    type="number"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">贷方科目（现金/应付）</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={faPurchaseForm.offsetAccountId}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, offsetAccountId: e.target.value })}
+                  >
+                    <option value="">请选择</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">备注</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.memo}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, memo: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    setFaPurchaseOpen(false);
+                  }}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={
+                    busy ||
+                    !faPurchaseForm.offsetAccountId ||
+                    !faPurchaseForm.acquisitionDate.trim() ||
+                    !faPurchaseForm.currency.trim() ||
+                    !(Number(faPurchaseForm.costTxn) > 0) ||
+                    !(Number(faPurchaseForm.usefulLifeMonths) > 0)
+                  }
+                  onClick={async () => {
+                    setBusy(true);
+                    setErr(null);
+                    try {
+                      const memo = String(faPurchaseForm.memo || "").trim();
+                      const r = await api<{ assetId: string; entryId: string }>("/api/fixed-assets", {
+                        method: "POST",
+                        json: {
+                          ...faPurchaseForm,
+                          memo: memo ? memo : undefined,
+                        },
+                      });
+                      const entryId = (r as any).entryId || (r as any)?.data?.entryId;
+                      if (!entryId) throw new Error("保存草稿失败：未返回凭证 ID");
+                      setFaPurchaseOpen(false);
+                      resetDraftEntry();
+                      await refresh();
+                      setSelectedId(String(entryId));
+                    } catch (e: any) {
+                      setErr(e.message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  保存草稿
+                </button>
               </div>
             </div>
           </div>
