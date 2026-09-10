@@ -5,6 +5,7 @@ import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
+import { issueFixedAssetNo, normalizeFixedAssetCategory } from "../lib/fixedAssetNo.js";
 
 const router = Router();
 
@@ -31,25 +32,52 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const rows = await sql`
     SELECT
       id,
+      asset_no as "assetNo",
       name,
+      category,
       acquisition_date as "acquisitionDate",
       cost_base as "costBase",
       useful_life_months as "usefulLifeMonths",
       salvage_value_base as "salvageValueBase",
       status,
       disposed_at as "disposedAt",
+      asset_account_id as "assetAccountId",
+      accum_dep_account_id as "accumDepAccountId",
+      dep_expense_account_id as "depExpenseAccountId",
       p.entry_id as "purchaseEntryId",
-      p.voucher_no as "purchaseVoucherNo"
+      p.voucher_no as "purchaseVoucherNo",
+      p.currency_code as "purchaseCurrency",
+      p.fx_rate as "purchaseFxRate",
+      p.memo as "purchaseMemo",
+      p.cost_txn as "purchaseCostTxn",
+      p.offset_account_id as "purchaseOffsetAccountId"
     FROM fixed_assets
     LEFT JOIN LATERAL (
-      SELECT e.id as entry_id, e.voucher_no as voucher_no
-      FROM journal_lines l
-      JOIN journal_entries e ON e.id = l.entry_id
-      WHERE l.org_id = ${orgId}
-        AND l.fixed_asset_id = fixed_assets.id
+      SELECT
+        e.id as entry_id,
+        e.voucher_no as voucher_no,
+        e.currency_code,
+        e.fx_rate,
+        e.memo,
+        l1.debit_txn as cost_txn,
+        l2.account_id as offset_account_id
+      FROM journal_lines l1
+      JOIN journal_entries e ON e.id = l1.entry_id AND e.org_id = ${orgId}
+      LEFT JOIN LATERAL (
+        SELECT l.account_id
+        FROM journal_lines l
+        WHERE l.org_id = ${orgId}
+          AND l.entry_id = e.id
+          AND l.line_no <> l1.line_no
+          AND COALESCE(l.credit_base, 0) > 0
+        ORDER BY l.line_no ASC
+        LIMIT 1
+      ) l2 ON true
+      WHERE l1.org_id = ${orgId}
+        AND l1.fixed_asset_id = fixed_assets.id
         AND e.status = 'posted'
-        AND l.account_id = fixed_assets.asset_account_id
-        AND COALESCE(l.debit_base, 0) > 0
+        AND l1.account_id = fixed_assets.asset_account_id
+        AND COALESCE(l1.debit_base, 0) > 0
       ORDER BY e.entry_date ASC, e.id ASC
       LIMIT 1
     ) p ON true
@@ -113,6 +141,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!orgId) return;
   const bodySchema = z.object({
     name: z.string().min(1),
+    category: z.string().min(1).optional(),
     acquisitionDate: z.string().min(10),
     costTxn: z.number().positive(),
     currency: z.string().min(3).max(3),
@@ -148,17 +177,19 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   }
 
   const costBase = round2(parsed.data.costTxn * parsed.data.fxRate);
+  const category = normalizeFixedAssetCategory(parsed.data.category);
 
   const created = await sql.begin(async (trx) => {
     const voucherNo = await issueVoucherNo(trx, orgId);
+    const assetNo = await issueFixedAssetNo(trx, orgId, category);
 
     const asset = (
       await trx`
         INSERT INTO fixed_assets (
-          org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
+          org_id, asset_no, category, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
           status, asset_account_id, accum_dep_account_id, dep_expense_account_id
         ) VALUES (
-          ${orgId}, ${parsed.data.name.trim()}, ${parsed.data.acquisitionDate}, ${costBase}, ${parsed.data.usefulLifeMonths}, ${parsed.data.salvageBase},
+          ${orgId}, ${assetNo}, ${category}, ${parsed.data.name.trim()}, ${parsed.data.acquisitionDate}, ${costBase}, ${parsed.data.usefulLifeMonths}, ${parsed.data.salvageBase},
           'draft', ${assetAccountId}, ${accumDepAccountId}, ${depExpenseAccountId}
         )
         RETURNING id

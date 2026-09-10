@@ -255,7 +255,9 @@ export async function ensureMigrated(): Promise<void> {
     CREATE TABLE IF NOT EXISTS fixed_assets (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID NOT NULL,
+      asset_no TEXT,
       name TEXT NOT NULL,
+      category TEXT,
       acquisition_date DATE NOT NULL,
       cost_base NUMERIC(18,2) NOT NULL,
       useful_life_months INT NOT NULL,
@@ -267,6 +269,10 @@ export async function ensureMigrated(): Promise<void> {
       disposed_at DATE
     )
   `;
+
+  await sql`ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS asset_no TEXT`;
+  await sql`ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS category TEXT`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_org_asset_no_unique ON fixed_assets(org_id, asset_no) WHERE asset_no IS NOT NULL AND asset_no <> ''`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS depreciation_runs (

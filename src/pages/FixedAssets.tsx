@@ -8,13 +8,23 @@ import { useTr } from "@/lib/tr";
 type Account = { id: string; code: string; name: string };
 type Asset = {
   id: string;
+  assetNo?: string | null;
   name: string;
+  category?: string | null;
   acquisitionDate: string;
   costBase: string;
+  purchaseCurrency?: string | null;
+  purchaseFxRate?: number | null;
+  purchaseMemo?: string | null;
+  purchaseCostTxn?: string | null;
+  purchaseOffsetAccountId?: string | null;
   usefulLifeMonths: number;
   salvageValueBase: string;
   status: string;
   disposedAt: string | null;
+  assetAccountId?: string | null;
+  accumDepAccountId?: string | null;
+  depExpenseAccountId?: string | null;
   purchaseEntryId?: string | null;
   purchaseVoucherNo?: string | null;
 };
@@ -66,6 +76,7 @@ export default function FixedAssets() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [assetForm, setAssetForm] = useState({
+    category: "Computer",
     name: "Laptop",
     acquisitionDate: new Date().toISOString().slice(0, 10),
     costTxn: 2000,
@@ -94,6 +105,33 @@ export default function FixedAssets() {
   });
 
   const cashAccounts = useMemo(() => accounts, [accounts]);
+
+  const categoryOrder = [
+    "Machinery and Equipment",
+    "Vehicles",
+    "Computer",
+    "Furniture and Fixtures",
+    "Renovation",
+    "Intangible Fixed Assets",
+  ];
+
+  const assetsByCategory = useMemo(() => {
+    const map = new Map<string, Asset[]>();
+    for (const a of assets) {
+      const c = (a.category || "Uncategorized").trim() || "Uncategorized";
+      const arr = map.get(c) || [];
+      arr.push(a);
+      map.set(c, arr);
+    }
+    return map;
+  }, [assets]);
+
+  const categoriesToRender = useMemo(() => {
+    const existing = Array.from(assetsByCategory.keys());
+    const ordered = categoryOrder.filter((c) => assetsByCategory.has(c));
+    const rest = existing.filter((c) => !categoryOrder.includes(c)).sort((a, b) => a.localeCompare(b));
+    return [...ordered, ...rest];
+  }, [assetsByCategory]);
 
   async function refresh() {
     const [{ accounts }, { assets }] = await Promise.all([
@@ -233,60 +271,124 @@ export default function FixedAssets() {
 
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "list" ? "" : "hidden")}>
           <div className="text-sm font-semibold">资产列表</div>
-          <div className="mt-3 max-h-[520px] overflow-auto rounded-lg border border-zinc-100">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-                <tr>
-                  <th className="px-3 py-2 text-left">名称</th>
-                  <th className="px-3 py-2 text-left">购置日</th>
-                  <th className="px-3 py-2 text-left">分录号</th>
-                  <th className="px-3 py-2 text-right">成本</th>
-                  <th className="px-3 py-2 text-left">状态</th>
-                  <th className="px-3 py-2 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assets.map((a) => (
-                  <tr key={a.id} className="border-t border-zinc-100">
-                    <td className="px-3 py-2">{a.name}</td>
-                    <td className="px-3 py-2">{String(a.acquisitionDate || "").slice(0, 10)}</td>
-                    <td className="px-3 py-2">
-                      {a.purchaseEntryId ? (
-                        <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(a.purchaseEntryId)}`}>
-                          {a.purchaseVoucherNo || "(无分录号)"}
-                        </a>
-                      ) : (
-                        <span className="text-zinc-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right">{Number(a.costBase).toFixed(2)}</td>
-                    <td className="px-3 py-2">{a.status}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                        disabled={busy}
-                        onClick={async () => {
-                          const ok = window.confirm("确认删除该固定资产？此操作将从资产列表与变动表移除该记录。");
-                          if (!ok) return;
-                          setBusy(true);
-                          setErr(null);
-                          try {
-                            await deleteAsset(a.id);
-                          } catch (e: any) {
-                            setErr(e.message);
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                        type="button"
-                      >
-                        删除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-3 space-y-4">
+            {categoriesToRender.map((cat) => {
+              const rows = assetsByCategory.get(cat) || [];
+              if (!rows.length) return null;
+              return (
+                <div key={cat} className="rounded-lg border border-zinc-100">
+                  <div className="flex items-center justify-between gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-2">
+                    <div className="text-sm font-semibold">{cat}</div>
+                    <div className="text-xs text-zinc-600">{rows.length} 项</div>
+                  </div>
+                  <div className="max-h-[520px] overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-white text-xs text-zinc-600">
+                        <tr>
+                          <th className="px-3 py-2 text-left">编号</th>
+                          <th className="px-3 py-2 text-left">名称</th>
+                          <th className="px-3 py-2 text-left">购置日</th>
+                          <th className="px-3 py-2 text-left">分录号</th>
+                          <th className="px-3 py-2 text-right">金额（交易币）</th>
+                          <th className="px-3 py-2 text-left">币种</th>
+                          <th className="px-3 py-2 text-right">汇率</th>
+                          <th className="px-3 py-2 text-right">成本（本位）</th>
+                          <th className="px-3 py-2 text-right">残值（本位）</th>
+                          <th className="px-3 py-2 text-right">折旧月数</th>
+                          <th className="px-3 py-2 text-left">贷方科目</th>
+                          <th className="px-3 py-2 text-left">资产科目</th>
+                          <th className="px-3 py-2 text-left">累计折旧</th>
+                          <th className="px-3 py-2 text-left">折旧费用</th>
+                          <th className="px-3 py-2 text-left">备注</th>
+                          <th className="px-3 py-2 text-left">状态</th>
+                          <th className="px-3 py-2 text-right">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((a) => (
+                          <tr key={a.id} className="border-t border-zinc-100">
+                            <td className="px-3 py-2 whitespace-nowrap">{a.assetNo || "-"}</td>
+                            <td className="px-3 py-2">{a.name}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{String(a.acquisitionDate || "").slice(0, 10)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {a.purchaseEntryId ? (
+                                <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(a.purchaseEntryId)}`}>
+                                  {a.purchaseVoucherNo || "(无分录号)"}
+                                </a>
+                              ) : (
+                                <span className="text-zinc-400">-</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right">{Number(a.purchaseCostTxn || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{a.purchaseCurrency || "-"}</td>
+                            <td className="px-3 py-2 text-right">{Number(a.purchaseFxRate || 0) ? Number(a.purchaseFxRate).toFixed(6) : "-"}</td>
+                            <td className="px-3 py-2 text-right">{Number(a.costBase || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{Number(a.salvageValueBase || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{Number(a.usefulLifeMonths || 0)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {a.purchaseOffsetAccountId
+                                ? (() => {
+                                    const acc = accounts.find((x) => x.id === a.purchaseOffsetAccountId);
+                                    return acc ? `${acc.code} ${acc.name}` : a.purchaseOffsetAccountId;
+                                  })()
+                                : "-"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {a.assetAccountId
+                                ? (() => {
+                                    const acc = accounts.find((x) => x.id === a.assetAccountId);
+                                    return acc ? `${acc.code} ${acc.name}` : a.assetAccountId;
+                                  })()
+                                : "-"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {a.accumDepAccountId
+                                ? (() => {
+                                    const acc = accounts.find((x) => x.id === a.accumDepAccountId);
+                                    return acc ? `${acc.code} ${acc.name}` : a.accumDepAccountId;
+                                  })()
+                                : "-"}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {a.depExpenseAccountId
+                                ? (() => {
+                                    const acc = accounts.find((x) => x.id === a.depExpenseAccountId);
+                                    return acc ? `${acc.code} ${acc.name}` : a.depExpenseAccountId;
+                                  })()
+                                : "-"}
+                            </td>
+                            <td className="px-3 py-2">{a.purchaseMemo || ""}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{a.status}</td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                                disabled={busy}
+                                onClick={async () => {
+                                  const ok = window.confirm("确认删除该固定资产？此操作将从资产列表与变动表移除该记录。");
+                                  if (!ok) return;
+                                  setBusy(true);
+                                  setErr(null);
+                                  try {
+                                    await deleteAsset(a.id);
+                                  } catch (e: any) {
+                                    setErr(e.message);
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                }}
+                                type="button"
+                              >
+                                删除
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>
@@ -294,6 +396,21 @@ export default function FixedAssets() {
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "purchase" ? "" : "hidden")}>
           <div className="text-sm font-semibold">新增资产（自动生成购置分录）</div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div>
+              <label className="text-xs text-zinc-600">大类</label>
+              <select
+                className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                value={assetForm.category}
+                onChange={(e) => setAssetForm({ ...assetForm, category: e.target.value })}
+              >
+                <option value="Machinery and Equipment">Machinery and Equipment</option>
+                <option value="Vehicles">Vehicles</option>
+                <option value="Computer">Computer</option>
+                <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                <option value="Renovation">Renovation</option>
+                <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
+              </select>
+            </div>
             <div>
               <label className="text-xs text-zinc-600">名称</label>
               <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} />
