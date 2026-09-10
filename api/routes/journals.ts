@@ -1199,6 +1199,29 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
   }
   try {
     await sql.begin(async (trx) => {
+      const fixedAssetRows = (await trx`
+        SELECT DISTINCT fixed_asset_id as "assetId"
+        FROM journal_lines
+        WHERE org_id = ${orgId} AND entry_id = ${id} AND fixed_asset_id IS NOT NULL
+      `) as any[];
+      const fixedAssetIds = fixedAssetRows.map((r) => String(r.assetId));
+
+      const purchaseAssetIds = new Set<string>();
+      if (fixedAssetIds.length) {
+        const purchaseRows = (await trx`
+          SELECT DISTINCT l.fixed_asset_id as "assetId"
+          FROM journal_lines l
+          JOIN fixed_assets fa ON fa.id = l.fixed_asset_id
+          WHERE l.org_id = ${orgId}
+            AND l.entry_id = ${id}
+            AND l.fixed_asset_id = ANY(${fixedAssetIds}::uuid[])
+            AND fa.org_id = ${orgId}
+            AND l.account_id = fa.asset_account_id
+            AND COALESCE(l.debit_base, 0) > 0
+        `) as any[];
+        for (const r of purchaseRows) purchaseAssetIds.add(String(r.assetId));
+      }
+
       if (status === "posted") {
         await rollbackInventoryByEntryId(trx, orgId, id);
       await deleteSystemEntriesForParent(trx, orgId, id);
@@ -1208,6 +1231,19 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
       await trx`DELETE FROM attachments WHERE org_id = ${orgId} AND entry_id = ${id}`;
       await trx`DELETE FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${id}`;
       await trx`DELETE FROM journal_entries WHERE org_id = ${orgId} AND id = ${id}`;
+
+      for (const assetId of purchaseAssetIds) {
+        const remaining = await trx`
+          SELECT COUNT(1) as cnt
+          FROM journal_lines
+          WHERE org_id = ${orgId} AND fixed_asset_id = ${assetId}
+        `;
+        const cnt = Number((remaining[0] as any)?.cnt || 0);
+        if (cnt === 0) {
+          await trx`DELETE FROM depreciation_lines WHERE org_id = ${orgId} AND asset_id = ${assetId}`;
+          await trx`DELETE FROM fixed_assets WHERE org_id = ${orgId} AND id = ${assetId}`;
+        }
+      }
     });
 
     res.status(200).json({ success: true, data: { id } });
