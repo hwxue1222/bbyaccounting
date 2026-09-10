@@ -66,22 +66,66 @@ app.use(
  */
 app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
   try {
+    const hasDatabaseUrl = Boolean(process.env.DATABASE_URL)
+    const hasJwtSecret = Boolean(process.env.JWT_SECRET)
+    const appOrigin = typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null
+
+    if (!hasDatabaseUrl) {
+      res.status(503).json({
+        success: false,
+        error: 'Missing DATABASE_URL',
+        errorId: crypto.randomUUID(),
+        env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
+      })
+      return
+    }
+    if (!hasJwtSecret) {
+      res.status(503).json({
+        success: false,
+        error: 'Missing JWT_SECRET',
+        errorId: crypto.randomUUID(),
+        env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
+      })
+      return
+    }
+
     await ensureMigrated()
-    res.status(200).json({ success: true, message: 'ready' })
+    res.status(200).json({
+      success: true,
+      message: 'ready',
+      env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
+    })
   } catch (error: any) {
     const msg = typeof error?.message === 'string' ? error.message : ''
     const errorId = crypto.randomUUID()
-    const mapped =
-      msg.includes('Missing DATABASE_URL')
-        ? { status: 503, error: 'Missing DATABASE_URL' }
-        : msg.includes('Missing JWT_SECRET')
-          ? { status: 503, error: 'Missing JWT_SECRET' }
-          : msg.includes('ECONNREFUSED')
-            ? { status: 503, error: 'Database connection failed' }
-            : msg.includes('password authentication failed')
-              ? { status: 503, error: 'Database authentication failed' }
-              : { status: 500, error: 'Server internal error' }
-    res.status(mapped.status).json({ success: false, error: mapped.error, errorId })
+
+    const env = {
+      hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      hasJwtSecret: Boolean(process.env.JWT_SECRET),
+      appOrigin: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+    }
+
+    const normalized = msg.toLowerCase()
+    const mapped = normalized.includes('missing database_url')
+      ? { status: 503, error: 'Missing DATABASE_URL', code: 'MISSING_DATABASE_URL' }
+      : normalized.includes('missing jwt_secret')
+        ? { status: 503, error: 'Missing JWT_SECRET', code: 'MISSING_JWT_SECRET' }
+        : normalized.includes('password authentication failed') || normalized.includes('authentication failed')
+          ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
+          : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')
+            ? { status: 503, error: 'Database connection failed', code: 'DB_CONN_FAILED' }
+            : normalized.includes('create extension') && normalized.includes('permission')
+              ? { status: 503, error: 'Database permission denied (create extension)', code: 'DB_PERMISSION' }
+              : { status: 500, error: 'Server internal error', code: 'UNKNOWN' }
+
+    console.error(`[ready ${errorId}]`, msg)
+    res.status(mapped.status).json({
+      success: false,
+      error: mapped.error,
+      code: mapped.code,
+      errorId,
+      env,
+    })
   }
 })
 
@@ -116,6 +160,8 @@ app.use('/api/users', usersRoutes)
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   const msg = typeof error?.message === 'string' ? error.message : ''
   const errorId = crypto.randomUUID()
+
+  console.error(`[api ${errorId}] ${req.method} ${req.path}`, msg)
 
   const mapped =
     msg.includes('Missing DATABASE_URL')
