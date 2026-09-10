@@ -38,8 +38,30 @@ function buildInfo() {
   }
 }
 
-const originEnv = process.env.APP_ORIGIN
-const allowedOrigins = originEnv ? originEnv.split(',').map((x) => x.trim()).filter(Boolean) : null
+function normalizeOrigin(input: string): string {
+  let s = input.trim()
+  while (
+    (s.startsWith('`') && s.endsWith('`')) ||
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim()
+  }
+  s = s.replace(/^[`"']+/, '').replace(/[`"']+$/, '').trim()
+  return s
+}
+
+function parseAllowedOrigins(raw: unknown): string[] | null {
+  if (typeof raw !== 'string') return null
+  const cleaned = normalizeOrigin(raw)
+  const parts = cleaned
+    .split(',')
+    .map((p) => normalizeOrigin(p))
+    .filter(Boolean)
+  return parts.length ? parts : null
+}
+
+const allowedOrigins = parseAllowedOrigins(process.env.APP_ORIGIN)
 
 app.use(
   cors({
@@ -74,13 +96,16 @@ app.use(
 )
 
 app.use('/api/version', (_req: Request, res: Response): void => {
+  const appOriginRaw = typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null
+  const appOriginList = parseAllowedOrigins(process.env.APP_ORIGIN)
   res.status(200).json({
     success: true,
     build: buildInfo(),
     env: {
       hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
       hasJwtSecret: Boolean(process.env.JWT_SECRET),
-      appOrigin: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+      appOriginRaw,
+      appOriginList,
     },
   })
 })
@@ -92,7 +117,8 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
   try {
     const hasDatabaseUrl = Boolean(process.env.DATABASE_URL)
     const hasJwtSecret = Boolean(process.env.JWT_SECRET)
-    const appOrigin = typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null
+    const appOriginRaw = typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null
+    const appOriginList = parseAllowedOrigins(process.env.APP_ORIGIN)
 
     if (!hasDatabaseUrl) {
       res.status(503).json({
@@ -100,7 +126,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
         error: 'Missing DATABASE_URL',
         errorId: crypto.randomUUID(),
         build: buildInfo(),
-        env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
+        env: { hasDatabaseUrl, hasJwtSecret, appOriginRaw, appOriginList },
       })
       return
     }
@@ -110,7 +136,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
         error: 'Missing JWT_SECRET',
         errorId: crypto.randomUUID(),
         build: buildInfo(),
-        env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
+        env: { hasDatabaseUrl, hasJwtSecret, appOriginRaw, appOriginList },
       })
       return
     }
@@ -120,7 +146,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
       success: true,
       message: 'ready',
       build: buildInfo(),
-      env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
+      env: { hasDatabaseUrl, hasJwtSecret, appOriginRaw, appOriginList },
     })
   } catch (error: any) {
     const msg = typeof error?.message === 'string' ? error.message : ''
@@ -130,7 +156,8 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
     const env = {
       hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
       hasJwtSecret: Boolean(process.env.JWT_SECRET),
-      appOrigin: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+      appOriginRaw: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+      appOriginList: parseAllowedOrigins(process.env.APP_ORIGIN),
     }
 
     const normalized = msg.toLowerCase()
@@ -216,7 +243,8 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
     env: {
       hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
       hasJwtSecret: Boolean(process.env.JWT_SECRET),
-      appOrigin: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+      appOriginRaw: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+      appOriginList: parseAllowedOrigins(process.env.APP_ORIGIN),
     },
     pgCode,
   })
