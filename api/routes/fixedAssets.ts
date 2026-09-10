@@ -57,7 +57,14 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
     usefulLifeMonths: z.number().int().positive(),
     salvageBase: z.number().nonnegative().default(0),
     offsetAccountId: z.string().uuid(),
-    memo: z.string().trim().min(1).max(200).optional(),
+    memo: z.preprocess(
+      (v) => {
+        if (typeof v !== "string") return undefined;
+        const s = v.trim();
+        return s ? s : undefined;
+      },
+      z.string().min(1).max(200).optional(),
+    ),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {

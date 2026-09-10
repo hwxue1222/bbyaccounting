@@ -288,7 +288,11 @@ export default function FixedAssets() {
               setBusy(true);
               setErr(null);
               try {
-                await api("/api/fixed-assets", { method: "POST", json: assetForm });
+                const memo = assetForm.memo.trim();
+                await api("/api/fixed-assets", {
+                  method: "POST",
+                  json: { ...assetForm, memo: memo ? memo : undefined },
+                });
                 await refresh();
                 await refreshSchedule(scheduleStart, scheduleEnd);
                 setTab("list");
