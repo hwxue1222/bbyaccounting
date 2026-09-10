@@ -26,6 +26,18 @@ dotenv.config()
 
 const app: express.Application = express()
 
+function buildInfo() {
+  const commit = typeof process.env.VERCEL_GIT_COMMIT_SHA === 'string' ? process.env.VERCEL_GIT_COMMIT_SHA : null
+  const deployment = typeof process.env.VERCEL_DEPLOYMENT_ID === 'string' ? process.env.VERCEL_DEPLOYMENT_ID : null
+  const env = typeof process.env.VERCEL_ENV === 'string' ? process.env.VERCEL_ENV : null
+  return {
+    commit: commit ? commit.slice(0, 7) : null,
+    deployment,
+    env,
+    now: new Date().toISOString(),
+  }
+}
+
 const originEnv = process.env.APP_ORIGIN
 const allowedOrigins = originEnv ? originEnv.split(',').map((x) => x.trim()).filter(Boolean) : null
 
@@ -61,6 +73,18 @@ app.use(
   },
 )
 
+app.use('/api/version', (_req: Request, res: Response): void => {
+  res.status(200).json({
+    success: true,
+    build: buildInfo(),
+    env: {
+      hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      hasJwtSecret: Boolean(process.env.JWT_SECRET),
+      appOrigin: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+    },
+  })
+})
+
 /**
  * readiness (depends on DB)
  */
@@ -75,6 +99,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
         success: false,
         error: 'Missing DATABASE_URL',
         errorId: crypto.randomUUID(),
+        build: buildInfo(),
         env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
       })
       return
@@ -84,6 +109,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
         success: false,
         error: 'Missing JWT_SECRET',
         errorId: crypto.randomUUID(),
+        build: buildInfo(),
         env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
       })
       return
@@ -93,10 +119,12 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
     res.status(200).json({
       success: true,
       message: 'ready',
+      build: buildInfo(),
       env: { hasDatabaseUrl, hasJwtSecret, appOrigin },
     })
   } catch (error: any) {
     const msg = typeof error?.message === 'string' ? error.message : ''
+    const pgCode = typeof error?.code === 'string' ? error.code : null
     const errorId = crypto.randomUUID()
 
     const env = {
@@ -114,7 +142,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
           ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
           : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')
             ? { status: 503, error: 'Database connection failed', code: 'DB_CONN_FAILED' }
-            : normalized.includes('create extension') && normalized.includes('permission')
+            : pgCode === '42501' || (normalized.includes('permission') && normalized.includes('extension'))
               ? { status: 503, error: 'Database permission denied (create extension)', code: 'DB_PERMISSION' }
               : { status: 500, error: 'Server internal error', code: 'UNKNOWN' }
 
@@ -124,7 +152,9 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
       error: mapped.error,
       code: mapped.code,
       errorId,
+      build: buildInfo(),
       env,
+      pgCode,
     })
   }
 })
@@ -159,22 +189,37 @@ app.use('/api/users', usersRoutes)
  */
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   const msg = typeof error?.message === 'string' ? error.message : ''
+  const pgCode = typeof (error as any)?.code === 'string' ? (error as any).code : null
   const errorId = crypto.randomUUID()
 
   console.error(`[api ${errorId}] ${req.method} ${req.path}`, msg)
 
-  const mapped =
-    msg.includes('Missing DATABASE_URL')
-      ? { status: 503, error: 'Missing DATABASE_URL' }
-      : msg.includes('Missing JWT_SECRET')
-        ? { status: 503, error: 'Missing JWT_SECRET' }
-        : msg.includes('ECONNREFUSED')
-          ? { status: 503, error: 'Database connection failed' }
-          : msg.includes('password authentication failed')
-            ? { status: 503, error: 'Database authentication failed' }
-            : { status: 500, error: 'Server internal error' }
+  const normalized = msg.toLowerCase()
+  const mapped = normalized.includes('missing database_url')
+    ? { status: 503, error: 'Missing DATABASE_URL', code: 'MISSING_DATABASE_URL' }
+    : normalized.includes('missing jwt_secret')
+      ? { status: 503, error: 'Missing JWT_SECRET', code: 'MISSING_JWT_SECRET' }
+      : normalized.includes('password authentication failed') || normalized.includes('authentication failed')
+        ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
+        : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')
+          ? { status: 503, error: 'Database connection failed', code: 'DB_CONN_FAILED' }
+          : pgCode === '42501' || (normalized.includes('permission') && normalized.includes('extension'))
+            ? { status: 503, error: 'Database permission denied (create extension)', code: 'DB_PERMISSION' }
+            : { status: 500, error: 'Server internal error', code: 'UNKNOWN' }
 
-  res.status(mapped.status).json({ success: false, error: mapped.error, errorId })
+  res.status(mapped.status).json({
+    success: false,
+    error: mapped.error,
+    code: mapped.code,
+    errorId,
+    build: buildInfo(),
+    env: {
+      hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      hasJwtSecret: Boolean(process.env.JWT_SECRET),
+      appOrigin: typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null,
+    },
+    pgCode,
+  })
 })
 
 /**

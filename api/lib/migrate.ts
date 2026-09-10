@@ -7,7 +7,11 @@ export async function ensureMigrated(): Promise<void> {
   if (migrated) return;
   const sql = getSql();
 
-  await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
+  try {
+    await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
+  } catch {
+    // ignore
+  }
 
   await sql`
     CREATE TABLE IF NOT EXISTS users (
