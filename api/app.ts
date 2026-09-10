@@ -9,6 +9,7 @@ import express, {
 } from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import crypto from 'crypto'
 import authRoutes from './routes/auth.js'
 import cookieParser from 'cookie-parser'
 import { ensureMigrated } from './lib/migrate.js'
@@ -96,15 +97,20 @@ app.use(
  */
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   const msg = typeof error?.message === 'string' ? error.message : ''
-  const safe =
+  const errorId = crypto.randomUUID()
+
+  const mapped =
     msg.includes('Missing DATABASE_URL')
-      ? 'Missing DATABASE_URL'
-      : msg.includes('ECONNREFUSED')
-        ? 'Database connection failed'
-        : msg.includes('password authentication failed')
-          ? 'Database authentication failed'
-          : 'Server internal error'
-  res.status(500).json({ success: false, error: safe })
+      ? { status: 503, error: 'Missing DATABASE_URL' }
+      : msg.includes('Missing JWT_SECRET')
+        ? { status: 503, error: 'Missing JWT_SECRET' }
+        : msg.includes('ECONNREFUSED')
+          ? { status: 503, error: 'Database connection failed' }
+          : msg.includes('password authentication failed')
+            ? { status: 503, error: 'Database authentication failed' }
+            : { status: 500, error: 'Server internal error' }
+
+  res.status(mapped.status).json({ success: false, error: mapped.error, errorId })
 })
 
 /**

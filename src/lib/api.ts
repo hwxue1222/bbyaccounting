@@ -19,8 +19,9 @@ export async function api<T>(
     if (res.headers.get("Content-Type")?.includes("application/json")) {
       const data = (await res.json()) as any;
       if (!res.ok || data?.success === false) {
-        const msg = typeof data?.error === "string" ? data.error : `HTTP ${res.status}`;
-        throw new Error(msg);
+        const msgBase = typeof data?.error === "string" ? data.error : `HTTP ${res.status}`;
+        const errorId = typeof data?.errorId === "string" && data.errorId ? data.errorId : null;
+        throw new Error(errorId ? `${msgBase} (ID ${errorId})` : msgBase);
       }
       return (data?.data ?? data) as T;
     }
