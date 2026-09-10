@@ -31,6 +31,8 @@ type Asset = {
 
 type ScheduleRow = {
   assetId: string;
+  assetNo?: string | null;
+  category?: string | null;
   name: string;
   acquisitionDate: string;
   status: string;
@@ -76,7 +78,7 @@ export default function FixedAssets() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [assetForm, setAssetForm] = useState({
-    category: "Computer",
+    category: "",
     name: "Laptop",
     acquisitionDate: new Date().toISOString().slice(0, 10),
     costTxn: 2000,
@@ -132,6 +134,52 @@ export default function FixedAssets() {
     const rest = existing.filter((c) => !categoryOrder.includes(c)).sort((a, b) => a.localeCompare(b));
     return [...ordered, ...rest];
   }, [assetsByCategory]);
+
+  const scheduleByCategory = useMemo(() => {
+    const map = new Map<string, ScheduleRow[]>();
+    for (const r of scheduleRows) {
+      const c = (r.category || "Uncategorized").trim() || "Uncategorized";
+      const arr = map.get(c) || [];
+      arr.push(r);
+      map.set(c, arr);
+    }
+    return map;
+  }, [scheduleRows]);
+
+  const scheduleCategoriesToRender = useMemo(() => {
+    const existing = Array.from(scheduleByCategory.keys());
+    const ordered = categoryOrder.filter((c) => scheduleByCategory.has(c));
+    const rest = existing.filter((c) => !categoryOrder.includes(c)).sort((a, b) => a.localeCompare(b));
+    return [...ordered, ...rest];
+  }, [scheduleByCategory]);
+
+  function sumScheduleRows(rows: ScheduleRow[]): ScheduleTotals {
+    return rows.reduce(
+      (acc, r) => {
+        acc.openingCost += r.openingCost;
+        acc.additions += r.additions;
+        acc.disposals += r.disposals;
+        acc.closingCost += r.closingCost;
+        acc.openingAccumDep += r.openingAccumDep;
+        acc.depExpense += r.depExpense;
+        acc.accumDepDisposed += r.accumDepDisposed;
+        acc.closingAccumDep += r.closingAccumDep;
+        acc.netBookValue += r.netBookValue;
+        return acc;
+      },
+      {
+        openingCost: 0,
+        additions: 0,
+        disposals: 0,
+        closingCost: 0,
+        openingAccumDep: 0,
+        depExpense: 0,
+        accumDepDisposed: 0,
+        closingAccumDep: 0,
+        netBookValue: 0,
+      },
+    );
+  }
 
   async function refresh() {
     const [{ accounts }, { assets }] = await Promise.all([
@@ -403,6 +451,7 @@ export default function FixedAssets() {
                 value={assetForm.category}
                 onChange={(e) => setAssetForm({ ...assetForm, category: e.target.value })}
               >
+                <option value="">请选择</option>
                 <option value="Machinery and Equipment">Machinery and Equipment</option>
                 <option value="Vehicles">Vehicles</option>
                 <option value="Computer">Computer</option>
@@ -461,7 +510,7 @@ export default function FixedAssets() {
           </div>
           <button
             className="mt-3 rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-            disabled={busy || !assetForm.offsetAccountId}
+            disabled={busy || !assetForm.offsetAccountId || !assetForm.category}
             onClick={async () => {
               setBusy(true);
               setErr(null);
@@ -693,58 +742,92 @@ export default function FixedAssets() {
             </button>
           </div>
 
-          <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-            <table className="w-full text-sm">
-              <thead className="bg-zinc-50 text-xs text-zinc-600">
-                <tr>
-                  <th className="px-3 py-2 text-left">资产</th>
-                  <th className="px-3 py-2 text-right">成本期初</th>
-                  <th className="px-3 py-2 text-right">+增加</th>
-                  <th className="px-3 py-2 text-right">-处置</th>
-                  <th className="px-3 py-2 text-right">成本期末</th>
-                  <th className="px-3 py-2 text-right">折旧期初</th>
-                  <th className="px-3 py-2 text-right">+当期折旧</th>
-                  <th className="px-3 py-2 text-right">-处置</th>
-                  <th className="px-3 py-2 text-right">折旧期末</th>
-                  <th className="px-3 py-2 text-right">净值</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scheduleRows.map((r) => (
-                  <tr key={r.assetId} className="border-t border-zinc-100">
-                    <td className="px-3 py-2">
-                      <div className="font-medium">{r.name}</div>
-                      <div className="text-xs text-zinc-500">
-                        {r.acquisitionDate} · {r.status}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right">{r.openingCost.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.additions.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.disposals.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.closingCost.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.openingAccumDep.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.depExpense.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.accumDepDisposed.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.closingAccumDep.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{r.netBookValue.toFixed(2)}</td>
-                  </tr>
-                ))}
-                {scheduleTotals ? (
-                  <tr className="border-t border-zinc-200 bg-zinc-50">
-                    <td className="px-3 py-2 font-medium">合计（本位 {baseCurrency}）</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingCost.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.additions.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.disposals.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingCost.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingAccumDep.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.depExpense.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.accumDepDisposed.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingAccumDep.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{scheduleTotals.netBookValue.toFixed(2)}</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+          <div className="mt-3 space-y-4">
+            {scheduleCategoriesToRender.map((cat) => {
+              const rows = scheduleByCategory.get(cat) || [];
+              if (!rows.length) return null;
+              const totals = sumScheduleRows(rows);
+              return (
+                <div key={cat} className="rounded-lg border border-zinc-100">
+                  <div className="flex items-center justify-between gap-2 border-b border-zinc-100 bg-zinc-50 px-3 py-2">
+                    <div className="text-sm font-semibold">{cat}</div>
+                    <div className="text-xs text-zinc-600">{rows.length} 项</div>
+                  </div>
+                  <div className="overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-white text-xs text-zinc-600">
+                        <tr>
+                          <th className="px-3 py-2 text-left">资产</th>
+                          <th className="px-3 py-2 text-right">成本期初</th>
+                          <th className="px-3 py-2 text-right">+增加</th>
+                          <th className="px-3 py-2 text-right">-处置</th>
+                          <th className="px-3 py-2 text-right">成本期末</th>
+                          <th className="px-3 py-2 text-right">折旧期初</th>
+                          <th className="px-3 py-2 text-right">+当期折旧</th>
+                          <th className="px-3 py-2 text-right">-处置</th>
+                          <th className="px-3 py-2 text-right">折旧期末</th>
+                          <th className="px-3 py-2 text-right">净值</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r) => (
+                          <tr key={r.assetId} className="border-t border-zinc-100">
+                            <td className="px-3 py-2">
+                              <div className="font-medium">{r.assetNo ? `${r.assetNo} · ${r.name}` : r.name}</div>
+                              <div className="text-xs text-zinc-500">
+                                {r.acquisitionDate} · {r.status}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right">{r.openingCost.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.additions.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.disposals.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.closingCost.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.openingAccumDep.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.depExpense.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.accumDepDisposed.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.closingAccumDep.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right">{r.netBookValue.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t border-zinc-200 bg-zinc-50">
+                          <td className="px-3 py-2 font-medium">小计（本位 {baseCurrency}）</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.openingCost.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.additions.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.disposals.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.closingCost.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.openingAccumDep.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.depExpense.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.accumDepDisposed.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.closingAccumDep.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{totals.netBookValue.toFixed(2)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+
+            {scheduleTotals ? (
+              <div className="overflow-auto rounded-lg border border-zinc-100">
+                <table className="w-full text-sm">
+                  <tbody>
+                    <tr className="bg-zinc-50">
+                      <td className="px-3 py-2 font-medium">合计（本位 {baseCurrency}）</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingCost.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.additions.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.disposals.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingCost.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingAccumDep.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.depExpense.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.accumDepDisposed.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingAccumDep.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.netBookValue.toFixed(2)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </div>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>

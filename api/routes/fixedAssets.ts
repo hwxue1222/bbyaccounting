@@ -5,7 +5,7 @@ import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
-import { issueFixedAssetNo, normalizeFixedAssetCategory } from "../lib/fixedAssetNo.js";
+import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory } from "../lib/fixedAssetNo.js";
 
 const router = Router();
 
@@ -141,7 +141,10 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!orgId) return;
   const bodySchema = z.object({
     name: z.string().min(1),
-    category: z.string().min(1).optional(),
+    category: z.preprocess(
+      (v) => (typeof v === "string" ? v.trim() : v),
+      z.enum(FIXED_ASSET_CATEGORIES as unknown as [string, ...string[]]),
+    ),
     acquisitionDate: z.string().min(10),
     costTxn: z.number().positive(),
     currency: z.string().min(3).max(3),

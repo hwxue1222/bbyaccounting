@@ -1,25 +1,27 @@
-function categoryPrefix(category: string): string {
-  const c = String(category || "").trim();
-  if (c === "Machinery and Equipment") return "MEQ";
-  if (c === "Vehicles") return "VEH";
-  if (c === "Computer") return "COM";
-  if (c === "Furniture and Fixtures") return "FUR";
-  if (c === "Renovation") return "REN";
-  if (c === "Intangible Fixed Assets") return "INT";
-  return "UNC";
+export const FIXED_ASSET_CATEGORIES = [
+  "Machinery and Equipment",
+  "Vehicles",
+  "Computer",
+  "Furniture and Fixtures",
+  "Renovation",
+  "Intangible Fixed Assets",
+] as const;
+
+export type FixedAssetCategory = (typeof FIXED_ASSET_CATEGORIES)[number];
+
+function categoryPrefix(category: FixedAssetCategory): string {
+  if (category === "Machinery and Equipment") return "MEQ";
+  if (category === "Vehicles") return "VEH";
+  if (category === "Computer") return "COM";
+  if (category === "Furniture and Fixtures") return "FUR";
+  if (category === "Renovation") return "REN";
+  return "INT";
 }
 
-export function normalizeFixedAssetCategory(category: unknown): string {
+export function normalizeFixedAssetCategory(category: unknown): FixedAssetCategory {
   const c = typeof category === "string" ? category.trim() : "";
-  if (
-    c === "Machinery and Equipment" ||
-    c === "Vehicles" ||
-    c === "Computer" ||
-    c === "Furniture and Fixtures" ||
-    c === "Renovation" ||
-    c === "Intangible Fixed Assets"
-  ) {
-    return c;
+  if ((FIXED_ASSET_CATEGORIES as readonly string[]).includes(c)) {
+    return c as FixedAssetCategory;
   }
   return "Machinery and Equipment";
 }
@@ -68,4 +70,3 @@ export async function issueFixedAssetNo(
   const issued = nextInt - 1n;
   return `${fullPrefix}${issued.toString().padStart(5, "0")}`;
 }
-

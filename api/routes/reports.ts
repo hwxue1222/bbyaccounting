@@ -300,6 +300,8 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
     WITH assets AS (
       SELECT
         id,
+        asset_no,
+        category,
         name,
         acquisition_date,
         status,
@@ -383,6 +385,8 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
     )
     SELECT
       a.id as "assetId",
+      a.asset_no as "assetNo",
+      a.category,
       a.name,
       to_char(a.acquisition_date, 'YYYY-MM-DD') as "acquisitionDate",
       a.status,
@@ -406,6 +410,8 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
 
   let items = (rows as any[]).map((r) => ({
     assetId: String(r.assetId),
+    assetNo: r.assetNo ? String(r.assetNo) : null,
+    category: r.category ? String(r.category) : null,
     name: String(r.name || ""),
     acquisitionDate: String(r.acquisitionDate || ""),
     status: String(r.status || ""),
@@ -436,6 +442,8 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
         ...items,
         {
           assetId: "__unassigned_dep__",
+          assetNo: null,
+          category: "Unassigned",
           name: "折旧（未关联 61xx）",
           acquisitionDate: "",
           status: "unassigned",
