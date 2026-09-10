@@ -103,6 +103,8 @@ export default function Journal() {
 
   const [faPurchaseOpen, setFaPurchaseOpen] = useState(false);
   const [faPurchaseForm, setFaPurchaseForm] = useState({
+    category: "",
+    assetNo: "",
     name: "",
     acquisitionDate: new Date().toISOString().slice(0, 10),
     costTxn: 0,
@@ -117,6 +119,8 @@ export default function Journal() {
     Record<
       number,
       {
+        category: string;
+        assetNo: string;
         name: string;
         acquisitionDate: string;
         usefulLifeMonths: number;
@@ -378,6 +382,8 @@ export default function Journal() {
     const existing = faPurchaseByLineIdx[lineIdx];
     setFaPurchaseLineIdx(lineIdx);
     setFaPurchaseForm({
+      category: existing?.category || "",
+      assetNo: existing?.assetNo || "",
       name: existing?.name || "",
       acquisitionDate: existing?.acquisitionDate || draftDate,
       costTxn: Number.isFinite(amountTxn) && amountTxn > 0 ? amountTxn : 0,
@@ -1005,6 +1011,8 @@ export default function Journal() {
                     fixedAssetPurchases: Object.entries(faPurchaseByLineIdx).length
                       ? Object.entries(faPurchaseByLineIdx).map(([k, v]) => ({
                           lineNo: Number(k) + 1,
+                          category: v.category,
+                          assetNo: v.assetNo || undefined,
                           name: v.name,
                           acquisitionDate: v.acquisitionDate,
                           usefulLifeMonths: v.usefulLifeMonths,
@@ -1115,6 +1123,32 @@ export default function Journal() {
 
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div>
+                  <label className="text-xs text-zinc-600">大类</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={faPurchaseForm.category}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, category: e.target.value })}
+                  >
+                    <option value="">请选择</option>
+                    <option value="Machinery and Equipment">Machinery and Equipment</option>
+                    <option value="Vehicles">Vehicles</option>
+                    <option value="Computer">Computer</option>
+                    <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                    <option value="Renovation">Renovation</option>
+                    <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">固定资产编号</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faPurchaseForm.assetNo}
+                    onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, assetNo: e.target.value.toUpperCase() })}
+                    placeholder={faPurchaseForm.category ? "例如：FA-COM00001" : "请先选择大类"}
+                  />
+                  <div className="mt-1 text-xs text-zinc-500">留空则系统自动生成（按大类递增）。</div>
+                </div>
+                <div>
                   <label className="text-xs text-zinc-600">名称</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -1219,6 +1253,7 @@ export default function Journal() {
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
                   disabled={
                     busy ||
+                    !faPurchaseForm.category.trim() ||
                     !faPurchaseForm.offsetAccountId ||
                     !faPurchaseForm.acquisitionDate.trim() ||
                     !faPurchaseForm.currency.trim() ||
@@ -1248,16 +1283,30 @@ export default function Journal() {
                       setDraftMemo(memo);
                     }
 
-                    setFaPurchaseByLineIdx((prev) => ({
-                      ...prev,
-                      [lineIdx]: {
+                    setFaPurchaseByLineIdx((prev) => {
+                      const next = { ...prev } as Record<
+                        number,
+                        {
+                          category: string;
+                          assetNo: string;
+                          name: string;
+                          acquisitionDate: string;
+                          usefulLifeMonths: number;
+                          salvageBase: number;
+                          memo: string;
+                        }
+                      >;
+                      next[lineIdx] = {
+                        category: String(faPurchaseForm.category || "").trim(),
+                        assetNo: String(faPurchaseForm.assetNo || "").trim().toUpperCase(),
                         name: faPurchaseForm.name.trim() || "(未命名资产)",
                         acquisitionDate: faPurchaseForm.acquisitionDate,
                         usefulLifeMonths: Number(faPurchaseForm.usefulLifeMonths) || 0,
                         salvageBase: Number(faPurchaseForm.salvageBase) || 0,
                         memo: memo,
-                      },
-                    }));
+                      };
+                      return next;
+                    });
 
                     const next = [...draftLines];
                     const debitLine = next[lineIdx];

@@ -7,6 +7,7 @@ import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2, round6 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
+import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory } from "../lib/fixedAssetNo.js";
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 2 * 1024 * 1024 } });
@@ -437,6 +438,20 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const fixedAssetPurchaseSchema = z.object({
     lineNo: z.number().int().positive(),
+    category: z.preprocess(
+      (v) => (typeof v === "string" ? v.trim() : v),
+      z.enum(FIXED_ASSET_CATEGORIES as unknown as [string, ...string[]]),
+    ),
+    assetNo: z
+      .preprocess(
+        (v) => {
+          if (typeof v !== "string") return undefined;
+          const s = v.trim().toUpperCase();
+          return s ? s : undefined;
+        },
+        z.string().min(5).max(32).optional(),
+      )
+      .optional(),
     name: z.string().min(1),
     acquisitionDate: z.string().min(10),
     usefulLifeMonths: z.number().int().positive(),
@@ -648,18 +663,35 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
           if (!line) {
             throw new Error("Invalid fixed asset purchase lineNo");
           }
+          const category = normalizeFixedAssetCategory(p.category);
           const costBase = round2(Number(line.debitBase) > 0 ? line.debitBase : line.creditBase);
           if (!(costBase > 0)) {
             throw new Error("Fixed asset cost must be greater than 0");
           }
+
+          const desiredNo = p.assetNo ? String(p.assetNo).trim().toUpperCase() : "";
+          if (desiredNo) {
+            const exists = await trx`
+              SELECT id
+              FROM fixed_assets
+              WHERE org_id = ${orgId} AND asset_no = ${desiredNo}
+              LIMIT 1
+            `;
+            if (exists.length) {
+              throw new Error("固定资产编号已存在");
+            }
+          }
+          const assetNo = desiredNo || (await issueFixedAssetNo(trx, orgId, category));
           const asset = (
             await trx`
               INSERT INTO fixed_assets (
                 org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
-                status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+                status, asset_account_id, accum_dep_account_id, dep_expense_account_id,
+                category, asset_no
               ) VALUES (
                 ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
-                'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId}
+                'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId},
+                ${category}, ${assetNo}
               )
               RETURNING id
             `
@@ -910,6 +942,20 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const fixedAssetPurchaseSchema = z.object({
     lineNo: z.number().int().positive(),
+    category: z.preprocess(
+      (v) => (typeof v === "string" ? v.trim() : v),
+      z.enum(FIXED_ASSET_CATEGORIES as unknown as [string, ...string[]]),
+    ),
+    assetNo: z
+      .preprocess(
+        (v) => {
+          if (typeof v !== "string") return undefined;
+          const s = v.trim().toUpperCase();
+          return s ? s : undefined;
+        },
+        z.string().min(5).max(32).optional(),
+      )
+      .optional(),
     name: z.string().min(1),
     acquisitionDate: z.string().min(10),
     usefulLifeMonths: z.number().int().positive(),
@@ -1676,6 +1722,20 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
 
   const fixedAssetPurchaseSchema = z.object({
     lineNo: z.number().int().positive(),
+    category: z.preprocess(
+      (v) => (typeof v === "string" ? v.trim() : v),
+      z.enum(FIXED_ASSET_CATEGORIES as unknown as [string, ...string[]]),
+    ),
+    assetNo: z
+      .preprocess(
+        (v) => {
+          if (typeof v !== "string") return undefined;
+          const s = v.trim().toUpperCase();
+          return s ? s : undefined;
+        },
+        z.string().min(5).max(32).optional(),
+      )
+      .optional(),
     name: z.string().min(1),
     acquisitionDate: z.string().min(10),
     usefulLifeMonths: z.number().int().positive(),
@@ -1806,18 +1866,35 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
           if (!line) {
             throw new Error("Invalid fixed asset purchase lineNo");
           }
+          const category = normalizeFixedAssetCategory(p.category);
           const costBase = round2(Number(line.debitBase) > 0 ? Number(line.debitBase) : Number(line.creditBase));
           if (!(costBase > 0)) {
             throw new Error("Fixed asset cost must be greater than 0");
           }
+
+          const desiredNo = p.assetNo ? String(p.assetNo).trim().toUpperCase() : "";
+          if (desiredNo) {
+            const exists = await trx`
+              SELECT id
+              FROM fixed_assets
+              WHERE org_id = ${orgId} AND asset_no = ${desiredNo}
+              LIMIT 1
+            `;
+            if (exists.length) {
+              throw new Error("固定资产编号已存在");
+            }
+          }
+          const assetNo = desiredNo || (await issueFixedAssetNo(trx, orgId, category));
           const asset = (
             await trx`
               INSERT INTO fixed_assets (
                 org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
-                status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+                status, asset_account_id, accum_dep_account_id, dep_expense_account_id,
+                category, asset_no
               ) VALUES (
                 ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
-                'active', ${String(line.accountId)}, ${accumDepAccountId}, ${depExpenseAccountId}
+                'active', ${String(line.accountId)}, ${accumDepAccountId}, ${depExpenseAccountId},
+                ${category}, ${assetNo}
               )
               RETURNING id
             `
