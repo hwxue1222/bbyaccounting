@@ -151,29 +151,60 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
 
   const model = typeof process.env.KIMI_MODEL === "string" && process.env.KIMI_MODEL.trim() ? process.env.KIMI_MODEL.trim() : "kimi-k2.5";
 
-  const resp = await fetch("https://api.moonshot.cn/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.1,
-      reasoning_effort: "low",
-      response_format: { type: "json_schema", json_schema: jsonSchema },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
-  });
+  const url = "https://api.moonshot.cn/v1/chat/completions";
+  const payload = {
+    model,
+    temperature: 0.1,
+    reasoning_effort: "low",
+    response_format: { type: "json_schema", json_schema: jsonSchema },
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+  };
 
-  if (!resp.ok) {
-    const t = await resp.text();
-    res.status(502).json({ success: false, error: `Kimi API error (${resp.status})`, detail: t.slice(0, 500) });
+  let fetchResp: globalThis.Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    fetchResp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (fetchResp.ok) break;
+    if (![429, 500, 502, 503, 504].includes(fetchResp.status)) break;
+    await new Promise((r) => setTimeout(r, attempt === 0 ? 250 : attempt === 1 ? 800 : 1600));
+  }
+
+  if (!fetchResp || !fetchResp.ok) {
+    const status = fetchResp ? fetchResp.status : 0;
+    const rawText = fetchResp ? await fetchResp.text() : "";
+    let detail = rawText;
+    try {
+      const j = JSON.parse(rawText);
+      const msg = j?.error?.message || j?.message || j?.error || j?.msg;
+      if (typeof msg === "string" && msg.trim()) {
+        detail = msg.trim();
+      }
+    } catch {
+      void 0;
+    }
+    const safeDetail = String(detail || "").replace(/\s+/g, " ").trim().slice(0, 280);
+    const hint =
+      status === 401 || status === 403
+        ? "（请检查 Vercel 的 MOONSHOT_API_KEY 是否正确/有权限）"
+        : status === 429
+          ? "（可能触发限流/额度不足，稍后再试）"
+          : status === 400
+            ? "（请求参数可能不被该模型支持，可尝试更换 KIMI_MODEL）"
+            : "";
+    res.status(502).json({ success: false, error: `Kimi API error (${status}) ${hint}${safeDetail ? ": " + safeDetail : ""}` });
     return;
   }
+
+  const resp = fetchResp;
 
   const raw = (await resp.json()) as any;
   const content = raw?.choices?.[0]?.message?.content;
