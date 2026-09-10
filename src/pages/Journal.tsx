@@ -123,11 +123,18 @@ export default function Journal() {
     setInvQuoteByRow({});
     setInvModalOpen(false);
     setEditModalOpen(false);
+    void refreshNextVoucherNo(true);
   }
 
-  async function refreshNextVoucherNo() {
+  async function refreshNextVoucherNo(force?: boolean): Promise<string> {
     const r = await api<{ voucherNo: string }>("/api/journals/voucher/next");
+    if (force) {
+      setVoucherTouched(false);
+      setDraftVoucherNo(r.voucherNo);
+      return r.voucherNo;
+    }
     setDraftVoucherNo((prev) => (voucherTouched ? prev : prev || r.voucherNo));
+    return r.voucherNo;
   }
 
   const invLine = useMemo(() => {
@@ -422,6 +429,7 @@ export default function Journal() {
   }, [selectedId]);
 
   function EditorCard() {
+    const voucherEmpty = !draftVoucherNo.trim();
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold">{editingEntryId ? "编辑凭证" : "新建凭证（直接过账）"}</div>
@@ -443,7 +451,10 @@ export default function Journal() {
           <div className="w-44">
             <label className="text-xs text-zinc-600">分录号</label>
             <input
-              className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+              className={
+                "mt-1 w-full rounded-md border px-3 py-2 text-sm " +
+                (voucherEmpty ? "border-red-300" : "border-zinc-200")
+              }
               value={draftVoucherNo}
               onChange={(e) => {
                 setVoucherTouched(true);
@@ -737,9 +748,21 @@ export default function Journal() {
             </button>
             <button
               className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-              disabled={busy || txnDiff !== 0 || draftLines.some((l) => !l.accountId)}
+              disabled={busy || txnDiff !== 0 || voucherEmpty || draftLines.some((l) => !l.accountId)}
               onClick={async () => {
                 setErr(null);
+                if (!draftVoucherNo.trim()) {
+                  try {
+                    const v = await refreshNextVoucherNo(true);
+                    if (!String(v || "").trim()) {
+                      setErr("分录号不能为空。");
+                      return;
+                    }
+                  } catch (e: any) {
+                    setErr(e.message);
+                    return;
+                  }
+                }
                 if (invDetails.length) {
                   if (invLineIdx == null) {
                     setErr("请先在借方或贷方点击“库存”并确认明细。");
