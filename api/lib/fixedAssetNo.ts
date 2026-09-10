@@ -18,6 +18,10 @@ function categoryPrefix(category: FixedAssetCategory): string {
   return "INT";
 }
 
+export function fixedAssetNoPrefixByCategory(category: FixedAssetCategory): string {
+  return `FA-${categoryPrefix(category)}`;
+}
+
 export function normalizeFixedAssetCategory(category: unknown): FixedAssetCategory {
   const c = typeof category === "string" ? category.trim() : "";
   if ((FIXED_ASSET_CATEGORIES as readonly string[]).includes(c)) {
@@ -69,4 +73,30 @@ export async function issueFixedAssetNo(
   const nextInt = BigInt(row.next_int);
   const issued = nextInt - 1n;
   return `${fullPrefix}${issued.toString().padStart(5, "0")}`;
+}
+
+export async function peekNextFixedAssetNo(
+  trx: (strings: TemplateStringsArray, ...values: any[]) => Promise<any[]>,
+  orgId: string,
+  category: string,
+): Promise<string> {
+  const normalized = normalizeFixedAssetCategory(category);
+  const fullPrefix = fixedAssetNoPrefixByCategory(normalized);
+  const rows = await trx`
+    SELECT
+      COALESCE(
+        MAX(
+          CASE
+            WHEN asset_no ~ ('^' || ${fullPrefix} || '[0-9]+$') THEN substring(asset_no from (length(${fullPrefix}) + 1))::bigint
+            ELSE 0
+          END
+        ),
+        0
+      ) as max_no
+    FROM fixed_assets
+    WHERE org_id = ${orgId}
+  `;
+  const maxNo = BigInt((rows[0] as any)?.max_no || 0);
+  const next = maxNo + 1n;
+  return `${fullPrefix}${next.toString().padStart(5, "0")}`;
 }

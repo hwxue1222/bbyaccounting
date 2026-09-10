@@ -29,6 +29,20 @@ type Asset = {
   purchaseVoucherNo?: string | null;
 };
 
+type JournalDetail = {
+  entry: {
+    id: string;
+    entryDate: string;
+    voucherNo: string | null;
+    status: string;
+    currency: string;
+    fxRate: number;
+    memo: string | null;
+  };
+  lines: Array<{ id: string; lineNo: number; accountId: string; debitTxn: number; creditTxn: number; description?: string | null }>;
+  attachments: Array<{ id: string; fileName: string; mimeType: string; sizeBytes: number; createdAt: string }>;
+};
+
 type ScheduleRow = {
   assetId: string;
   assetNo?: string | null;
@@ -79,6 +93,7 @@ export default function FixedAssets() {
   const [busy, setBusy] = useState(false);
   const [assetForm, setAssetForm] = useState({
     category: "",
+    assetNo: "",
     name: "Laptop",
     acquisitionDate: new Date().toISOString().slice(0, 10),
     costTxn: 2000,
@@ -98,6 +113,11 @@ export default function FixedAssets() {
 
   const [depEntries, setDepEntries] = useState<DepEntryRow[]>([]);
 
+  const [journalModalOpen, setJournalModalOpen] = useState(false);
+  const [journalDetail, setJournalDetail] = useState<JournalDetail | null>(null);
+  const [journalErr, setJournalErr] = useState<string | null>(null);
+  const [journalLoading, setJournalLoading] = useState(false);
+
   const [disposeForm, setDisposeForm] = useState({
     assetId: "",
     date: new Date().toISOString().slice(0, 10),
@@ -107,6 +127,22 @@ export default function FixedAssets() {
   });
 
   const cashAccounts = useMemo(() => accounts, [accounts]);
+
+  async function openJournalModal(entryId: string) {
+    if (!entryId) return;
+    setJournalModalOpen(true);
+    setJournalDetail(null);
+    setJournalErr(null);
+    setJournalLoading(true);
+    try {
+      const d = await api<JournalDetail>(`/api/journals/${encodeURIComponent(entryId)}`);
+      setJournalDetail(d);
+    } catch (e: any) {
+      setJournalErr(e?.message || "加载分录失败");
+    } finally {
+      setJournalLoading(false);
+    }
+  }
 
   const categoryOrder = [
     "Machinery and Equipment",
@@ -360,9 +396,13 @@ export default function FixedAssets() {
                             <td className="px-3 py-2 whitespace-nowrap">{String(a.acquisitionDate || "").slice(0, 10)}</td>
                             <td className="px-3 py-2 whitespace-nowrap">
                               {a.purchaseEntryId ? (
-                                <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(a.purchaseEntryId)}`}>
+                                <button
+                                  className="text-blue-700 hover:underline"
+                                  type="button"
+                                  onClick={() => openJournalModal(a.purchaseEntryId!)}
+                                >
                                   {a.purchaseVoucherNo || "(无分录号)"}
-                                </a>
+                                </button>
                               ) : (
                                 <span className="text-zinc-400">-</span>
                               )}
@@ -461,6 +501,16 @@ export default function FixedAssets() {
               </select>
             </div>
             <div>
+              <label className="text-xs text-zinc-600">固定资产编号</label>
+              <input
+                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                value={assetForm.assetNo}
+                onChange={(e) => setAssetForm({ ...assetForm, assetNo: e.target.value.toUpperCase() })}
+                placeholder={assetForm.category ? "例如：FA-COM00001" : "请先选择大类"}
+              />
+              <div className="mt-1 text-xs text-zinc-500">留空则系统自动生成（按大类递增）。</div>
+            </div>
+            <div>
               <label className="text-xs text-zinc-600">名称</label>
               <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} />
             </div>
@@ -518,7 +568,7 @@ export default function FixedAssets() {
                 const memo = assetForm.memo.trim();
                 const r = await api<{ entryId: string; voucherNo?: string | null }>("/api/fixed-assets", {
                   method: "POST",
-                  json: { ...assetForm, memo: memo ? memo : undefined },
+                  json: { ...assetForm, assetNo: assetForm.assetNo.trim() || undefined, memo: memo ? memo : undefined },
                 });
                 const entryId = (r as any).entryId || (r as any)?.data?.entryId;
                 if (!entryId) {
@@ -832,6 +882,95 @@ export default function FixedAssets() {
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
         </div>
       </div>
+
+      {journalModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+          onMouseDown={() => {
+            setJournalModalOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-5xl rounded-xl bg-white p-4 shadow-xl"
+            onMouseDown={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold">分录详情</div>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                type="button"
+                onClick={() => setJournalModalOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="mt-3">
+              {journalLoading ? (
+                <div className="text-sm text-zinc-600">加载中...</div>
+              ) : journalErr ? (
+                <div className="text-sm text-red-700">{journalErr}</div>
+              ) : journalDetail ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-zinc-700">
+                    {journalDetail.entry.entryDate} · {journalDetail.entry.voucherNo || "-"} · {journalDetail.entry.status} · {journalDetail.entry.currency} @ {journalDetail.entry.fxRate}
+                  </div>
+                  {journalDetail.entry.memo ? <div className="text-sm text-zinc-700">{journalDetail.entry.memo}</div> : null}
+
+                  <div className="overflow-auto rounded-lg border border-zinc-100">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-50 text-xs text-zinc-600">
+                        <tr>
+                          <th className="px-3 py-2 text-left">行</th>
+                          <th className="px-3 py-2 text-left">科目</th>
+                          <th className="px-3 py-2 text-right">借</th>
+                          <th className="px-3 py-2 text-right">贷</th>
+                          <th className="px-3 py-2 text-left">备注</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {journalDetail.lines.map((l) => {
+                          const acc = accounts.find((a) => a.id === l.accountId);
+                          return (
+                            <tr key={l.id} className="border-t border-zinc-100">
+                              <td className="px-3 py-2 whitespace-nowrap">{l.lineNo}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">{acc ? `${acc.code} ${acc.name}` : l.accountId}</td>
+                              <td className="px-3 py-2 text-right">{Number(l.debitTxn || 0).toFixed(2)}</td>
+                              <td className="px-3 py-2 text-right">{Number(l.creditTxn || 0).toFixed(2)}</td>
+                              <td className="px-3 py-2">{l.description || ""}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {journalDetail.attachments?.length ? (
+                    <div>
+                      <div className="mb-2 text-xs text-zinc-600">附件</div>
+                      <div className="space-y-1">
+                        {journalDetail.attachments.map((a) => (
+                          <a
+                            key={a.id}
+                            className="block rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                            href={`/api/journals/${journalDetail.entry.id}/attachments/${a.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {a.fileName}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

@@ -5,7 +5,7 @@ import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
-import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory } from "../lib/fixedAssetNo.js";
+import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory, peekNextFixedAssetNo } from "../lib/fixedAssetNo.js";
 
 const router = Router();
 
@@ -140,6 +140,16 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const orgId = requireOrgId(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
+    assetNo: z
+      .preprocess(
+        (v) => {
+          if (typeof v !== "string") return undefined;
+          const s = v.trim().toUpperCase();
+          return s ? s : undefined;
+        },
+        z.string().min(5).max(32).optional(),
+      )
+      .optional(),
     name: z.string().min(1),
     category: z.preprocess(
       (v) => (typeof v === "string" ? v.trim() : v),
@@ -184,7 +194,19 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const created = await sql.begin(async (trx) => {
     const voucherNo = await issueVoucherNo(trx, orgId);
-    const assetNo = await issueFixedAssetNo(trx, orgId, category);
+    const desiredNo = parsed.data.assetNo ? String(parsed.data.assetNo) : null;
+    if (desiredNo) {
+      const exists = await trx`
+        SELECT id
+        FROM fixed_assets
+        WHERE org_id = ${orgId} AND asset_no = ${desiredNo}
+        LIMIT 1
+      `;
+      if (exists.length) {
+        throw new Error("固定资产编号已存在");
+      }
+    }
+    const assetNo = desiredNo || (await issueFixedAssetNo(trx, orgId, category));
 
     const asset = (
       await trx`
@@ -220,6 +242,24 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   });
 
   res.status(200).json({ success: true, data: created });
+});
+
+router.get("/next-no", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const q = z
+    .object({ category: z.string().min(1) })
+    .safeParse({ category: req.query.category });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Missing category" });
+    return;
+  }
+  const category = normalizeFixedAssetCategory(q.data.category);
+  const sql = getSql();
+  const nextNo = await sql.begin(async (trx) => peekNextFixedAssetNo(trx, orgId, category));
+  res.status(200).json({ success: true, data: { assetNo: nextNo } });
 });
 
 router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response) => {
