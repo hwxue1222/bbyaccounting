@@ -244,9 +244,9 @@ export default function FixedAssets() {
                     <td className="px-3 py-2">{a.name}</td>
                     <td className="px-3 py-2">{String(a.acquisitionDate || "").slice(0, 10)}</td>
                     <td className="px-3 py-2">
-                      {a.purchaseEntryId && a.purchaseVoucherNo ? (
+                      {a.purchaseEntryId ? (
                         <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(a.purchaseEntryId)}`}>
-                          {a.purchaseVoucherNo}
+                          {a.purchaseVoucherNo || "(无分录号)"}
                         </a>
                       ) : (
                         <span className="text-zinc-400">-</span>

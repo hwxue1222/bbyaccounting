@@ -4,6 +4,7 @@ import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { round2 } from "../lib/nums.js";
+import { issueVoucherNo } from "../lib/voucher.js";
 
 const router = Router();
 
@@ -101,6 +102,8 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const costBase = round2(parsed.data.costTxn * parsed.data.fxRate);
 
   const created = await sql.begin(async (trx) => {
+    const voucherNo = await issueVoucherNo(trx, orgId);
+
     const asset = (
       await trx`
         INSERT INTO fixed_assets (
@@ -116,8 +119,8 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.acquisitionDate}, 'posted', ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo ? parsed.data.memo.trim() : 'Fixed asset purchase'}, ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+        VALUES (${orgId}, ${parsed.data.acquisitionDate}, 'posted', ${voucherNo}, NULL, false, ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo ? parsed.data.memo.trim() : 'Fixed asset purchase'}, ${req.auth!.userId}, false, now())
         RETURNING id
       `
     )[0] as any;
@@ -174,6 +177,8 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
     const orgRow = (await trx`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`)[0] as any;
     const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
 
+    const voucherNo = await issueVoucherNo(trx, orgId);
+
     const run = (
       await trx`
         INSERT INTO depreciation_runs (org_id, period, created_by)
@@ -184,8 +189,8 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
 
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${period + '-01'}, 'posted', ${baseCurrency}, 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+        VALUES (${orgId}, ${period + '-01'}, 'posted', ${voucherNo}, NULL, false, ${baseCurrency}, 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, false, now())
         RETURNING id
       `
     )[0] as any;
@@ -338,10 +343,12 @@ router.post("/:id/dispose", requireAuth, async (req: AuthedRequest, res: Respons
     const orgRow = (await trx`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`)[0] as any;
     const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
 
+    const voucherNo = await issueVoucherNo(trx, orgId);
+
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${baseCurrency}, 1, 'Fixed asset disposal', ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${voucherNo}, NULL, false, ${baseCurrency}, 1, 'Fixed asset disposal', ${req.auth!.userId}, false, now())
         RETURNING id
       `
     )[0] as any;

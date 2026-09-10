@@ -280,6 +280,22 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
 
   const sql = getSql();
 
+  const unassignedRows = await sql`
+    SELECT COALESCE(SUM(l.debit_base - l.credit_base), 0) as amount
+    FROM journal_lines l
+    JOIN journal_entries e ON e.id = l.entry_id
+    JOIN accounts a ON a.id = l.account_id
+    WHERE l.org_id = ${orgId}
+      AND e.org_id = ${orgId}
+      AND a.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date >= ${q.data.start}
+      AND e.entry_date <= ${q.data.end}
+      AND a.code LIKE '61%'
+      AND l.fixed_asset_id IS NULL
+  `;
+  const unassignedDepExpense = Math.round((Number((unassignedRows[0] as any)?.amount || 0) || 0) * 100) / 100;
+
   const rows = await sql`
     WITH assets AS (
       SELECT
@@ -387,7 +403,7 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
     ORDER BY a.acquisition_date ASC, a.name ASC
   `;
 
-  const items = (rows as any[]).map((r) => ({
+  let items = (rows as any[]).map((r) => ({
     assetId: String(r.assetId),
     name: String(r.name || ""),
     acquisitionDate: String(r.acquisitionDate || ""),
@@ -402,6 +418,39 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
     closingAccumDep: Number(r.closingAccumDep || 0),
     netBookValue: Number(r.netBookValue || 0),
   }));
+
+  if (unassignedDepExpense !== 0) {
+    const candidates = items.filter((it) => it.status === "active" && Number(it.closingCost || 0) > 0);
+    if (candidates.length === 1) {
+      const targetId = candidates[0].assetId;
+      items = items.map((it) => {
+        if (it.assetId !== targetId) return it;
+        const depExpense = Math.round((Number(it.depExpense || 0) + unassignedDepExpense) * 100) / 100;
+        const closingAccumDep = Math.round((Number(it.openingAccumDep || 0) + depExpense - Number(it.accumDepDisposed || 0)) * 100) / 100;
+        const netBookValue = Math.round((Number(it.closingCost || 0) - closingAccumDep) * 100) / 100;
+        return { ...it, depExpense, closingAccumDep, netBookValue };
+      });
+    } else {
+      items = [
+        ...items,
+        {
+          assetId: "__unassigned_dep__",
+          name: "折旧（未关联 61xx）",
+          acquisitionDate: "",
+          status: "unassigned",
+          openingCost: 0,
+          additions: 0,
+          disposals: 0,
+          closingCost: 0,
+          openingAccumDep: 0,
+          depExpense: unassignedDepExpense,
+          accumDepDisposed: 0,
+          closingAccumDep: 0,
+          netBookValue: 0,
+        },
+      ];
+    }
+  }
 
   const totals = items.reduce(
     (acc, it) => {
