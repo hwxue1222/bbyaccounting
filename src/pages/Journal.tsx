@@ -97,6 +97,8 @@ export default function Journal() {
     { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
     { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
   ]);
+
+  const [fixedAssetIdByLineIdx, setFixedAssetIdByLineIdx] = useState<Record<number, string>>({});
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [postDraftId, setPostDraftId] = useState<string | null>(null);
@@ -131,8 +133,28 @@ export default function Journal() {
   >({});
   const [faPurchaseLineIdx, setFaPurchaseLineIdx] = useState<number | null>(null);
 
+  const [faDepOpen, setFaDepOpen] = useState(false);
+  const [faDepLineIdx, setFaDepLineIdx] = useState<number | null>(null);
+  const [faDepForm, setFaDepForm] = useState({ assetId: "", amountTxn: 0 });
+  const [fixedAssets, setFixedAssets] = useState<
+    Array<{
+      id: string;
+      assetNo: string | null;
+      category: string | null;
+      name: string;
+      status: string;
+      depExpenseAccountId: string | null;
+      accumDepAccountId: string | null;
+    }>
+  >([]);
+
   useEffect(() => {
     setFaPurchaseByLineIdx((prev) => {
+      const entries = Object.entries(prev).filter(([k]) => Number(k) >= 0 && Number(k) < draftLines.length);
+      if (entries.length === Object.keys(prev).length) return prev;
+      return Object.fromEntries(entries.map(([k, v]) => [Number(k), v]));
+    });
+    setFixedAssetIdByLineIdx((prev) => {
       const entries = Object.entries(prev).filter(([k]) => Number(k) >= 0 && Number(k) < draftLines.length);
       if (entries.length === Object.keys(prev).length) return prev;
       return Object.fromEntries(entries.map(([k, v]) => [Number(k), v]));
@@ -150,6 +172,7 @@ export default function Journal() {
       { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
       { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
     ]);
+    setFixedAssetIdByLineIdx({});
     setDraftMemo("");
     setDraftVoucherNo("");
     setVoucherTouched(false);
@@ -166,7 +189,34 @@ export default function Journal() {
     setFaPurchaseOpen(false);
     setFaPurchaseByLineIdx({});
     setFaPurchaseLineIdx(null);
+    setFaDepOpen(false);
+    setFaDepLineIdx(null);
     void refreshNextVoucherNo(true);
+  }
+
+  async function refreshFixedAssets() {
+    const r = await api<{ assets: any[] }>("/api/fixed-assets");
+    setFixedAssets(
+      (r.assets || []).map((a: any) => ({
+        id: String(a.id),
+        assetNo: a.assetNo ? String(a.assetNo) : null,
+        category: a.category ? String(a.category) : null,
+        name: String(a.name || ""),
+        status: String(a.status || ""),
+        depExpenseAccountId: a.depExpenseAccountId ? String(a.depExpenseAccountId) : null,
+        accumDepAccountId: a.accumDepAccountId ? String(a.accumDepAccountId) : null,
+      })),
+    );
+  }
+
+  function openFixedAssetDepreciateModal(lineIdx: number, amountTxn: number) {
+    setFaDepLineIdx(lineIdx);
+    const existingId = fixedAssetIdByLineIdx[lineIdx] || "";
+    setFaDepForm({ assetId: existingId, amountTxn: Number.isFinite(amountTxn) && amountTxn > 0 ? amountTxn : 0 });
+    if (!fixedAssets.length) {
+      refreshFixedAssets().catch((e) => setErr(e.message));
+    }
+    setFaDepOpen(true);
   }
 
   async function refreshNextVoucherNo(force?: boolean): Promise<string> {
@@ -746,8 +796,8 @@ export default function Journal() {
                             setInvDetails([]);
                             setInvConfirmed(null);
                             setInvLineIdx(null);
-                            const p = draftDate.slice(0, 7);
-                            navigate(`/fixed-assets?mode=depreciate&period=${encodeURIComponent(p)}`);
+                            const amount = Number(l.debitTxn) || 0;
+                            openFixedAssetDepreciateModal(idx, amount);
                             return;
                           }
 
@@ -808,8 +858,8 @@ export default function Journal() {
                             setInvDetails([]);
                             setInvConfirmed(null);
                             setInvLineIdx(null);
-                            const p = draftDate.slice(0, 7);
-                            navigate(`/fixed-assets?mode=depreciate&period=${encodeURIComponent(p)}`);
+                            const amount = Number(l.creditTxn) || 0;
+                            openFixedAssetDepreciateModal(idx, amount);
                             return;
                           }
 
@@ -1033,12 +1083,13 @@ export default function Journal() {
                           salvageBase: v.salvageBase,
                         }))
                       : undefined,
-                    lines: effectiveLines.map((l) => ({
+                    lines: effectiveLines.map((l, idx) => ({
                       accountId: l.accountId,
                       description: l.description || undefined,
                       costCenterId: l.costCenterId ? l.costCenterId : null,
                       debitTxn: Number(l.debitTxn) || 0,
                       creditTxn: Number(l.creditTxn) || 0,
+                      fixedAssetId: fixedAssetIdByLineIdx[idx] || undefined,
                     })),
                   };
 
@@ -1371,6 +1422,159 @@ export default function Journal() {
 
                     setDraftLines(next);
                     setFaPurchaseOpen(false);
+                  }}
+                  type="button"
+                >
+                  保存草稿
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {faDepOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+            onMouseDown={() => {
+              setErr(null);
+              setFaDepOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">折旧（选择资产）</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    setFaDepOpen(false);
+                  }}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">折旧资产</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={faDepForm.assetId}
+                    onChange={(e) => setFaDepForm({ ...faDepForm, assetId: e.target.value })}
+                  >
+                    <option value="">请选择</option>
+                    {fixedAssets
+                      .filter((a) => a.status === "active")
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {(a.assetNo ? `${a.assetNo} · ` : "") + a.name + (a.category ? ` (${a.category})` : "")}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-zinc-600">金额（交易币）</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faDepForm.amountTxn}
+                    onChange={(e) => setFaDepForm({ ...faDepForm, amountTxn: Number(e.target.value) || 0 })}
+                    type="number"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">币种</label>
+                  <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftCurrency} disabled />
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => {
+                    setErr(null);
+                    setFaDepOpen(false);
+                  }}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={busy || !faDepForm.assetId || !(Number(faDepForm.amountTxn) > 0) || faDepLineIdx == null}
+                  onClick={() => {
+                    setErr(null);
+                    const lineIdx = faDepLineIdx;
+                    if (lineIdx == null) {
+                      setErr("保存失败：未关联分录行");
+                      return;
+                    }
+                    const amountTxn = Number(faDepForm.amountTxn) || 0;
+                    if (!(amountTxn > 0)) {
+                      setErr("金额必须大于 0");
+                      return;
+                    }
+                    const asset = fixedAssets.find((x) => x.id === faDepForm.assetId);
+                    if (!asset || asset.status !== "active") {
+                      setErr("资产无效");
+                      return;
+                    }
+                    if (!asset.depExpenseAccountId || !asset.accumDepAccountId) {
+                      setErr("该资产缺少折旧科目设置");
+                      return;
+                    }
+
+                    const next = [...draftLines];
+                    const debitLine = next[lineIdx];
+                    if (!debitLine) {
+                      setErr("保存失败：分录行不存在");
+                      return;
+                    }
+                    next[lineIdx] = {
+                      ...debitLine,
+                      accountId: asset.depExpenseAccountId,
+                      debitTxn: amountTxn.toFixed(2),
+                      creditTxn: "",
+                    };
+
+                    const isEmptyLine = (l: { accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string }) =>
+                      !l.accountId && !l.description && !l.costCenterId && !l.debitTxn && !l.creditTxn;
+
+                    let creditIdx = next.findIndex((l, i) => i !== lineIdx && l.accountId === asset.accumDepAccountId);
+                    if (creditIdx < 0) {
+                      creditIdx = next.findIndex((l, i) => i !== lineIdx && isEmptyLine(l));
+                    }
+                    if (creditIdx < 0 && next.length === 2) {
+                      creditIdx = lineIdx === 0 ? 1 : 0;
+                    }
+                    if (creditIdx < 0) {
+                      creditIdx = next.length;
+                      next.push({ accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" });
+                    }
+                    const creditLine = next[creditIdx];
+                    next[creditIdx] = {
+                      ...creditLine,
+                      accountId: asset.accumDepAccountId,
+                      creditTxn: amountTxn.toFixed(2),
+                      debitTxn: "",
+                    };
+
+                    setDraftLines(next);
+                    setFixedAssetIdByLineIdx((prev) => ({
+                      ...prev,
+                      [lineIdx]: asset.id,
+                      [creditIdx]: asset.id,
+                    }));
+                    setFaDepOpen(false);
                   }}
                   type="button"
                 >

@@ -505,6 +505,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     costCenterId: z.string().uuid().nullable().optional(),
     debitTxn: z.number().nonnegative().default(0),
     creditTxn: z.number().nonnegative().default(0),
+    fixedAssetId: z.string().uuid().optional(),
   });
 
   const fixedAssetPurchaseSchema = z.object({
@@ -587,6 +588,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
       creditTxn: credit,
       debitBase,
       creditBase,
+      fixedAssetId: l.fixedAssetId ? String(l.fixedAssetId) : null,
     };
   });
 
@@ -677,6 +679,40 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     if (!accumDepAccountId || !depExpenseAccountId) {
       res.status(400).json({ success: false, error: "Missing default fixed asset accounts" });
       return;
+    }
+  }
+
+  const fixedAssetIds = Array.from(new Set(normalizedLines.map((l) => (l.fixedAssetId ? String(l.fixedAssetId) : "")).filter(Boolean)));
+  let fixedAssetById = new Map<string, { id: string; status: string; assetAccountId: string | null; accumDepAccountId: string | null; depExpenseAccountId: string | null }>();
+  if (fixedAssetIds.length) {
+    const rows = (await sql`
+      SELECT id, status, asset_account_id as "assetAccountId", accum_dep_account_id as "accumDepAccountId", dep_expense_account_id as "depExpenseAccountId"
+      FROM fixed_assets
+      WHERE org_id = ${orgId} AND id = ANY(${fixedAssetIds}::uuid[])
+    `) as any[];
+    fixedAssetById = new Map(
+      rows.map((r) => [String(r.id), { id: String(r.id), status: String(r.status || ""), assetAccountId: r.assetAccountId ? String(r.assetAccountId) : null, accumDepAccountId: r.accumDepAccountId ? String(r.accumDepAccountId) : null, depExpenseAccountId: r.depExpenseAccountId ? String(r.depExpenseAccountId) : null }]),
+    );
+    if (fixedAssetById.size !== fixedAssetIds.length) {
+      res.status(400).json({ success: false, error: "Invalid fixedAssetId" });
+      return;
+    }
+    for (const l of normalizedLines) {
+      if (!l.fixedAssetId) continue;
+      const a = fixedAssetById.get(String(l.fixedAssetId));
+      if (!a) {
+        res.status(400).json({ success: false, error: "Invalid fixedAssetId" });
+        return;
+      }
+      if (a.status !== "active") {
+        res.status(409).json({ success: false, error: "Asset is not active" });
+        return;
+      }
+      const okAccount = l.accountId === a.assetAccountId || l.accountId === a.accumDepAccountId || l.accountId === a.depExpenseAccountId;
+      if (!okAccount) {
+        res.status(400).json({ success: false, error: "Fixed asset linked line account mismatch" });
+        return;
+      }
     }
   }
 
@@ -773,7 +809,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
       for (const l of normalizedLines) {
         const key = `${l.lineNo}:${l.accountId}:${round2(Number(l.debitBase || 0))}:${round2(Number(l.creditBase || 0))}`;
-        const fixedAssetId = fixedAssetIdByLineNo.get(l.lineNo) || preservedFixedAssetIdByKey.get(key) || null;
+        const fixedAssetId = l.fixedAssetId || fixedAssetIdByLineNo.get(l.lineNo) || preservedFixedAssetIdByKey.get(key) || null;
         await trx`
           INSERT INTO journal_lines (
             org_id, entry_id, line_no, account_id, description, cost_center_id,
@@ -981,6 +1017,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     costCenterId: z.string().uuid().nullable().optional(),
     debitTxn: z.number().nonnegative().default(0),
     creditTxn: z.number().nonnegative().default(0),
+    fixedAssetId: z.string().uuid().optional(),
   });
 
   const fixedAssetPurchaseSchema = z.object({
@@ -1063,6 +1100,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       creditTxn: credit,
       debitBase,
       creditBase,
+      fixedAssetId: l.fixedAssetId ? String(l.fixedAssetId) : null,
     };
   });
 
@@ -1259,7 +1297,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
           ) VALUES (
             ${orgId}, ${entry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
-            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${fixedAssetIdByLineNo.get(l.lineNo) || null}
+            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${fixedAssetIdByLineNo.get(l.lineNo) || l.fixedAssetId || null}
           )
         `;
       }
