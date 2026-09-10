@@ -428,7 +428,7 @@ export default function Journal() {
     loadDetail(selectedId).catch((e) => setErr(e.message));
   }, [selectedId]);
 
-  function EditorCard() {
+  function renderEditorCard() {
     const voucherEmpty = !draftVoucherNo.trim();
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -923,7 +923,7 @@ export default function Journal() {
             </div>
           </div>
         ) : (
-          <EditorCard />
+          renderEditorCard()
         )}
 
         {editModalOpen && editingEntryId ? (
@@ -944,7 +944,7 @@ export default function Journal() {
                 </button>
               </div>
               <div className="mt-3">
-                <EditorCard />
+                {renderEditorCard()}
               </div>
             </div>
           </div>
