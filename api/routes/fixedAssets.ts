@@ -60,6 +60,53 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { assets: rows } });
 });
 
+router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const id = String(req.params.id || "");
+  if (!id) {
+    res.status(400).json({ success: false, error: "Missing id" });
+    return;
+  }
+  const sql = getSql();
+
+  try {
+    await sql.begin(async (trx) => {
+      const a = await trx`SELECT id FROM fixed_assets WHERE org_id = ${orgId} AND id = ${id} LIMIT 1`;
+      if (!a.length) {
+        throw new Error("Not found");
+      }
+
+      const linked = await trx`
+        SELECT COUNT(1) as cnt
+        FROM journal_lines
+        WHERE org_id = ${orgId} AND fixed_asset_id = ${id}
+      `;
+      const cnt = Number((linked[0] as any)?.cnt || 0);
+      if (cnt > 0) {
+        throw new Error("该资产仍有关联分录，请先删除/作废相关凭证");
+      }
+
+      await trx`DELETE FROM depreciation_lines WHERE org_id = ${orgId} AND asset_id = ${id}`;
+      await trx`DELETE FROM fixed_assets WHERE org_id = ${orgId} AND id = ${id}`;
+    });
+
+    res.status(200).json({ success: true, data: { id } });
+  } catch (e: any) {
+    const msg = typeof e?.message === "string" ? e.message : "Delete failed";
+    if (msg === "Not found") {
+      res.status(404).json({ success: false, error: msg });
+      return;
+    }
+    if (msg.includes("关联分录")) {
+      res.status(409).json({ success: false, error: msg });
+      return;
+    }
+    res.status(500).json({ success: false, error: "Server internal error" });
+  }
+});
+
 router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);

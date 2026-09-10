@@ -112,6 +112,12 @@ export default function FixedAssets() {
     setScheduleTotals((r.totals || null) as any);
   }
 
+  async function deleteAsset(id: string) {
+    await api(`/api/fixed-assets/${encodeURIComponent(id)}` as any, { method: "DELETE" });
+    await refresh();
+    await refreshSchedule(scheduleStart, scheduleEnd);
+  }
+
   async function refreshDepEntries(p: string) {
     if (!/^\d{4}-\d{2}$/.test(p)) {
       setDepEntries([]);
@@ -236,6 +242,7 @@ export default function FixedAssets() {
                   <th className="px-3 py-2 text-left">分录号</th>
                   <th className="px-3 py-2 text-right">成本</th>
                   <th className="px-3 py-2 text-left">状态</th>
+                  <th className="px-3 py-2 text-right">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -254,6 +261,28 @@ export default function FixedAssets() {
                     </td>
                     <td className="px-3 py-2 text-right">{Number(a.costBase).toFixed(2)}</td>
                     <td className="px-3 py-2">{a.status}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={async () => {
+                          const ok = window.confirm("确认删除该固定资产？此操作将从资产列表与变动表移除该记录。");
+                          if (!ok) return;
+                          setBusy(true);
+                          setErr(null);
+                          try {
+                            await deleteAsset(a.id);
+                          } catch (e: any) {
+                            setErr(e.message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        type="button"
+                      >
+                        删除
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
