@@ -73,6 +73,16 @@ type DepEntryRow = {
   assetNos?: string | null;
 };
 
+type PurchaseEntryRow = {
+  entryId: string;
+  entryDate: string;
+  status: string;
+  voucherNo: string | null;
+  memo: string | null;
+  assetNos?: string | null;
+  costBase: string;
+};
+
 type DisposeEntryRow = {
   entryId: string;
   entryDate: string;
@@ -121,6 +131,14 @@ export default function FixedAssets() {
     const m = String(d.getMonth() + 1).padStart(2, "0");
     return `${y}-${m}`;
   });
+
+  const [purchasePeriod, setPurchasePeriod] = useState(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+  const [purchaseEntries, setPurchaseEntries] = useState<PurchaseEntryRow[]>([]);
 
   const [depEntries, setDepEntries] = useState<DepEntryRow[]>([]);
 
@@ -282,6 +300,15 @@ export default function FixedAssets() {
     setDepEntries((r.entries || []) as any);
   }
 
+  async function refreshPurchaseEntries(p: string) {
+    if (!/^\d{4}-\d{2}$/.test(p)) {
+      setPurchaseEntries([]);
+      return;
+    }
+    const r = await api<{ entries: PurchaseEntryRow[] }>(`/api/fixed-assets/purchase/entries?period=${encodeURIComponent(p)}`);
+    setPurchaseEntries((r.entries || []) as any);
+  }
+
   async function refreshDisposeEntries(p: string) {
     if (!/^\d{4}-\d{2}$/.test(p)) {
       setDisposeEntries([]);
@@ -319,6 +346,16 @@ export default function FixedAssets() {
     }, 250);
     return () => clearTimeout(t);
   }, [activeOrgId, orgSwitching, tab, period]);
+
+  useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+    if (tab !== "purchase") return;
+    if (!/^\d{4}-\d{2}$/.test(purchasePeriod)) return;
+    const t = setTimeout(() => {
+      refreshPurchaseEntries(purchasePeriod).catch((e) => setErr(e.message));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [activeOrgId, orgSwitching, tab, purchasePeriod]);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -621,6 +658,55 @@ export default function FixedAssets() {
             保存草稿
           </button>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
+
+          <div className="mt-6 border-t border-zinc-100 pt-4">
+            <div className="text-sm font-semibold">购买流水</div>
+            <div className="mt-3 flex gap-2">
+              <input
+                className="w-40 rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                value={purchasePeriod}
+                onChange={(e) => setPurchasePeriod(e.target.value)}
+                type="month"
+              />
+            </div>
+
+            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs text-zinc-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">日期</th>
+                    <th className="px-3 py-2 text-left">分录号</th>
+                    <th className="px-3 py-2 text-left">资产编号</th>
+                    <th className="px-3 py-2 text-left">状态</th>
+                    <th className="px-3 py-2 text-right">成本（本位 {baseCurrency}）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {purchaseEntries.length ? (
+                    purchaseEntries.map((e) => (
+                      <tr key={e.entryId} className="border-t border-zinc-100">
+                        <td className="px-3 py-2">{e.entryDate}</td>
+                        <td className="px-3 py-2">
+                          <button className="text-blue-700 hover:underline" onClick={() => openJournalModal(e.entryId)} type="button">
+                            {e.voucherNo || "-"}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">{e.assetNos || ""}</td>
+                        <td className="px-3 py-2">{e.status}</td>
+                        <td className="px-3 py-2 text-right">{Number(e.costBase || 0).toFixed(2)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={5}>
+                        暂无购买流水
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "depreciate" ? "" : "hidden")}>

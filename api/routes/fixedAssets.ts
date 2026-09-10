@@ -540,6 +540,50 @@ router.get("/disposal/entries", requireAuth, async (req: AuthedRequest, res: Res
   res.status(200).json({ success: true, data: { period: q.data.period, entries: rows } });
 });
 
+router.get("/purchase/entries", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const q = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).safeParse({ period: req.query.period });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid period" });
+    return;
+  }
+
+  const sql = getSql();
+  const start = q.data.period + "-01";
+  const rows = await sql`
+    WITH bounds AS (
+      SELECT
+        ${start}::date as start_date,
+        (date_trunc('month', ${start}::date) + interval '1 month' - interval '1 day')::date as end_date
+    )
+    SELECT
+      e.id as "entryId",
+      to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
+      e.status,
+      e.voucher_no as "voucherNo",
+      e.memo,
+      COALESCE(string_agg(DISTINCT fa.asset_no, ', ' ORDER BY fa.asset_no), '') as "assetNos",
+      COALESCE(SUM(l.debit_base), 0) as "costBase"
+    FROM journal_entries e
+    JOIN bounds b ON true
+    JOIN journal_lines l ON l.org_id = ${orgId} AND l.entry_id = e.id AND l.fixed_asset_id IS NOT NULL
+    JOIN fixed_assets fa ON fa.org_id = ${orgId} AND fa.id = l.fixed_asset_id
+    WHERE e.org_id = ${orgId}
+      AND e.entry_date >= b.start_date
+      AND e.entry_date <= b.end_date
+      AND e.status IN ('draft', 'posted')
+      AND l.account_id = fa.asset_account_id
+      AND COALESCE(l.debit_base, 0) > 0
+    GROUP BY e.id
+    ORDER BY e.entry_date DESC, e.voucher_no DESC NULLS LAST, e.id DESC
+  `;
+
+  res.status(200).json({ success: true, data: { period: q.data.period, entries: rows } });
+});
+
 router.get("/:id/disposal-snapshot", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
