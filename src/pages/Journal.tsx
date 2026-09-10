@@ -104,6 +104,7 @@ export default function Journal() {
   const [postDraftId, setPostDraftId] = useState<string | null>(null);
 
   const [recurringEnabled, setRecurringEnabled] = useState(false);
+  const [recurringStartDate, setRecurringStartDate] = useState("");
   const [recurringEveryMonths, setRecurringEveryMonths] = useState(1);
   const [recurringCount, setRecurringCount] = useState(1);
 
@@ -703,7 +704,13 @@ export default function Journal() {
             <input
               type="checkbox"
               checked={recurringEnabled}
-              onChange={(e) => setRecurringEnabled(e.target.checked)}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setRecurringEnabled(checked);
+                if (checked) {
+                  setRecurringStartDate((prev) => (prev?.trim() ? prev : draftDate));
+                }
+              }}
               disabled={readOnly}
             />
             Recurring
@@ -711,6 +718,20 @@ export default function Journal() {
 
           {recurringEnabled ? (
             <>
+              <div className="w-56">
+                <label className="text-xs text-zinc-600">开始日期</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={recurringStartDate || draftDate}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRecurringStartDate(v);
+                    setDraftDate(v);
+                  }}
+                  type="date"
+                  disabled={readOnly}
+                />
+              </div>
               <div className="w-48">
                 <label className="text-xs text-zinc-600">每隔（月）</label>
                 <select
@@ -739,7 +760,7 @@ export default function Journal() {
                   disabled={readOnly}
                 />
               </div>
-              <div className="text-xs text-zinc-500">从当前日期开始生成 {recurringCount} 张凭证</div>
+              <div className="text-xs text-zinc-500">从开始日期生成 {recurringCount} 张凭证</div>
             </>
           ) : null}
         </div>
@@ -1118,7 +1139,7 @@ export default function Journal() {
                   }
 
                   const reqBody = {
-                    entryDate: draftDate,
+                    entryDate: recurringEnabled ? recurringStartDate || draftDate : draftDate,
                     voucherNo: draftVoucherNo.trim() || undefined,
                     currency: draftCurrency,
                     fxRate: draftFx,
