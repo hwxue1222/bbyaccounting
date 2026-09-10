@@ -50,6 +50,77 @@ function isSystemAutoLine(desc: unknown): boolean {
   return d === "COGS (FIFO)" || d === "Inventory (FIFO)";
 }
 
+async function insertPostedInventoryReceipts(
+  trx: any,
+  orgId: string,
+  entryId: string,
+  linkLineNo: number,
+  entryDate: string,
+  currency: string,
+  fxRate: number,
+  details: Array<{ itemId: string; qty: number; unitCostTxn: number }>,
+) {
+  if (!details.length) return;
+  const fx = Number(fxRate) || 1;
+  const currencyCode = String(currency || "BASE").toUpperCase();
+  const rows = details.map((d, i) => {
+    const unitCostTxn = Number(d.unitCostTxn);
+    const unitCostBase = round6(unitCostTxn * fx);
+    return {
+      org_id: orgId,
+      item_id: String(d.itemId),
+      move_type: "receipt",
+      move_date: entryDate,
+      qty: Number(d.qty),
+      unit_cost_base: unitCostBase,
+      unit_cost_txn: round6(unitCostTxn),
+      currency_code: currencyCode,
+      fx_rate: fx,
+      status: "posted",
+      entry_id: entryId,
+      entry_line_no: linkLineNo,
+      entry_seq: i + 1,
+    };
+  });
+
+  await trx`
+    WITH ins_moves AS (
+      INSERT INTO inventory_moves (
+        org_id, item_id, move_type, move_date, qty,
+        unit_cost_base, unit_cost_txn, currency_code, fx_rate,
+        status, entry_id, entry_line_no, entry_seq
+      )
+      ${trx(
+        rows,
+        "org_id",
+        "item_id",
+        "move_type",
+        "move_date",
+        "qty",
+        "unit_cost_base",
+        "unit_cost_txn",
+        "currency_code",
+        "fx_rate",
+        "status",
+        "entry_id",
+        "entry_line_no",
+        "entry_seq",
+      )}
+      RETURNING id, org_id, item_id, move_date, qty, unit_cost_base, entry_id
+    ),
+    ins_layers AS (
+      INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
+      SELECT org_id, item_id, move_date, qty, unit_cost_base, entry_id, id
+      FROM ins_moves
+      RETURNING id, source_move_id
+    )
+    UPDATE inventory_moves m
+    SET created_layer_id = l.id
+    FROM ins_layers l
+    WHERE m.org_id = ${orgId} AND m.id = l.source_move_id
+  `;
+}
+
 async function rollbackInventoryByEntryId(trx: any, orgId: string, entryId: string) {
   const shipmentAgg = (await trx`
     SELECT
@@ -716,44 +787,16 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
       if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
         if (inventoryMode === "receipt") {
-          let entrySeq = 1;
-          for (const d of inventoryDetails as any[]) {
-            const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
-            const insertedMove = (
-              await trx`
-                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no, entry_seq)
-                VALUES (
-                  ${orgId},
-                  ${d.itemId},
-                  'receipt',
-                  ${entryDate},
-                  ${d.qty},
-                  ${unitCostBase},
-                  ${round6(Number(d.unitCostTxn))},
-                  ${currency.toUpperCase()},
-                  ${fxRate},
-                  'posted',
-                  ${id},
-                  ${linkLineNo},
-                  ${entrySeq}
-                )
-                RETURNING id
-              `
-            )[0] as any;
-            entrySeq += 1;
-            const layer = (
-              await trx`
-                INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
-                VALUES (${orgId}, ${d.itemId}, ${entryDate}, ${d.qty}, ${unitCostBase}, ${id}, ${insertedMove.id})
-                RETURNING id
-              `
-            )[0] as any;
-            await trx`
-              UPDATE inventory_moves
-              SET created_layer_id = ${layer.id}
-              WHERE org_id = ${orgId} AND id = ${insertedMove.id}
-            `;
-          }
+          await insertPostedInventoryReceipts(
+            trx,
+            orgId,
+            String(id),
+            Number(linkLineNo),
+            entryDate,
+            currency,
+            Number(fxRate),
+            (inventoryDetails as any[]).map((d) => ({ itemId: String(d.itemId), qty: Number(d.qty), unitCostTxn: Number(d.unitCostTxn) })),
+          );
         }
 
         if (inventoryMode === "shipment") {
@@ -1176,14 +1219,31 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
           if (!(costBase > 0)) {
             throw new Error("Fixed asset cost must be greater than 0");
           }
+          const category = normalizeFixedAssetCategory(p.category);
+
+          const desiredNo = p.assetNo ? String(p.assetNo).trim().toUpperCase() : "";
+          if (desiredNo) {
+            const exists = await trx`
+              SELECT id
+              FROM fixed_assets
+              WHERE org_id = ${orgId} AND asset_no = ${desiredNo}
+              LIMIT 1
+            `;
+            if (exists.length) {
+              throw new Error("固定资产编号已存在");
+            }
+          }
+          const assetNo = desiredNo || (await issueFixedAssetNo(trx, orgId, category));
           const asset = (
             await trx`
               INSERT INTO fixed_assets (
                 org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
-                status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+                status, asset_account_id, accum_dep_account_id, dep_expense_account_id,
+                category, asset_no
               ) VALUES (
                 ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
-                'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId}
+                'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId},
+                ${category}, ${assetNo}
               )
               RETURNING id
             `
@@ -1206,44 +1266,16 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
       if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
         if (inventoryMode === "receipt") {
-          let entrySeq = 1;
-          for (const d of inventoryDetails as any[]) {
-            const unitCostBase = round6(Number(d.unitCostTxn) * fxRate);
-            const insertedMove = (
-              await trx`
-                INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no, entry_seq)
-                VALUES (
-                  ${orgId},
-                  ${d.itemId},
-                  'receipt',
-                  ${entryDate},
-                  ${d.qty},
-                  ${unitCostBase},
-                  ${round6(Number(d.unitCostTxn))},
-                  ${currency.toUpperCase()},
-                  ${fxRate},
-                  'posted',
-                  ${entry.id},
-                  ${linkLineNo},
-                  ${entrySeq}
-                )
-                RETURNING id
-              `
-            )[0] as any;
-            entrySeq += 1;
-            const layer = (
-              await trx`
-                INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
-                VALUES (${orgId}, ${d.itemId}, ${entryDate}, ${d.qty}, ${unitCostBase}, ${entry.id}, ${insertedMove.id})
-                RETURNING id
-              `
-            )[0] as any;
-            await trx`
-              UPDATE inventory_moves
-              SET created_layer_id = ${layer.id}
-              WHERE org_id = ${orgId} AND id = ${insertedMove.id}
-            `;
-          }
+          await insertPostedInventoryReceipts(
+            trx,
+            orgId,
+            String(entry.id),
+            Number(linkLineNo),
+            entryDate,
+            currency,
+            Number(fxRate),
+            (inventoryDetails as any[]).map((d) => ({ itemId: String(d.itemId), qty: Number(d.qty), unitCostTxn: Number(d.unitCostTxn) })),
+          );
         }
 
         if (inventoryMode === "shipment") {
@@ -1932,13 +1964,25 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
         const linkLineNo = linkLines[0];
 
         if (moveType === "receipt") {
-          for (const m of ms) {
-            await trx`
-              INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id)
-              VALUES (${orgId}, ${m.itemId}, ${entry.entryDate}, ${m.qty}, ${m.unitCostBase}, ${id})
-            `;
-            await trx`UPDATE inventory_moves SET status = 'posted' WHERE id = ${m.id} AND org_id = ${orgId}`;
-          }
+          const moveIds = ms.map((m) => String(m.id));
+          await trx`
+            WITH m AS (
+              SELECT id, org_id, item_id, move_date, qty, unit_cost_base
+              FROM inventory_moves
+              WHERE org_id = ${orgId} AND id = ANY(${moveIds}::uuid[])
+              FOR UPDATE
+            ),
+            ins_layers AS (
+              INSERT INTO inventory_layers (org_id, item_id, received_date, qty_remaining, unit_cost_base, source_entry_id, source_move_id)
+              SELECT org_id, item_id, move_date, qty, unit_cost_base, ${id}, id
+              FROM m
+              RETURNING id, source_move_id
+            )
+            UPDATE inventory_moves mv
+            SET status = 'posted', created_layer_id = l.id
+            FROM ins_layers l
+            WHERE mv.org_id = ${orgId} AND mv.id = l.source_move_id
+          `;
         }
 
         if (moveType === "shipment") {

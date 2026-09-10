@@ -215,6 +215,7 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_inventory_layers_item ON inventory_layers(org_id, item_id, received_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_inventory_layers_available ON inventory_layers(org_id, item_id, received_date, created_at, id) WHERE qty_remaining > 0`;
   await sql`ALTER TABLE inventory_layers ADD COLUMN IF NOT EXISTS source_move_id UUID`;
 
   await sql`
