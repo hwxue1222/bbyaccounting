@@ -15,6 +15,8 @@ type Asset = {
   salvageValueBase: string;
   status: string;
   disposedAt: string | null;
+  purchaseEntryId?: string | null;
+  purchaseVoucherNo?: string | null;
 };
 
 type ScheduleRow = {
@@ -211,6 +213,7 @@ export default function FixedAssets() {
                 <tr>
                   <th className="px-3 py-2 text-left">名称</th>
                   <th className="px-3 py-2 text-left">购置日</th>
+                  <th className="px-3 py-2 text-left">分录号</th>
                   <th className="px-3 py-2 text-right">成本</th>
                   <th className="px-3 py-2 text-left">状态</th>
                 </tr>
@@ -219,7 +222,16 @@ export default function FixedAssets() {
                 {assets.map((a) => (
                   <tr key={a.id} className="border-t border-zinc-100">
                     <td className="px-3 py-2">{a.name}</td>
-                    <td className="px-3 py-2">{a.acquisitionDate}</td>
+                    <td className="px-3 py-2">{String(a.acquisitionDate || "").slice(0, 10)}</td>
+                    <td className="px-3 py-2">
+                      {a.purchaseEntryId && a.purchaseVoucherNo ? (
+                        <a className="text-blue-700 hover:underline" href={`/journal?entryId=${encodeURIComponent(a.purchaseEntryId)}`}>
+                          {a.purchaseVoucherNo}
+                        </a>
+                      ) : (
+                        <span className="text-zinc-400">-</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right">{Number(a.costBase).toFixed(2)}</td>
                     <td className="px-3 py-2">{a.status}</td>
                   </tr>

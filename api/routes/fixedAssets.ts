@@ -36,9 +36,23 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       useful_life_months as "usefulLifeMonths",
       salvage_value_base as "salvageValueBase",
       status,
-      disposed_at as "disposedAt"
+      disposed_at as "disposedAt",
+      p.entry_id as "purchaseEntryId",
+      p.voucher_no as "purchaseVoucherNo"
     FROM fixed_assets
-    WHERE org_id = ${orgId}
+    LEFT JOIN LATERAL (
+      SELECT e.id as entry_id, e.voucher_no as voucher_no
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id
+      WHERE l.org_id = ${orgId}
+        AND l.fixed_asset_id = fixed_assets.id
+        AND e.status = 'posted'
+        AND l.account_id = fixed_assets.asset_account_id
+        AND COALESCE(l.debit_base, 0) > 0
+      ORDER BY e.entry_date ASC, e.id ASC
+      LIMIT 1
+    ) p ON true
+    WHERE fixed_assets.org_id = ${orgId}
     ORDER BY acquisition_date DESC
   `;
   res.status(200).json({ success: true, data: { assets: rows } });
