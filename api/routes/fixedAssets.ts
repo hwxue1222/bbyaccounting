@@ -57,6 +57,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
     usefulLifeMonths: z.number().int().positive(),
     salvageBase: z.number().nonnegative().default(0),
     offsetAccountId: z.string().uuid(),
+    memo: z.string().trim().min(1).max(200).optional(),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -95,7 +96,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
     const entry = (
       await trx`
         INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.acquisitionDate}, 'posted', ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, 'Fixed asset purchase', ${req.auth!.userId}, now())
+        VALUES (${orgId}, ${parsed.data.acquisitionDate}, 'posted', ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo ? parsed.data.memo.trim() : 'Fixed asset purchase'}, ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;
@@ -149,6 +150,9 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
   `;
 
   const created = await sql.begin(async (trx) => {
+    const orgRow = (await trx`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`)[0] as any;
+    const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
+
     const run = (
       await trx`
         INSERT INTO depreciation_runs (org_id, period, created_by)
@@ -160,7 +164,7 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
     const entry = (
       await trx`
         INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${period + '-01'}, 'posted', 'BASE', 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, now())
+        VALUES (${orgId}, ${period + '-01'}, 'posted', ${baseCurrency}, 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;
@@ -189,11 +193,11 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
 
       await trx`
         INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.depExpenseAccountId}, 'Depreciation expense', 0, 0, ${amount}, 0, ${a.id})
+        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.depExpenseAccountId}, 'Depreciation expense', ${amount}, 0, ${amount}, 0, ${a.id})
       `;
       await trx`
         INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.accumDepAccountId}, 'Accumulated depreciation', 0, 0, 0, ${amount}, ${a.id})
+        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.accumDepAccountId}, 'Accumulated depreciation', 0, ${amount}, 0, ${amount}, ${a.id})
       `;
 
       await trx`
@@ -268,10 +272,13 @@ router.post("/:id/dispose", requireAuth, async (req: AuthedRequest, res: Respons
   const gainLoss = round2(proceeds + accumDep - cost);
 
   const created = await sql.begin(async (trx) => {
+    const orgRow = (await trx`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`)[0] as any;
+    const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
+
     const entry = (
       await trx`
         INSERT INTO journal_entries (org_id, entry_date, status, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.date}, 'posted', 'BASE', 1, 'Fixed asset disposal', ${req.auth!.userId}, now())
+        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${baseCurrency}, 1, 'Fixed asset disposal', ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;
@@ -280,30 +287,30 @@ router.post("/:id/dispose", requireAuth, async (req: AuthedRequest, res: Respons
     if (proceeds > 0) {
       await trx`
         INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${parsed.data.cashAccountId}, 'Disposal proceeds', 0, 0, ${proceeds}, 0, ${assetId})
+        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${parsed.data.cashAccountId}, 'Disposal proceeds', ${proceeds}, 0, ${proceeds}, 0, ${assetId})
       `;
     }
     if (accumDep > 0) {
       await trx`
         INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${asset.accumDepAccountId}, 'Reverse accumulated depreciation', 0, 0, ${accumDep}, 0, ${assetId})
+        VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${asset.accumDepAccountId}, 'Reverse accumulated depreciation', ${accumDep}, 0, ${accumDep}, 0, ${assetId})
       `;
     }
     await trx`
       INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-      VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${asset.assetAccountId}, 'Remove asset cost', 0, 0, 0, ${cost}, ${assetId})
+      VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${asset.assetAccountId}, 'Remove asset cost', 0, ${cost}, 0, ${cost}, ${assetId})
     `;
 
     if (gainLoss !== 0) {
       if (gainLoss > 0) {
         await trx`
           INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-          VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${gainLossAccId}, 'Gain on disposal', 0, 0, 0, ${gainLoss}, ${assetId})
+          VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${gainLossAccId}, 'Gain on disposal', 0, ${gainLoss}, 0, ${gainLoss}, ${assetId})
         `;
       } else {
         await trx`
           INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
-          VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${gainLossAccId}, 'Loss on disposal', 0, 0, ${Math.abs(gainLoss)}, 0, ${assetId})
+          VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${gainLossAccId}, 'Loss on disposal', ${Math.abs(gainLoss)}, 0, ${Math.abs(gainLoss)}, 0, ${assetId})
         `;
       }
     }

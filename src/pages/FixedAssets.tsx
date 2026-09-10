@@ -63,6 +63,7 @@ export default function FixedAssets() {
     usefulLifeMonths: 36,
     salvageBase: 0,
     offsetAccountId: "",
+    memo: "",
   });
   const [period, setPeriod] = useState(() => {
     const d = new Date();
@@ -270,6 +271,14 @@ export default function FixedAssets() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs text-zinc-600">备注</label>
+              <input
+                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                value={assetForm.memo}
+                onChange={(e) => setAssetForm({ ...assetForm, memo: e.target.value })}
+              />
             </div>
           </div>
           <button
