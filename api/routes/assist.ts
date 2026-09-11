@@ -27,6 +27,39 @@ function stripCodeFences(s: string): string {
   return m ? m[1].trim() : t;
 }
 
+function normalizeGeminiModel(input: unknown): string {
+  const s = typeof input === "string" ? input.trim() : "";
+  if (!s) return "";
+  return s.startsWith("models/") ? s.slice("models/".length) : s;
+}
+
+async function listGeminiModels(apiKey: string): Promise<string[]> {
+  const urls = [
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+    `https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(apiKey)}`,
+  ];
+  for (const u of urls) {
+    const r = await fetch(u, { method: "GET" });
+    if (!r.ok) continue;
+    const j = (await r.json()) as any;
+    const models = Array.isArray(j?.models) ? j.models : [];
+    const names = models
+      .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
+      .map((m: any) => normalizeGeminiModel(m?.name))
+      .filter((x: any) => typeof x === "string" && x.trim());
+    if (names.length) return Array.from(new Set(names));
+  }
+  return [];
+}
+
+function pickPreferredGeminiModel(models: string[]): string {
+  if (!models.length) return "";
+  const lower = models.map((m) => ({ m, l: m.toLowerCase() }));
+  const flash = lower.find((x) => x.l.includes("flash"));
+  if (flash) return flash.m;
+  return models[0];
+}
+
 router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -152,10 +185,15 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     `用户输入：${parsed.data.text}\n\n` +
     `约束与可用列表：\n${JSON.stringify(prompt)}\n`;
 
-  const model = typeof process.env.GEMINI_MODEL === "string" && process.env.GEMINI_MODEL.trim() ? process.env.GEMINI_MODEL.trim() : "gemini-1.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const envModel = normalizeGeminiModel(process.env.GEMINI_MODEL);
+  const discoveredModels = envModel ? [] : await listGeminiModels(apiKey);
+  const chosenModel = envModel || pickPreferredGeminiModel(discoveredModels) || "";
 
-  async function callGemini(withSchema: boolean): Promise<{ ok: boolean; status: number; text: string }> {
+  async function callGemini(
+    model: string,
+    apiVersion: "v1beta" | "v1",
+    withSchema: boolean,
+  ): Promise<{ ok: boolean; status: number; text: string; model: string; apiVersion: string }> {
     const payload: any = {
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [{ text: user }] }],
@@ -164,10 +202,9 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
         responseMimeType: "application/json",
       },
     };
-    if (withSchema) {
-      payload.generationConfig.responseSchema = jsonSchema;
-    }
+    if (withSchema) payload.generationConfig.responseSchema = jsonSchema;
 
+    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
     let fetchResp: globalThis.Response | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       fetchResp = await fetch(url, {
@@ -179,21 +216,40 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
       if (![429, 500, 502, 503, 504].includes(fetchResp.status)) break;
       await new Promise((r) => setTimeout(r, attempt === 0 ? 250 : attempt === 1 ? 800 : 1600));
     }
-
     const status = fetchResp ? fetchResp.status : 0;
     const rawText = fetchResp ? await fetchResp.text() : "";
-    return { ok: !!fetchResp?.ok, status, text: rawText };
+    return { ok: !!fetchResp?.ok, status, text: rawText, model, apiVersion };
   }
 
-  let gem = await callGemini(true);
-  if (!gem.ok && gem.status === 400) {
-    gem = await callGemini(false);
+  let gem: { ok: boolean; status: number; text: string; model: string; apiVersion: string } | null = null;
+
+  if (chosenModel) {
+    gem = await callGemini(chosenModel, "v1beta", true);
+    if (!gem.ok && gem.status === 400) gem = await callGemini(chosenModel, "v1beta", false);
+    if (!gem.ok && gem.status === 404) {
+      gem = await callGemini(chosenModel, "v1", true);
+      if (!gem.ok && gem.status === 400) gem = await callGemini(chosenModel, "v1", false);
+    }
   }
 
-  if (!gem.ok) {
-    let detail = gem.text;
+  if (!gem || (!gem.ok && gem.status === 404 && !envModel)) {
+    const models = discoveredModels.length ? discoveredModels : await listGeminiModels(apiKey);
+    const picked = pickPreferredGeminiModel(models);
+    if (picked) {
+      gem = await callGemini(picked, "v1beta", true);
+      if (!gem.ok && gem.status === 400) gem = await callGemini(picked, "v1beta", false);
+      if (!gem.ok && gem.status === 404) {
+        gem = await callGemini(picked, "v1", true);
+        if (!gem.ok && gem.status === 400) gem = await callGemini(picked, "v1", false);
+      }
+    }
+  }
+
+  if (!gem || !gem.ok) {
+    const status = gem?.status ?? 0;
+    let detail = gem?.text ?? "";
     try {
-      const j = JSON.parse(gem.text);
+      const j = JSON.parse(detail);
       const msg = j?.error?.message || j?.message || j?.error || j?.msg;
       if (typeof msg === "string" && msg.trim()) detail = msg.trim();
     } catch {
@@ -201,16 +257,25 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     }
     const safeDetail = String(detail || "").replace(/\s+/g, " ").trim().slice(0, 280);
     const hint =
-      gem.status === 401 || gem.status === 403
+      status === 401 || status === 403
         ? "（请检查 Vercel 的 GOOGLE_API_KEY 是否正确/有权限）"
-        : gem.status === 429
+        : status === 429
           ? "（可能触发限流/额度不足，稍后再试）"
-          : gem.status === 400
+          : status === 400
             ? "（请求参数可能不被该模型支持，可尝试更换 GEMINI_MODEL）"
+            : status === 404
+              ? "（模型不存在/无权限。建议用 ListModels 查可用模型，并设置 GEMINI_MODEL）"
             : "";
+    let modelList: string[] = [];
+    if (status === 404) {
+      modelList = await listGeminiModels(apiKey);
+    }
+    const used = gem?.model ? ` model=${gem.model}` : "";
+    const ver = gem?.apiVersion ? ` api=${gem.apiVersion}` : "";
+    const listText = modelList.length ? ` Available models: ${modelList.slice(0, 12).join(", ")}` : "";
     res
       .status(502)
-      .json({ success: false, error: `Google Gemini API error (${gem.status}) ${hint}${safeDetail ? ": " + safeDetail : ""}` });
+      .json({ success: false, error: `Google Gemini API error (${status})${used}${ver} ${hint}${safeDetail ? ": " + safeDetail : ""}${listText}` });
     return;
   }
 
