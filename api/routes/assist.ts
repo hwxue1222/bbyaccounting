@@ -149,6 +149,8 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const accountList = accounts.map((a) => `${a.code} ${a.name} (${a.type})`).join("\n");
   const costCenterList = costCenters.map((c) => `${c.code} ${c.name}`).join("\n");
   const itemList = items.map((it) => `${it.sku ? it.sku + " " : ""}${it.name} [${it.uom}]`).join("\n");
+  const accountCodes = accounts.map((a) => String(a.code));
+  const costCenterCodes = costCenters.map((c) => String(c.code));
 
   const today = new Date().toISOString().slice(0, 10);
   const forcedEntryDate = parsed.data.entryDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.data.entryDate) ? parsed.data.entryDate : today;
@@ -169,9 +171,9 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
           type: "object",
           additionalProperties: false,
           properties: {
-            accountCode: { type: "string" },
+            accountCode: { type: "string", enum: accountCodes },
             description: { type: "string" },
-            costCenterCode: { type: "string" },
+            costCenterCode: { type: "string", enum: ["", ...costCenterCodes] },
             debitTxn: { type: "number" },
             creditTxn: { type: "number" },
           },
@@ -216,13 +218,17 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const system =
     lang === "zh"
       ? "你是会计分录助手。根据用户输入生成可直接过账的分录建议。\n" +
+        "默认采用国际财务报告准则 IFRS/IAS（权责发生制、配比原则、实质重于形式、谨慎性）。\n" +
+        "对固定资产（如车辆/设备）：若为企业用途且预计使用期超过一年，优先资本化计入固定资产并提示折旧；否则计入费用。\n" +
         "严格输出 JSON，符合给定 schema。金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；不允许同时借贷都为正。\n" +
-        "只允许使用提供的科目代码与成本中心代码；若缺少合适科目/商品，请把需求写入 missing 数组，并用最接近的现有科目暂代。\n" +
+        "只允许使用提供的科目代码与成本中心代码，严禁编造新的代码。若缺少合适科目/商品，请把需求写入 missing 数组，并选择最接近的现有科目暂代。\n" +
         "inventory.details.itemKey 必须匹配提供的库存商品：优先用 SKU，否则用商品名称。\n" +
         "entryDate 如果用户未给出，使用提供的 entryDate。currency 如果用户未给出，使用 baseCurrency。fxRate 同币种为 1。"
       : "You are a journal entry assistant. Generate a post-ready journal suggestion from the user input.\n" +
+        "Default to IFRS/IAS (accrual basis, matching, substance over form, prudence).\n" +
+        "For fixed assets (e.g., vehicles/equipment): if used for business and expected useful life > 1 year, capitalize as PPE and mention depreciation; otherwise expense it.\n" +
         "Return JSON only and conform to the provided schema. Amounts must balance; debitTxn/creditTxn are transaction-currency amounts; do not put positive numbers in both debit and credit.\n" +
-        "Use only the provided account codes and cost center codes. If a suitable account/item is missing, put it into the missing array and temporarily choose the closest available account.\n" +
+        "Use only the provided account codes and cost center codes; do NOT invent new codes. If a suitable account/item is missing, put it into the missing array and temporarily choose the closest available account.\n" +
         "inventory.details.itemKey must match the provided inventory items (prefer SKU, otherwise use item name).\n" +
         "If entryDate is not provided by the user, use the provided entryDate. If currency is not provided, use baseCurrency. fxRate is 1 when currency equals baseCurrency.";
 
@@ -363,7 +369,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const memo = typeof suggested?.memo === "string" ? suggested.memo.trim() : "";
   const entryDate = typeof suggested?.entryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(suggested.entryDate) ? suggested.entryDate : forcedEntryDate;
 
-  const linesIn: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
+  let linesIn: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
   if (linesIn.length < 2) {
     const repairUser =
       lang === "zh"
@@ -397,14 +403,21 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
       }
     }
 
-    const linesRetry: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
-    if (linesRetry.length < 2) {
-      res.status(502).json({
-        success: false,
-        error: t(
-          "Google Gemini 输出不完整（缺少分录行）。请把金额/币种/付款方式写清楚，例如：董事用现金购买车子 20000 MYR。",
-          "Google Gemini output is incomplete (missing journal lines). Try adding currency/amount or rephrasing, e.g. 'Bought a car for 30000 SGD, paid by bank transfer'.",
-        ),
+    linesIn = Array.isArray(suggested?.lines) ? suggested.lines : [];
+    if (linesIn.length < 2) {
+      res.status(200).json({
+        success: true,
+        suggestion: {
+          draft: null,
+          preview: null,
+          warnings: [],
+          missing: [
+            t(
+              "Google Gemini 输出不完整（缺少分录行）。请把金额/币种/付款方式写清楚，例如：董事用现金购买车子 20000 MYR。",
+              "Google Gemini output is incomplete (missing journal lines). Try adding currency/amount or rephrasing, e.g. 'Bought a car for 30000 SGD, paid by bank transfer'.",
+            ),
+          ],
+        },
       });
       return;
     }
@@ -435,7 +448,16 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   });
 
   if (lines.some((l) => !l.accountId)) {
-    res.status(400).json({ success: false, error: "科目匹配失败", missing, warnings });
+    const uniqMissing = Array.from(new Set(missing));
+    res.status(200).json({
+      success: true,
+      suggestion: {
+        draft: null,
+        preview: null,
+        warnings,
+        missing: uniqMissing.length ? uniqMissing : [t("科目匹配失败：请检查科目设置", "Account matching failed. Check Chart of Accounts")],
+      },
+    });
     return;
   }
 

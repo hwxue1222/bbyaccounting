@@ -27,12 +27,44 @@ export default function Dashboard() {
   }, [orgs, activeOrgId]);
 
   const [open, setOpen] = useState(false);
-  const [text, setText] = useState("");
+  const [draftInput, setDraftInput] = useState("");
   const [memo, setMemo] = useState("");
-  const [extra, setExtra] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<null | { draft: any; preview?: any; warnings: string[]; missing: string[] }>(null);
+  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+
+  async function sendTurn(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    setBusy(true);
+    setErr(null);
+    setSuggestion(null);
+    setMessages((m) => [...m, { role: "user", text: t }]);
+    try {
+      const userText = [...messages.filter((x) => x.role === "user").map((x) => x.text), t].join("\n");
+      const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
+        method: "POST",
+        json: { text: userText, memo: memo.trim() || undefined },
+      });
+      setSuggestion(r.suggestion);
+      const missing = Array.isArray(r.suggestion?.missing) ? r.suggestion.missing : [];
+      const hasPreview = Array.isArray(r.suggestion?.preview?.lines) && r.suggestion.preview.lines.length > 0;
+      const assistantText = hasPreview
+        ? tr("我已生成分录建议，请在下方确认或继续补充细节。", "I generated a journal suggestion. Review below or add more details.")
+        : missing.length
+          ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
+          : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
+      setMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+    } catch (e: any) {
+      const msg = e?.message || "Error";
+      setErr(msg);
+      setMessages((m) => [...m, { role: "assistant", text: msg }]);
+    } finally {
+      setBusy(false);
+      setDraftInput("");
+    }
+  }
 
   return (
     <AppShell title={tr("工作台", "Dashboard")}>
@@ -48,6 +80,17 @@ export default function Dashboard() {
               onClick={() => {
                 setErr(null);
                 setSuggestion(null);
+                setMessages([
+                  {
+                    role: "assistant",
+                    text: tr(
+                      "把交易用一句话描述给我。我会通过对话追问必要信息，直到分录可确认过账（不会自动过账）。",
+                      "Describe the transaction in one message. I'll ask follow-up questions until the journal is ready to post (won't auto-post).",
+                    ),
+                  },
+                ]);
+                setDraftInput("");
+                setMemo("");
                 setOpen(true);
               }}
               type="button"
@@ -83,19 +126,6 @@ export default function Dashboard() {
 
               <div className="mt-3 space-y-3">
                 <div>
-                  <label className="text-xs text-zinc-600">{tr("输入", "Input")}</label>
-                  <textarea
-                    className="mt-1 h-28 w-full resize-none rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    placeholder={tr(
-                      `例如：我作为董事向 public bank 银行账号打款 10000 ${baseCurrency}，用途是借款。\n或：公司向供应商采购 bowl 200 个，每个 6 ${baseCurrency}。`,
-                      `Example: Director paid 10000 ${baseCurrency} into Public Bank as a loan.\nOr: Company purchased 200 bowls at 6 ${baseCurrency} each.`,
-                    )}
-                  />
-                </div>
-
-                <div>
                   <label className="text-xs text-zinc-600">{tr("备注（可选）", "Memo (optional)")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -105,32 +135,50 @@ export default function Dashboard() {
                   />
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
-                    disabled={busy || !text.trim()}
-                    onClick={async () => {
-                      setBusy(true);
-                      setErr(null);
-                      setSuggestion(null);
-                      setExtra("");
-                      try {
-                        const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
-                          method: "POST",
-                          json: { text, memo: memo.trim() || undefined },
-                        });
-                        setSuggestion(r.suggestion);
-                      } catch (e: any) {
-                        setErr(e.message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                    type="button"
-                  >
-                    {tr("生成建议", "Generate")}
-                  </button>
+                <div className="rounded-lg border border-zinc-200 bg-white">
+                  <div className="max-h-72 space-y-2 overflow-auto p-3 text-sm">
+                    {messages.map((m, idx) => (
+                      <div key={idx} className={m.role === "user" ? "text-right" : "text-left"}>
+                        <div
+                          className={
+                            m.role === "user"
+                              ? "inline-block max-w-[85%] rounded-2xl bg-blue-700 px-3 py-2 text-white"
+                              : "inline-block max-w-[85%] rounded-2xl bg-zinc-100 px-3 py-2 text-zinc-900"
+                          }
+                        >
+                          {m.text}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-zinc-200 p-3">
+                    <label className="text-xs text-zinc-600">{tr("输入", "Input")}</label>
+                    <textarea
+                      className="mt-1 h-24 w-full resize-none rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={draftInput}
+                      onChange={(e) => setDraftInput(e.target.value)}
+                      placeholder={tr(
+                        `例如：董事为公司用现金购买了一辆车，20000 MYR。\n可补充：用途、是否资本化、预计使用年限、付款方式。`,
+                        `Example: Director bought a car for the company, 20000 MYR paid in cash.\nAdd: purpose/capitalize?/useful life/payment method.`,
+                      )}
+                    />
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
+                        disabled={busy || !draftInput.trim()}
+                        onClick={() => void sendTurn(draftInput)}
+                        type="button"
+                      >
+                        {tr("发送", "Send")}
+                      </button>
+                      <div className="text-xs text-zinc-500">
+                        {tr("通过对话完善信息；生成建议后需你确认才会过账。", "We refine via chat; posting requires your confirmation.")}
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
+                <div className="flex flex-wrap items-center gap-2">
                   {suggestion?.draft ? (
                     <button
                       className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -141,9 +189,10 @@ export default function Dashboard() {
                         try {
                           const resp = await api<{ entry: { id: string } }>("/api/journals/post", { method: "POST", json: suggestion.draft });
                           setOpen(false);
-                          setText("");
+                          setDraftInput("");
                           setMemo("");
                           setSuggestion(null);
+                          setMessages([]);
                           navigate(`/journal?entryId=${encodeURIComponent(resp.entry.id)}`);
                         } catch (e: any) {
                           setErr(e.message);
@@ -169,20 +218,11 @@ export default function Dashboard() {
                         className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100 disabled:opacity-50"
                         disabled={busy}
                         onClick={async () => {
-                          setBusy(true);
-                          setErr(null);
-                          setSuggestion(null);
-                          try {
-                            const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
-                              method: "POST",
-                              json: { text, memo: memo.trim() || undefined },
-                            });
-                            setSuggestion(r.suggestion);
-                          } catch (e: any) {
-                            setErr(e.message);
-                          } finally {
-                            setBusy(false);
-                          }
+                          const last = messages
+                            .slice()
+                            .reverse()
+                            .find((x) => x.role === "user")?.text;
+                          if (last) await sendTurn(last);
                         }}
                         type="button"
                       >
@@ -197,47 +237,6 @@ export default function Dashboard() {
                       <button className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100" onClick={() => navigate("/inventory")} type="button">
                         {tr("去新增库存商品", "Add inventory item")}
                       </button>
-                    </div>
-                    <div className="mt-3">
-                      <label className="text-xs text-zinc-700">{tr("补充信息（可选）", "Extra info (optional)")}</label>
-                      <textarea
-                        className="mt-1 h-20 w-full resize-none rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
-                        value={extra}
-                        onChange={(e) => setExtra(e.target.value)}
-                        placeholder={tr(
-                          "例如：付款方式/供应商/是否含税/用途/借款或资本等。",
-                          "E.g., payment method/vendor/tax included/purpose/loan or capital.",
-                        )}
-                      />
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <button
-                        className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50"
-                        disabled={busy || !text.trim() || !extra.trim()}
-                        onClick={async () => {
-                          setBusy(true);
-                          setErr(null);
-                          setSuggestion(null);
-                          try {
-                            const merged = `${text.trim()}\n\n补充信息：${extra.trim()}`;
-                            const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
-                              method: "POST",
-                              json: { text: merged, memo: memo.trim() || undefined },
-                            });
-                            setSuggestion(r.suggestion);
-                          } catch (e: any) {
-                            setErr(e.message);
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                        type="button"
-                      >
-                        {tr("补充并重新生成", "Regenerate")}
-                      </button>
-                      <div className="text-xs text-amber-900/70">
-                        {tr("仅用于生成建议，不会自动过账。", "Used for suggestion only; won't auto-post.")}
-                      </div>
                     </div>
                   </div>
                 ) : null}

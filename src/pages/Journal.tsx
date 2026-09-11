@@ -115,6 +115,7 @@ export default function Journal() {
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
   const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
+  const [assistQuickText, setAssistQuickText] = useState("");
 
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
@@ -620,12 +621,16 @@ export default function Journal() {
     const rules =
       tr(
         "你是会计分录助手。根据用户输入生成分录建议。\n" +
+          "默认采用国际财务报告准则 IFRS/IAS（权责发生制、配比原则、实质重于形式、谨慎性）。\n" +
+          "对固定资产（如车辆/设备）：若为企业用途且预计使用期超过一年，优先资本化计入固定资产并提示折旧；否则计入费用。\n" +
           "严格只输出 JSON，不要输出任何解释文字。\n" +
           "金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；同一行不允许借贷同时为正。\n" +
           "只允许使用提供的科目代码与成本中心代码。\n" +
           "如需库存：inventory.details.itemKey 必须匹配提供的库存商品（优先 SKU，否则用商品名称）。\n" +
           `entryDate 如用户未给出，使用 ${draftDate}。currency 如未给出，使用 ${baseCurrency}。fxRate 同币种为 1。`,
         "You are an accounting journal assistant. Generate a journal suggestion based on the user input.\n" +
+          "Default to IFRS/IAS (accrual basis, matching, substance over form, prudence).\n" +
+          "For fixed assets (e.g., vehicles/equipment): if used for business and expected useful life > 1 year, capitalize as PPE and mention depreciation; otherwise expense it.\n" +
           "Output JSON only, without any extra text.\n" +
           "Debits and credits must balance. debitTxn/creditTxn are transaction-currency amounts; do not put positive debit and credit on the same line.\n" +
           "Use only the provided account codes and cost center codes.\n" +
@@ -1039,6 +1044,71 @@ export default function Journal() {
               ? tr("新建凭证（从草稿过账）", "New journal (post from draft)")
               : tr("新建凭证（直接过账）", "New journal (post directly)")}
         </div>
+
+        <div className="mt-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2">
+            <input
+              className="min-w-[240px] flex-1 bg-transparent text-sm outline-none"
+              value={assistQuickText}
+              onChange={(e) => setAssistQuickText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || e.shiftKey) return;
+                e.preventDefault();
+                const text = assistQuickText.trim();
+                if (!text || readOnly || busy) return;
+                setAssistErr(null);
+                setAssistSuggestion(null);
+                setAssistManualJson("");
+                setAssistExtra("");
+                setAssistMode("auto");
+                setAssistText(text);
+                setAssistOpen(true);
+                void runAssistSuggest(text);
+              }}
+              placeholder={tr(
+                "对话生成分录：例如 董事为公司用现金购买车辆 20000 MYR",
+                "AI assist: e.g., Director bought a company car for 20000 MYR paid in cash",
+              )}
+              disabled={readOnly || busy}
+            />
+            <button
+              className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              disabled={readOnly || busy || !assistQuickText.trim()}
+              onClick={() => {
+                const text = assistQuickText.trim();
+                if (!text) return;
+                setAssistErr(null);
+                setAssistSuggestion(null);
+                setAssistManualJson("");
+                setAssistExtra("");
+                setAssistMode("auto");
+                setAssistText(text);
+                setAssistOpen(true);
+                void runAssistSuggest(text);
+              }}
+              type="button"
+            >
+              {tr("生成建议", "Generate")}
+            </button>
+            <button
+              className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+              disabled={readOnly || busy}
+              onClick={() => {
+                setAssistErr(null);
+                setAssistSuggestion(null);
+                setAssistText((prev) => prev || assistQuickText.trim());
+                setAssistManualJson("");
+                setAssistExtra("");
+                setAssistOpen(true);
+              }}
+              type="button"
+            >
+              {tr("展开对话框", "Open")}
+            </button>
+          </div>
+          <div className="mt-1 text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
+        </div>
+
         <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <div>
             {tr(
@@ -1144,23 +1214,6 @@ export default function Journal() {
             />
             Recurring
           </label>
-
-          <button
-            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-            disabled={readOnly || busy}
-            onClick={() => {
-              setAssistErr(null);
-              setAssistSuggestion(null);
-              setAssistText((prev) => prev || "");
-              setAssistManualJson("");
-              setAssistMode("manual");
-              setAssistOpen(true);
-            }}
-            type="button"
-          >
-            {tr("对话生成分录", "AI assist")}
-          </button>
-          <div className="text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
 
           {recurringEnabled ? (
             <>
@@ -2000,104 +2053,110 @@ export default function Journal() {
                     </div>
                   ) : null}
 
-                  <div className="mt-3 grid gap-3 md:grid-cols-4">
-                    <div>
-                      <div className="text-xs text-zinc-600">{tr("日期", "Date")}</div>
-                      <div className="mt-1 text-sm">{assistSuggestion.preview.entryDate}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-zinc-600">{tr("币种", "Currency")}</div>
-                      <div className="mt-1 text-sm">{assistSuggestion.preview.currency}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</div>
-                      <div className="mt-1 text-sm">{String(assistSuggestion.preview.fxRate)}</div>
-                    </div>
-                    <div className="md:col-span-1">
-                      <div className="text-xs text-zinc-600">{tr("备注", "Memo")}</div>
-                      <div className="mt-1 text-sm">{assistSuggestion.preview.memo || ""}</div>
-                    </div>
-                  </div>
+                  {Array.isArray((assistSuggestion as any)?.preview?.lines) && (assistSuggestion as any).preview.lines.length ? (
+                    <>
+                      <div className="mt-3 grid gap-3 md:grid-cols-4">
+                        <div>
+                          <div className="text-xs text-zinc-600">{tr("日期", "Date")}</div>
+                          <div className="mt-1 text-sm">{(assistSuggestion as any).preview.entryDate}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-zinc-600">{tr("币种", "Currency")}</div>
+                          <div className="mt-1 text-sm">{(assistSuggestion as any).preview.currency}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</div>
+                          <div className="mt-1 text-sm">{String((assistSuggestion as any).preview.fxRate)}</div>
+                        </div>
+                        <div className="md:col-span-1">
+                          <div className="text-xs text-zinc-600">{tr("备注", "Memo")}</div>
+                          <div className="mt-1 text-sm">{(assistSuggestion as any).preview.memo || ""}</div>
+                        </div>
+                      </div>
 
-                  {assistSuggestion.preview.inventoryDetails?.length ? (
-                    <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
-                      {tr("库存明细：", "Inventory details: ")}
-                      {tr("行", "line")}
-                      {" "}
-                      {assistSuggestion.preview.inventoryLinkLineNo || 1}，{assistSuggestion.preview.inventoryDetails[0].moveType}，{assistSuggestion.preview.inventoryDetails.length} {tr("条", "items")}
-                    </div>
-                  ) : null}
+                      {(assistSuggestion as any).preview.inventoryDetails?.length ? (
+                        <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
+                          {tr("库存明细：", "Inventory details: ")}
+                          {tr("行", "line")}
+                          {" "}
+                          {(assistSuggestion as any).preview.inventoryLinkLineNo || 1}，{(assistSuggestion as any).preview.inventoryDetails[0].moveType}，{(assistSuggestion as any).preview.inventoryDetails.length} {tr("条", "items")}
+                        </div>
+                      ) : null}
 
-                  <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-                    <table className="w-full text-sm">
-                      <thead className="bg-zinc-50 text-xs text-zinc-600">
-                        <tr>
-                          <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
-                          <th className="px-3 py-2 text-left">{tr("摘要", "Description")}</th>
-                          <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
-                          <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {assistSuggestion.preview.lines.map((l, i) => (
-                          <tr key={i} className="border-t border-zinc-100">
-                            <td className="px-3 py-2">{l.accountCode} {l.accountName}</td>
-                            <td className="px-3 py-2">{l.description || ""}</td>
-                            <td className="px-3 py-2 text-right">{l.debitTxn > 0 ? Number(l.debitTxn).toFixed(2) : ""}</td>
-                            <td className="px-3 py-2 text-right">{l.creditTxn > 0 ? Number(l.creditTxn).toFixed(2) : ""}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {assistSuggestion.preview.inventoryDetails?.length ? (
-                    <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-                      <table className="w-full text-sm">
-                        <thead className="bg-zinc-50 text-xs text-zinc-600">
-                          <tr>
-                            <th className="px-3 py-2 text-left">{tr("库存项目", "Item")}</th>
-                            <th className="px-3 py-2 text-right">{tr("数量", "Qty")}</th>
-                            <th className="px-3 py-2 text-right">{tr("单价（交易币）", "Unit (txn)")}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {assistSuggestion.preview.inventoryDetails.map((d, i) => (
-                            <tr key={i} className="border-t border-zinc-100">
-                              <td className="px-3 py-2">{invItemLabelById.get(String((d as any).itemId)) || String((d as any).itemId)}</td>
-                              <td className="px-3 py-2 text-right">{String((d as any).qty)}</td>
-                              <td className="px-3 py-2 text-right">{"unitCostTxn" in d ? Number((d as any).unitCostTxn || 0).toFixed(2) : ""}</td>
+                      <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+                        <table className="w-full text-sm">
+                          <thead className="bg-zinc-50 text-xs text-zinc-600">
+                            <tr>
+                              <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
+                              <th className="px-3 py-2 text-left">{tr("摘要", "Description")}</th>
+                              <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
+                              <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
+                          </thead>
+                          <tbody>
+                            {(assistSuggestion as any).preview.lines.map((l: any, i: number) => (
+                              <tr key={i} className="border-t border-zinc-100">
+                                <td className="px-3 py-2">
+                                  {l.accountCode} {l.accountName}
+                                </td>
+                                <td className="px-3 py-2">{l.description || ""}</td>
+                                <td className="px-3 py-2 text-right">{l.debitTxn > 0 ? Number(l.debitTxn).toFixed(2) : ""}</td>
+                                <td className="px-3 py-2 text-right">{l.creditTxn > 0 ? Number(l.creditTxn).toFixed(2) : ""}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
 
-                  <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                    <button
-                      className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                      disabled={assistBusy}
-                      onClick={() => {
-                        setAssistSuggestion(null);
-                        setAssistErr(null);
-                      }}
-                      type="button"
-                    >
-                      {tr("重新生成", "Reset")}
-                    </button>
-                    <button
-                      className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
-                      disabled={assistBusy}
-                      onClick={() => {
-                        applyAssistSuggestion(assistSuggestion);
-                        setAssistOpen(false);
-                      }}
-                      type="button"
-                    >
-                      {tr("应用到分录", "Apply to journal")}
-                    </button>
-                  </div>
+                      {(assistSuggestion as any).preview.inventoryDetails?.length ? (
+                        <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+                          <table className="w-full text-sm">
+                            <thead className="bg-zinc-50 text-xs text-zinc-600">
+                              <tr>
+                                <th className="px-3 py-2 text-left">{tr("库存项目", "Item")}</th>
+                                <th className="px-3 py-2 text-right">{tr("数量", "Qty")}</th>
+                                <th className="px-3 py-2 text-right">{tr("单价（交易币）", "Unit (txn)")}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(assistSuggestion as any).preview.inventoryDetails.map((d: any, i: number) => (
+                                <tr key={i} className="border-t border-zinc-100">
+                                  <td className="px-3 py-2">{invItemLabelById.get(String(d.itemId)) || String(d.itemId)}</td>
+                                  <td className="px-3 py-2 text-right">{String(d.qty)}</td>
+                                  <td className="px-3 py-2 text-right">{"unitCostTxn" in d ? Number(d.unitCostTxn || 0).toFixed(2) : ""}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                          disabled={assistBusy}
+                          onClick={() => {
+                            setAssistSuggestion(null);
+                            setAssistErr(null);
+                          }}
+                          type="button"
+                        >
+                          {tr("重新生成", "Reset")}
+                        </button>
+                        <button
+                          className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                          disabled={assistBusy || !(assistSuggestion as any)?.draft}
+                          onClick={() => {
+                            applyAssistSuggestion(assistSuggestion as any);
+                            setAssistOpen(false);
+                          }}
+                          type="button"
+                        >
+                          {tr("确认并填入分录", "Confirm & fill")}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
             </div>
