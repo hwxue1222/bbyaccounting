@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -98,6 +99,8 @@ export default function Inventory() {
   const [stockTakeItems, setStockTakeItems] = useState<StockTakeItemRow[]>([]);
   const [stockTakeLines, setStockTakeLines] = useState<Record<string, StockTakeLine>>({});
   const [stockTakePreview, setStockTakePreview] = useState<any>(null);
+  const [stockTakePreviewBusy, setStockTakePreviewBusy] = useState(false);
+  const stockTakePreviewReqIdRef = useRef(0);
 
   const stockTakeItemsSorted = useMemo(() => {
     const arr = [...stockTakeItems];
@@ -115,6 +118,62 @@ export default function Inventory() {
     });
     return arr;
   }, [stockTakeItems]);
+
+  const stockTakeChangedLines = useMemo(() => {
+    return stockTakeItemsSorted
+      .map((it) => {
+        const st = stockTakeLines[String(it.id)];
+        const onHandQty = Number(it.qty || 0);
+        const countedQty = Number(st?.countedQty);
+        if (!Number.isFinite(countedQty) || countedQty < 0) return null;
+        const diff = countedQty - onHandQty;
+        if (Math.round(diff * 10000) === 0) return null;
+        return { itemId: String(it.id), countedQty };
+      })
+      .filter(Boolean) as Array<{ itemId: string; countedQty: number }>;
+  }, [stockTakeItemsSorted, stockTakeLines]);
+
+  const stockTakeChangedKey = useMemo(() => {
+    if (!stockTakeChangedLines.length) return "";
+    return stockTakeChangedLines.map((l) => `${l.itemId}:${Math.trunc(l.countedQty)}`).join("|");
+  }, [stockTakeChangedLines]);
+
+  useEffect(() => {
+    if (panel !== "stockTake") return;
+
+    const reqId = ++stockTakePreviewReqIdRef.current;
+    const t = window.setTimeout(async () => {
+      if (!stockTakeChangedLines.length) {
+        setStockTakePreview(null);
+        setStockTakePreviewBusy(false);
+        return;
+      }
+      setStockTakePreviewBusy(true);
+      setErr(null);
+      try {
+        const r = await api<any>("/api/inventory/stock-take/preview", {
+          method: "POST",
+          json: { date: stockTakeDate, lines: stockTakeChangedLines },
+        });
+        if (stockTakePreviewReqIdRef.current === reqId) {
+          setStockTakePreview(r);
+        }
+      } catch (e: any) {
+        if (stockTakePreviewReqIdRef.current === reqId) {
+          setStockTakePreview(null);
+          setErr(e?.message || "Failed");
+        }
+      } finally {
+        if (stockTakePreviewReqIdRef.current === reqId) {
+          setStockTakePreviewBusy(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(t);
+    };
+  }, [panel, stockTakeDate, stockTakeChangedKey]);
 
   const offsetAccounts = useMemo(() => accounts, [accounts]);
 
@@ -446,22 +505,15 @@ export default function Inventory() {
               <div className="flex items-end gap-2">
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-                  disabled={busy}
+                  disabled={busy || stockTakePreviewBusy}
                   onClick={async () => {
                     setBusy(true);
                     setErr(null);
                     setStockTakePreview(null);
                     try {
-                      const lines = stockTakeItemsSorted
-                        .map((it) => {
-                          const st = stockTakeLines[String(it.id)];
-                          const countedQty = Number(st?.countedQty);
-                          if (!Number.isFinite(countedQty) || countedQty < 0) return null;
-                          return { itemId: String(it.id), countedQty };
-                        })
-                        .filter(Boolean);
+                      const lines = stockTakeChangedLines;
                       if (!lines.length) {
-                        setErr(tr("没有商品可盘点。", "No items to stock take."));
+                        setStockTakePreview(null);
                         return;
                       }
                       const r = await api<any>("/api/inventory/stock-take/preview", {
@@ -477,7 +529,7 @@ export default function Inventory() {
                   }}
                   type="button"
                 >
-                  {tr("预览成本", "Preview cost")}
+                  {stockTakePreviewBusy ? tr("计算中...", "Calculating...") : tr("预览成本", "Preview cost")}
                 </button>
                 <button
                   className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
