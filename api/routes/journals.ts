@@ -46,6 +46,17 @@ function mapPgError(e: any): { status: number; message: string } | null {
   return { status: 500, message: `数据库错误 ${code}（ID ${id}）` };
 }
 
+async function tryLogError(sql: any, input: { id: string; orgId: string | null; userId: string | null; route: string; message: string; stack?: string | null }) {
+  try {
+    await sql`
+      INSERT INTO error_logs (id, org_id, user_id, route, message, stack)
+      VALUES (${input.id}, ${input.orgId}, ${input.userId}, ${input.route}, ${input.message}, ${input.stack || null})
+    `;
+  } catch {
+    // ignore
+  }
+}
+
 function requireOrgId(req: AuthedRequest, res: Response): string | null {
   const orgId = req.auth!.orgId;
   if (!orgId) {
@@ -1012,6 +1023,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     }
     const errorId = makeErrorId();
     console.error("[journals/put]", { orgId, userId: req.auth?.userId, errorId, message: msg });
+    await tryLogError(sql, { id: errorId, orgId, userId: req.auth?.userId || null, route: "journals/put", message: msg, stack: e?.stack || null });
     res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
   }
 });
@@ -1667,6 +1679,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     }
     const errorId = makeErrorId();
     console.error("[journals/post]", { orgId, userId: req.auth?.userId, errorId, message: msg });
+    await tryLogError(sql, { id: errorId, orgId, userId: req.auth?.userId || null, route: "journals/post", message: msg, stack: e?.stack || null });
     res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
   }
 });
@@ -1753,6 +1766,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
     }
     const errorId = makeErrorId();
     console.error("[journals/delete]", { orgId, userId: req.auth?.userId, errorId, message: msg });
+    await tryLogError(sql, { id: errorId, orgId, userId: req.auth?.userId || null, route: "journals/delete", message: msg, stack: e?.stack || null });
     res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
   }
 });

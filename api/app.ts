@@ -21,6 +21,7 @@ import fixedAssetsRoutes from './routes/fixedAssets.js'
 import reportRoutes from './routes/reports.js'
 import usersRoutes from './routes/users.js'
 import assistRoutes from './routes/assist.js'
+import debugRoutes from './routes/debug.js'
 
 // load env
 dotenv.config()
@@ -212,6 +213,7 @@ app.use('/api/fixed-assets', fixedAssetsRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/users', usersRoutes)
 app.use('/api/assist', assistRoutes)
+app.use('/api/debug', debugRoutes)
 
 /**
  * error handler middleware

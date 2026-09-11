@@ -223,6 +223,19 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE inventory_layers ADD COLUMN IF NOT EXISTS source_move_id UUID`;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS error_logs (
+      id UUID PRIMARY KEY,
+      org_id UUID,
+      user_id UUID,
+      route TEXT,
+      message TEXT,
+      stack TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_error_logs_org_created ON error_logs(org_id, created_at DESC)`;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS inventory_moves (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID NOT NULL,
