@@ -25,6 +25,28 @@ function detectLang(text: string): "zh" | "en" {
   return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
 }
 
+function toOneLineString(x: unknown): string {
+  if (typeof x === "string") return x.trim();
+  if (typeof x === "number" || typeof x === "boolean") return String(x);
+  if (!x) return "";
+  if (typeof x === "object") {
+    const anyX = x as any;
+    const msg = anyX?.message || anyX?.text || anyX?.name;
+    if (typeof msg === "string" && msg.trim()) return msg.trim();
+    try {
+      return JSON.stringify(x);
+    } catch {
+      return String(x);
+    }
+  }
+  return String(x);
+}
+
+function normalizeStringArray(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input.map((x) => toOneLineString(x)).filter((s) => !!s);
+}
+
 function stripCodeFences(s: string): string {
   const t = s.trim();
   const m = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -334,7 +356,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   }
 
   const warnings: string[] = [];
-  const missing: string[] = Array.isArray(suggested?.missing) ? suggested.missing.map((x: any) => String(x)) : [];
+  const missing: string[] = normalizeStringArray(suggested?.missing);
 
   const currency = typeof suggested?.currency === "string" && suggested.currency.trim() ? String(suggested.currency).toUpperCase().slice(0, 3) : baseCurrency;
   const fxRate = Number(suggested?.fxRate) || 1;
