@@ -4,7 +4,16 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
 
-type Account = { id: string; code: string; name: string; type: string; normalBalance: string; isActive?: boolean };
+type Account = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  normalBalance: string;
+  isActive?: boolean;
+  linkInventoryFifo?: boolean;
+  linkFixedAssets?: boolean;
+};
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
 type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: number };
@@ -28,6 +37,8 @@ export default function Settings() {
   const [newAccountName, setNewAccountName] = useState("");
   const [newAccountType, setNewAccountType] = useState<"asset" | "liability" | "equity" | "income" | "cogs" | "expense">("expense");
   const [newAccountNormal, setNewAccountNormal] = useState<"debit" | "credit">("debit");
+  const [newAccountLinkInventoryFifo, setNewAccountLinkInventoryFifo] = useState(false);
+  const [newAccountLinkFixedAssets, setNewAccountLinkFixedAssets] = useState(false);
 
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [editAccountCode, setEditAccountCode] = useState("");
@@ -35,6 +46,8 @@ export default function Settings() {
   const [editAccountType, setEditAccountType] = useState<"asset" | "liability" | "equity" | "income" | "cogs" | "expense">("expense");
   const [editAccountNormal, setEditAccountNormal] = useState<"debit" | "credit">("debit");
   const [editAccountActive, setEditAccountActive] = useState(true);
+  const [editAccountLinkInventoryFifo, setEditAccountLinkInventoryFifo] = useState(false);
+  const [editAccountLinkFixedAssets, setEditAccountLinkFixedAssets] = useState(false);
 
   const [newCcCode, setNewCcCode] = useState("");
   const [newCcName, setNewCcName] = useState("");
@@ -304,6 +317,16 @@ export default function Settings() {
                   <option value="credit">credit</option>
                 </select>
               </div>
+              <div className="md:col-span-5 flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 text-sm text-zinc-700">
+                  <input type="checkbox" checked={newAccountLinkInventoryFifo} onChange={(e) => setNewAccountLinkInventoryFifo(e.target.checked)} />
+                  链接库存 FIFO（分录显示“库存”按钮）
+                </label>
+                <label className="flex items-center gap-2 text-sm text-zinc-700">
+                  <input type="checkbox" checked={newAccountLinkFixedAssets} onChange={(e) => setNewAccountLinkFixedAssets(e.target.checked)} />
+                  链接固定资产（分录显示“购买/折旧/处置”按钮）
+                </label>
+              </div>
               <div className="md:col-span-5">
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -318,10 +341,14 @@ export default function Settings() {
                           name: newAccountName.trim(),
                           type: newAccountType,
                           normalBalance: newAccountNormal,
+                          linkInventoryFifo: newAccountLinkInventoryFifo,
+                          linkFixedAssets: newAccountLinkFixedAssets,
                         },
                       });
                       setNewAccountCode("");
                       setNewAccountName("");
+                      setNewAccountLinkInventoryFifo(false);
+                      setNewAccountLinkFixedAssets(false);
                       await refresh();
                     } catch (e: any) {
                       setErr(e.message);
@@ -359,6 +386,8 @@ export default function Settings() {
                             setEditAccountType(a.type as any);
                             setEditAccountNormal((a.normalBalance as any) || "debit");
                             setEditAccountActive((a as any).isActive ?? true);
+                            setEditAccountLinkInventoryFifo(Boolean((a as any).linkInventoryFifo));
+                            setEditAccountLinkFixedAssets(Boolean((a as any).linkFixedAssets));
                           }}
                         >
                           编辑
@@ -413,6 +442,16 @@ export default function Settings() {
                     <option value="no">no</option>
                   </select>
                 </div>
+                <div className="md:col-span-5 flex flex-wrap items-center gap-4">
+                  <label className="flex items-center gap-2 text-sm text-zinc-700">
+                    <input type="checkbox" checked={editAccountLinkInventoryFifo} onChange={(e) => setEditAccountLinkInventoryFifo(e.target.checked)} />
+                    链接库存 FIFO（分录显示“库存”按钮）
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-700">
+                    <input type="checkbox" checked={editAccountLinkFixedAssets} onChange={(e) => setEditAccountLinkFixedAssets(e.target.checked)} />
+                    链接固定资产（分录显示“购买/折旧/处置”按钮）
+                  </label>
+                </div>
                 <div className="md:col-span-5">
                   <button
                     className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -428,6 +467,8 @@ export default function Settings() {
                             type: editAccountType,
                             normalBalance: editAccountNormal,
                             isActive: editAccountActive,
+                            linkInventoryFifo: editAccountLinkInventoryFifo,
+                            linkFixedAssets: editAccountLinkFixedAssets,
                           },
                         });
                         setEditingAccountId(null);

@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
 
-type Account = { id: string; code: string; name: string };
+type Account = { id: string; code: string; name: string; linkInventoryFifo?: boolean; linkFixedAssets?: boolean };
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
 type InventoryItem = { id: string; sku: string | null; name: string; uom: string };
@@ -70,6 +70,27 @@ type AssistJournalSuggestion = {
   missing: string[];
 };
 
+type AssistManualJson = {
+  entryDate?: string;
+  currency?: string;
+  fxRate?: number;
+  memo?: string;
+  lines: Array<{
+    accountCode: string;
+    description?: string;
+    costCenterCode?: string;
+    debitTxn: number;
+    creditTxn: number;
+  }>;
+  inventory?: {
+    linkLineNo?: number;
+    details?: Array<
+      | { moveType: "receipt"; itemKey: string; qty: number; unitCostTxn: number }
+      | { moveType: "shipment"; itemKey: string; qty: number }
+    >;
+  };
+};
+
 export default function Journal() {
   const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
@@ -87,7 +108,9 @@ export default function Journal() {
   const [err, setErr] = useState<string | null>(null);
 
   const [assistOpen, setAssistOpen] = useState(false);
+  const [assistMode, setAssistMode] = useState<"manual" | "auto">("manual");
   const [assistText, setAssistText] = useState("");
+  const [assistManualJson, setAssistManualJson] = useState("");
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
   const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
@@ -558,6 +581,221 @@ export default function Journal() {
     return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
+  function normalizeCode(input: unknown): string {
+    const s = typeof input === "string" ? input.trim() : "";
+    const m = s.match(/\d{3,6}/);
+    return m ? m[0] : s;
+  }
+
+  function buildAssistPrompt(): string {
+    const accountList = accounts.map((a) => `${a.code} ${a.name}`).join("\n");
+    const costCenterList = costCenters.map((c) => `${c.code} ${c.name}`).join("\n");
+    const itemList = inventoryItems.map((it) => `${it.sku ? it.sku + " " : ""}${it.name} [${it.uom}]`).join("\n");
+
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        entryDate: { type: "string" },
+        currency: { type: "string" },
+        fxRate: { type: "number" },
+        memo: { type: "string" },
+        lines: {
+          type: "array",
+          minItems: 2,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              accountCode: { type: "string" },
+              description: { type: "string" },
+              costCenterCode: { type: "string" },
+              debitTxn: { type: "number" },
+              creditTxn: { type: "number" },
+            },
+            required: ["accountCode", "debitTxn", "creditTxn"],
+          },
+        },
+        inventory: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            linkLineNo: { type: "integer" },
+            details: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  moveType: { type: "string", enum: ["receipt", "shipment"] },
+                  itemKey: { type: "string" },
+                  qty: { type: "number" },
+                  unitCostTxn: { type: "number" },
+                },
+                required: ["moveType", "itemKey", "qty"],
+              },
+            },
+          },
+        },
+      },
+      required: ["currency", "fxRate", "memo", "lines"],
+    } as const;
+
+    const rules =
+      "你是会计分录助手。根据用户输入生成分录建议。\n" +
+      "严格只输出 JSON，不要输出任何解释文字。\n" +
+      "金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；同一行不允许借贷同时为正。\n" +
+      "只允许使用提供的科目代码与成本中心代码。\n" +
+      "如需库存：inventory.details.itemKey 必须匹配提供的库存商品（优先 SKU，否则用商品名称）。\n" +
+      `entryDate 如用户未给出，使用 ${draftDate}。currency 如未给出，使用 ${baseCurrency}。fxRate 同币种为 1。`;
+
+    return (
+      rules +
+      "\n\n用户输入：" +
+      assistText.trim() +
+      "\n\n可用科目：\n" +
+      accountList +
+      "\n\n可用成本中心：\n" +
+      (costCenterList || "(无)") +
+      "\n\n可用库存商品：\n" +
+      (itemList || "(无)") +
+      "\n\n输出 JSON schema：\n" +
+      JSON.stringify(schema, null, 2)
+    );
+  }
+
+  function suggestionFromManualJson(obj: AssistManualJson): AssistJournalSuggestion {
+    const warnings: string[] = [];
+    const missing: string[] = [];
+
+    const currency = typeof obj.currency === "string" && obj.currency.trim() ? obj.currency.trim().toUpperCase().slice(0, 3) : baseCurrency;
+    const fxRate = Number(obj.fxRate) || 1;
+    const memo = typeof obj.memo === "string" ? obj.memo.trim() : "";
+    const entryDate = typeof obj.entryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(obj.entryDate) ? obj.entryDate : draftDate;
+
+    if (!Array.isArray(obj.lines) || obj.lines.length < 2) {
+      throw new Error("JSON 缺少 lines（至少 2 行）");
+    }
+
+    const accountIdByCode = new Map(accounts.map((a) => [normalizeCode(a.code), a.id]));
+    const accountNameByCode = new Map(accounts.map((a) => [normalizeCode(a.code), a.name]));
+    const ccIdByCode = new Map(costCenters.map((c) => [String(c.code).trim(), c.id]));
+
+    const itemIdByKey = new Map<string, string>();
+    for (const it of inventoryItems) {
+      if (it.sku) itemIdByKey.set(String(it.sku), String(it.id));
+      itemIdByKey.set(String(it.name), String(it.id));
+    }
+
+    const draftLinesOut = obj.lines.map((l) => {
+      const code = normalizeCode(l?.accountCode);
+      const accountId = accountIdByCode.get(code) || "";
+      if (!accountId) {
+        missing.push(`缺少科目 ${code}`);
+        warnings.push(`找不到科目代码 ${code}`);
+      }
+      const ccCode = typeof l?.costCenterCode === "string" && l.costCenterCode.trim() ? l.costCenterCode.trim() : "";
+      const costCenterId = ccCode ? ccIdByCode.get(ccCode) || null : null;
+      if (ccCode && !costCenterId) {
+        warnings.push(`找不到成本中心代码 ${ccCode}`);
+      }
+      const debitTxn = Math.max(0, Number((l as any)?.debitTxn) || 0);
+      const creditTxn = Math.max(0, Number((l as any)?.creditTxn) || 0);
+      if (debitTxn > 0 && creditTxn > 0) {
+        warnings.push(`科目 ${code} 同时有借贷，已保留原值`);
+      }
+      return {
+        accountCode: code,
+        accountId,
+        accountName: accountNameByCode.get(code) || "",
+        description: typeof (l as any)?.description === "string" && (l as any).description.trim() ? (l as any).description.trim() : undefined,
+        costCenterId,
+        debitTxn,
+        creditTxn,
+      };
+    });
+
+    if (draftLinesOut.some((l) => !l.accountId)) {
+      throw new Error("科目匹配失败：请使用系统里存在的科目代码");
+    }
+
+    const debit = draftLinesOut.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
+    const credit = draftLinesOut.reduce((s, l) => s + (Number(l.creditTxn) || 0), 0);
+    const diff = Math.round((debit - credit) * 100) / 100;
+    if (diff !== 0) {
+      throw new Error(`建议分录借贷不平衡：差额 ${diff.toFixed(2)}`);
+    }
+
+    let inventoryDetails: AssistJournalSuggestion["draft"]["inventoryDetails"] | undefined;
+    let inventoryLinkLineNo: number | undefined;
+    const inv = obj.inventory;
+    const detailsIn: any[] = Array.isArray(inv?.details) ? (inv as any).details : [];
+    if (detailsIn.length) {
+      const det = detailsIn
+        .map((d) => {
+          const moveType = d?.moveType === "shipment" ? "shipment" : d?.moveType === "receipt" ? "receipt" : null;
+          if (!moveType) return null;
+          const qty = Number(d?.qty) || 0;
+          if (qty <= 0) return null;
+          const key = typeof d?.itemKey === "string" ? d.itemKey.trim() : "";
+          const itemId = key ? itemIdByKey.get(key) || null : null;
+          if (!itemId) {
+            missing.push(`缺少库存商品 ${key || "(空)"}`);
+            warnings.push(`找不到库存商品 ${key || "(空)"}`);
+            return null;
+          }
+          if (moveType === "receipt") {
+            const unitCostTxn = Number(d?.unitCostTxn) || 0;
+            if (unitCostTxn <= 0) return null;
+            return { moveType, itemId, qty, unitCostTxn };
+          }
+          return { moveType, itemId, qty };
+        })
+        .filter(Boolean) as any[];
+
+      if (det.length) {
+        inventoryDetails = det as any;
+        const ll = Number((inv as any)?.linkLineNo);
+        inventoryLinkLineNo = Number.isFinite(ll) && ll > 0 ? Math.trunc(ll) : 1;
+      }
+    }
+
+    return {
+      draft: {
+        entryDate,
+        currency,
+        fxRate,
+        memo,
+        inventoryLinkLineNo,
+        inventoryDetails,
+        lines: draftLinesOut.map((l) => ({
+          accountId: l.accountId,
+          description: l.description,
+          costCenterId: l.costCenterId,
+          debitTxn: l.debitTxn,
+          creditTxn: l.creditTxn,
+        })),
+      },
+      preview: {
+        entryDate,
+        currency,
+        fxRate,
+        memo,
+        inventoryLinkLineNo,
+        inventoryDetails,
+        lines: draftLinesOut.map((l) => ({
+          accountCode: l.accountCode,
+          accountName: l.accountName,
+          description: l.description,
+          debitTxn: l.debitTxn,
+          creditTxn: l.creditTxn,
+        })),
+      },
+      warnings,
+      missing,
+    };
+  }
+
   async function runAssistSuggest() {
     const text = assistText.trim();
     if (!text) {
@@ -578,6 +816,35 @@ export default function Journal() {
       setAssistErr(e.message);
     } finally {
       setAssistBusy(false);
+    }
+  }
+
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setAssistErr(null);
+    } catch {
+      setAssistErr("复制失败：请手动全选复制。");
+    }
+  }
+
+  function previewManualJson() {
+    const raw = assistManualJson.trim();
+    if (!raw) {
+      setAssistErr("请粘贴 AI 返回的 JSON。");
+      return;
+    }
+    setAssistErr(null);
+    try {
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      const jsonText = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
+      const obj = JSON.parse(jsonText) as AssistManualJson;
+      const suggestion = suggestionFromManualJson(obj);
+      setAssistSuggestion(suggestion);
+    } catch (e: any) {
+      setAssistSuggestion(null);
+      setAssistErr(e?.message || "JSON 解析失败");
     }
   }
 
@@ -785,7 +1052,7 @@ export default function Journal() {
           {editingEntryId ? "编辑凭证" : postDraftId ? "新建凭证（从草稿过账）" : "新建凭证（直接过账）"}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <div>在任意分录行的借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
+          <div>在科目设置勾选“链接库存 FIFO”后，可在分录行借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
           <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
             查看库存 FIFO
           </a>
@@ -892,6 +1159,8 @@ export default function Journal() {
               setAssistErr(null);
               setAssistSuggestion(null);
               setAssistText((prev) => prev || "");
+              setAssistManualJson("");
+              setAssistMode("manual");
               setAssistOpen(true);
             }}
             type="button"
@@ -1033,62 +1302,75 @@ export default function Journal() {
                         step="0.01"
                         disabled={readOnly}
                       />
-                      <button
-                        className={
-                          "rounded-md border px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 " +
-                          (invLineIdx === idx && invMode === "receipt" && invDetails.length ? "border-blue-300 bg-blue-50 text-blue-700" : "border-zinc-200 bg-white")
-                        }
-                        onClick={() => {
-                          setErr(null);
-                          const acc = accounts.find((a) => a.id === l.accountId);
-                          const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("161")) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                            setInvLineIdx(null);
-                            const amount = Number(l.debitTxn) || 0;
-                            void openFixedAssetDisposeModal("accumDep", idx, amount);
-                            return;
-                          }
-                          if (code.startsWith("16") && !code.startsWith("161")) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                            setInvLineIdx(null);
-                            const amount = Number(l.debitTxn) || 0;
-                            openFixedAssetPurchaseModal(idx, amount);
-                            return;
-                          }
-                          if (code.startsWith("61")) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                            setInvLineIdx(null);
-                            const amount = Number(l.debitTxn) || 0;
-                            openFixedAssetDepreciateModal(idx, amount);
-                            return;
-                          }
+                      {(() => {
+                        const acc = accounts.find((a) => a.id === l.accountId);
+                        const code = acc?.code ? String(acc.code) : "";
+                        const linkFa = Boolean(acc?.linkFixedAssets);
+                        const linkInv = Boolean(acc?.linkInventoryFifo);
+                        const label =
+                          linkFa && code.startsWith("161")
+                            ? "处置"
+                            : linkFa && code.startsWith("16") && !code.startsWith("161")
+                              ? "购买"
+                              : linkFa && code.startsWith("61")
+                                ? "折旧"
+                                : linkInv
+                                  ? "库存"
+                                  : null;
+                        if (!label) return null;
 
-                          if (invLineIdx != null && invLineIdx !== idx) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                          }
-                          try {
-                            openInventoryDetailsModal(idx, "receipt", "debit");
-                          } catch (e: any) {
-                            setErr(e.message);
-                          }
-                        }}
-                        disabled={busy || readOnly}
-                        type="button"
-                      >
-                        {(() => {
-                          const acc = accounts.find((a) => a.id === l.accountId);
-                          const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("161")) return "处置";
-                          if (code.startsWith("16") && !code.startsWith("161")) return "购买";
-                          if (code.startsWith("61")) return "折旧";
-                          return "库存";
-                        })()}
-                      </button>
+                        return (
+                          <button
+                            className={
+                              "rounded-md border px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 " +
+                              (invLineIdx === idx && invMode === "receipt" && invDetails.length
+                                ? "border-blue-300 bg-blue-50 text-blue-700"
+                                : "border-zinc-200 bg-white")
+                            }
+                            onClick={() => {
+                              setErr(null);
+                              if (label === "处置") {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const amount = Number(l.debitTxn) || 0;
+                                void openFixedAssetDisposeModal("accumDep", idx, amount);
+                                return;
+                              }
+                              if (label === "购买") {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const amount = Number(l.debitTxn) || 0;
+                                openFixedAssetPurchaseModal(idx, amount);
+                                return;
+                              }
+                              if (label === "折旧") {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const amount = Number(l.debitTxn) || 0;
+                                openFixedAssetDepreciateModal(idx, amount);
+                                return;
+                              }
+
+                              if (invLineIdx != null && invLineIdx !== idx) {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                              }
+                              try {
+                                openInventoryDetailsModal(idx, "receipt", "debit");
+                              } catch (e: any) {
+                                setErr(e.message);
+                              }
+                            }}
+                            disabled={busy || readOnly}
+                            type="button"
+                          >
+                            {label}
+                          </button>
+                        );
+                      })()}
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">
@@ -1105,57 +1387,69 @@ export default function Journal() {
                         step="0.01"
                         disabled={readOnly}
                       />
-                      <button
-                        className={
-                          "rounded-md border px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 " +
-                          (invLineIdx === idx && invMode === "shipment" && invDetails.length ? "border-blue-300 bg-blue-50 text-blue-700" : "border-zinc-200 bg-white")
-                        }
-                        onClick={() => {
-                          setErr(null);
-                          const acc = accounts.find((a) => a.id === l.accountId);
-                          const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("16") || code.startsWith("161")) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                            setInvLineIdx(null);
-                            const amount = Number(l.creditTxn) || 0;
-                            if (code.startsWith("161")) {
-                              void openFixedAssetDisposeModal("accumDep", idx, amount);
-                            } else {
-                              void openFixedAssetDisposeModal("cost", idx, amount);
-                            }
-                            return;
-                          }
-                          if (code.startsWith("61")) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                            setInvLineIdx(null);
-                            const amount = Number(l.creditTxn) || 0;
-                            openFixedAssetDepreciateModal(idx, amount);
-                            return;
-                          }
+                      {(() => {
+                        const acc = accounts.find((a) => a.id === l.accountId);
+                        const code = acc?.code ? String(acc.code) : "";
+                        const linkFa = Boolean(acc?.linkFixedAssets);
+                        const linkInv = Boolean(acc?.linkInventoryFifo);
+                        const label =
+                          linkFa && (code.startsWith("16") || code.startsWith("161"))
+                            ? "处置"
+                            : linkFa && code.startsWith("61")
+                              ? "折旧"
+                              : linkInv
+                                ? "库存"
+                                : null;
+                        if (!label) return null;
 
-                          if (invLineIdx != null && invLineIdx !== idx) {
-                            setInvDetails([]);
-                            setInvConfirmed(null);
-                          }
-                          try {
-                            openInventoryDetailsModal(idx, "shipment", "credit");
-                          } catch (e: any) {
-                            setErr(e.message);
-                          }
-                        }}
-                        disabled={busy || readOnly}
-                        type="button"
-                      >
-                        {(() => {
-                          const acc = accounts.find((a) => a.id === l.accountId);
-                          const code = acc?.code ? String(acc.code) : "";
-                          if (code.startsWith("16") || code.startsWith("161")) return "处置";
-                          if (code.startsWith("61")) return "折旧";
-                          return "库存";
-                        })()}
-                      </button>
+                        return (
+                          <button
+                            className={
+                              "rounded-md border px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 " +
+                              (invLineIdx === idx && invMode === "shipment" && invDetails.length
+                                ? "border-blue-300 bg-blue-50 text-blue-700"
+                                : "border-zinc-200 bg-white")
+                            }
+                            onClick={() => {
+                              setErr(null);
+                              if (label === "处置") {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const amount = Number(l.creditTxn) || 0;
+                                if (code.startsWith("161")) {
+                                  void openFixedAssetDisposeModal("accumDep", idx, amount);
+                                } else {
+                                  void openFixedAssetDisposeModal("cost", idx, amount);
+                                }
+                                return;
+                              }
+                              if (label === "折旧") {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                                setInvLineIdx(null);
+                                const amount = Number(l.creditTxn) || 0;
+                                openFixedAssetDepreciateModal(idx, amount);
+                                return;
+                              }
+
+                              if (invLineIdx != null && invLineIdx !== idx) {
+                                setInvDetails([]);
+                                setInvConfirmed(null);
+                              }
+                              try {
+                                openInventoryDetailsModal(idx, "shipment", "credit");
+                              } catch (e: any) {
+                                setErr(e.message);
+                              }
+                            }}
+                            disabled={busy || readOnly}
+                            type="button"
+                          >
+                            {label}
+                          </button>
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>
@@ -1497,6 +1791,40 @@ export default function Journal() {
                 </button>
               </div>
 
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  className={
+                    assistMode === "manual"
+                      ? "rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white"
+                      : "rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+                  }
+                  onClick={() => {
+                    setAssistMode("manual");
+                    setAssistErr(null);
+                    setAssistSuggestion(null);
+                  }}
+                  type="button"
+                >
+                  免费手动
+                </button>
+                <button
+                  className={
+                    assistMode === "auto"
+                      ? "rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white"
+                      : "rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+                  }
+                  onClick={() => {
+                    setAssistMode("auto");
+                    setAssistErr(null);
+                    setAssistSuggestion(null);
+                  }}
+                  type="button"
+                >
+                  API 自动
+                </button>
+                <div className="text-xs text-zinc-500">免费手动：复制提示词到任意网页版 AI，粘贴 JSON 回填。</div>
+              </div>
+
               <div className="mt-3">
                 <label className="text-xs text-zinc-600">描述（例如：9/10 银行转账付房租 2000，含税/不含税…）</label>
                 <textarea
@@ -1507,19 +1835,64 @@ export default function Journal() {
                 />
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
-                  disabled={assistBusy || !assistText.trim()}
-                  onClick={() => {
-                    void runAssistSuggest();
-                  }}
-                  type="button"
-                >
-                  {assistBusy ? "生成中…" : "生成建议"}
-                </button>
-                <div className="text-xs text-zinc-500">生成后你可以修改，再手动点击“过账”。</div>
-              </div>
+              {assistMode === "manual" ? (
+                <>
+                  <div className="mt-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-zinc-600">提示词（复制到网页版 AI 对话）</div>
+                      <div className="flex items-center gap-2">
+                        <a className="text-sm text-blue-700 hover:underline" href="https://kimi.moonshot.cn" target="_blank" rel="noreferrer">
+                          打开 Kimi
+                        </a>
+                        <button
+                          className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+                          onClick={() => void copyToClipboard(buildAssistPrompt())}
+                          type="button"
+                        >
+                          复制提示词
+                        </button>
+                      </div>
+                    </div>
+                    <textarea className="mt-1 h-40 w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs" readOnly value={buildAssistPrompt()} />
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-xs text-zinc-600">AI 返回的 JSON（粘贴到这里）</div>
+                    <textarea
+                      className="mt-1 h-40 w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs"
+                      value={assistManualJson}
+                      onChange={(e) => setAssistManualJson(e.target.value)}
+                      placeholder="粘贴 AI 输出的 JSON（只能是 JSON，不要带解释文字）。"
+                    />
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                      disabled={!assistText.trim() || !assistManualJson.trim()}
+                      onClick={() => previewManualJson()}
+                      type="button"
+                    >
+                      解析并预览
+                    </button>
+                    <div className="text-xs text-zinc-500">预览无误后点击“应用到分录”，再由你手动过账。</div>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                    disabled={assistBusy || !assistText.trim()}
+                    onClick={() => {
+                      void runAssistSuggest();
+                    }}
+                    type="button"
+                  >
+                    {assistBusy ? "生成中…" : "生成建议"}
+                  </button>
+                  <div className="text-xs text-zinc-500">需要服务器配置 Key；生成后仍需你点击“应用到分录”再手动过账。</div>
+                </div>
+              )}
 
               {assistErr ? <div className="mt-3 text-sm text-red-700">{assistErr}</div> : null}
 

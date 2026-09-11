@@ -21,7 +21,15 @@ router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) =
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
-    SELECT id, code, name, type, normal_balance as "normalBalance", is_active as "isActive"
+    SELECT
+      id,
+      code,
+      name,
+      type,
+      normal_balance as "normalBalance",
+      is_active as "isActive",
+      link_inventory_fifo as "linkInventoryFifo",
+      link_fixed_assets as "linkFixedAssets"
     FROM accounts
     WHERE org_id = ${orgId}
     ORDER BY code ASC
@@ -39,6 +47,8 @@ router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) 
     name: z.string().min(1),
     type: z.enum(["asset", "liability", "equity", "income", "cogs", "expense"]),
     normalBalance: z.enum(["debit", "credit"]),
+    linkInventoryFifo: z.boolean().optional(),
+    linkFixedAssets: z.boolean().optional(),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -48,9 +58,25 @@ router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) 
   const sql = getSql();
   const row = (
     await sql`
-      INSERT INTO accounts (org_id, code, name, type, normal_balance)
-      VALUES (${orgId}, ${parsed.data.code.trim()}, ${parsed.data.name.trim()}, ${parsed.data.type}, ${parsed.data.normalBalance})
-      RETURNING id, code, name, type, normal_balance as "normalBalance", is_active as "isActive"
+      INSERT INTO accounts (org_id, code, name, type, normal_balance, link_inventory_fifo, link_fixed_assets)
+      VALUES (
+        ${orgId},
+        ${parsed.data.code.trim()},
+        ${parsed.data.name.trim()},
+        ${parsed.data.type},
+        ${parsed.data.normalBalance},
+        ${parsed.data.linkInventoryFifo ?? false},
+        ${parsed.data.linkFixedAssets ?? false}
+      )
+      RETURNING
+        id,
+        code,
+        name,
+        type,
+        normal_balance as "normalBalance",
+        is_active as "isActive",
+        link_inventory_fifo as "linkInventoryFifo",
+        link_fixed_assets as "linkFixedAssets"
     `
   )[0];
   res.status(200).json({ success: true, data: { account: row } });
@@ -67,6 +93,8 @@ router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Respo
     type: z.enum(["asset", "liability", "equity", "income", "cogs", "expense"]).optional(),
     normalBalance: z.enum(["debit", "credit"]).optional(),
     isActive: z.boolean().optional(),
+    linkInventoryFifo: z.boolean().optional(),
+    linkFixedAssets: z.boolean().optional(),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -86,6 +114,8 @@ router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Respo
   const type = parsed.data.type;
   const normalBalance = parsed.data.normalBalance;
   const isActive = parsed.data.isActive;
+  const linkInventoryFifo = parsed.data.linkInventoryFifo;
+  const linkFixedAssets = parsed.data.linkFixedAssets;
 
   try {
     const row = (
@@ -96,9 +126,19 @@ router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Respo
           name = COALESCE(${name ?? null}, name),
           type = COALESCE(${type ?? null}, type),
           normal_balance = COALESCE(${normalBalance ?? null}, normal_balance),
-          is_active = COALESCE(${isActive ?? null}, is_active)
+          is_active = COALESCE(${isActive ?? null}, is_active),
+          link_inventory_fifo = COALESCE(${linkInventoryFifo ?? null}, link_inventory_fifo),
+          link_fixed_assets = COALESCE(${linkFixedAssets ?? null}, link_fixed_assets)
         WHERE id = ${id} AND org_id = ${orgId}
-        RETURNING id, code, name, type, normal_balance as "normalBalance", is_active as "isActive"
+        RETURNING
+          id,
+          code,
+          name,
+          type,
+          normal_balance as "normalBalance",
+          is_active as "isActive",
+          link_inventory_fifo as "linkInventoryFifo",
+          link_fixed_assets as "linkFixedAssets"
       `
     )[0];
     if (!row) {

@@ -80,11 +80,15 @@ export async function ensureMigrated(): Promise<void> {
       type TEXT NOT NULL,
       normal_balance TEXT NOT NULL,
       is_active BOOLEAN NOT NULL DEFAULT true,
+      link_inventory_fifo BOOLEAN NOT NULL DEFAULT false,
+      link_fixed_assets BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (org_id, code)
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_accounts_org ON accounts(org_id)`;
+  await sql`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS link_inventory_fifo BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS link_fixed_assets BOOLEAN NOT NULL DEFAULT false`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS cost_centers (
