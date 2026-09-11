@@ -29,6 +29,7 @@ export default function Dashboard() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [memo, setMemo] = useState("");
+  const [extra, setExtra] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<null | { draft: any; preview?: any; warnings: string[]; missing: string[] }>(null);
@@ -112,6 +113,7 @@ export default function Dashboard() {
                       setBusy(true);
                       setErr(null);
                       setSuggestion(null);
+                      setExtra("");
                       try {
                         const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
                           method: "POST",
@@ -162,6 +164,81 @@ export default function Dashboard() {
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                     <div className="font-medium">{tr("需要补充设置", "Missing setup")}</div>
                     <div className="mt-1">{suggestion.missing.join("；")}</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          setErr(null);
+                          setSuggestion(null);
+                          try {
+                            const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
+                              method: "POST",
+                              json: { text, memo: memo.trim() || undefined },
+                            });
+                            setSuggestion(r.suggestion);
+                          } catch (e: any) {
+                            setErr(e.message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        type="button"
+                      >
+                        {tr("重新生成", "Regenerate")}
+                      </button>
+                      <button className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100" onClick={() => navigate("/settings")} type="button">
+                        {tr("去设置科目", "Go to settings")}
+                      </button>
+                      <button className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100" onClick={() => navigate("/fixed-assets")} type="button">
+                        {tr("去新增固定资产", "Add fixed asset")}
+                      </button>
+                      <button className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100" onClick={() => navigate("/inventory")} type="button">
+                        {tr("去新增库存商品", "Add inventory item")}
+                      </button>
+                    </div>
+                    <div className="mt-3">
+                      <label className="text-xs text-zinc-700">{tr("补充信息（可选）", "Extra info (optional)")}</label>
+                      <textarea
+                        className="mt-1 h-20 w-full resize-none rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                        value={extra}
+                        onChange={(e) => setExtra(e.target.value)}
+                        placeholder={tr(
+                          "例如：付款方式/供应商/是否含税/用途/借款或资本等。",
+                          "E.g., payment method/vendor/tax included/purpose/loan or capital.",
+                        )}
+                      />
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50"
+                        disabled={busy || !text.trim() || !extra.trim()}
+                        onClick={async () => {
+                          setBusy(true);
+                          setErr(null);
+                          setSuggestion(null);
+                          try {
+                            const merged = `${text.trim()}\n\n补充信息：${extra.trim()}`;
+                            const r = await api<{ suggestion: any }>("/api/assist/journal-suggest", {
+                              method: "POST",
+                              json: { text: merged, memo: memo.trim() || undefined },
+                            });
+                            setSuggestion(r.suggestion);
+                          } catch (e: any) {
+                            setErr(e.message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        type="button"
+                      >
+                        {tr("补充并重新生成", "Regenerate")}
+                      </button>
+                      <div className="text-xs text-amber-900/70">
+                        {tr("仅用于生成建议，不会自动过账。", "Used for suggestion only; won't auto-post.")}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 

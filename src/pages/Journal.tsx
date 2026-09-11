@@ -111,6 +111,7 @@ export default function Journal() {
   const [assistMode, setAssistMode] = useState<"manual" | "auto">("manual");
   const [assistText, setAssistText] = useState("");
   const [assistManualJson, setAssistManualJson] = useState("");
+  const [assistExtra, setAssistExtra] = useState("");
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
   const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
@@ -779,8 +780,8 @@ export default function Journal() {
     };
   }
 
-  async function runAssistSuggest() {
-    const text = assistText.trim();
+  async function runAssistSuggest(overrideText?: string) {
+    const text = (overrideText ?? assistText).trim();
     if (!text) {
       setAssistErr(tr("请输入要生成分录的描述。", "Please enter a description."));
       return;
@@ -1818,6 +1819,7 @@ export default function Journal() {
                     setAssistMode("manual");
                     setAssistErr(null);
                     setAssistSuggestion(null);
+                    setAssistExtra("");
                   }}
                   type="button"
                 >
@@ -1833,6 +1835,7 @@ export default function Journal() {
                     setAssistMode("auto");
                     setAssistErr(null);
                     setAssistSuggestion(null);
+                    setAssistExtra("");
                   }}
                   type="button"
                 >
@@ -1927,8 +1930,67 @@ export default function Journal() {
                 <div className="mt-4">
                   {assistSuggestion.missing?.length ? (
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                      {tr("缺少项：", "Missing: ")}
-                      {assistSuggestion.missing.join("；")}
+                      <div className="font-medium">{tr("需要补充信息/设置", "Missing info/setup")}</div>
+                      <div className="mt-1">{assistSuggestion.missing.join("；")}</div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100 disabled:opacity-50"
+                          disabled={assistBusy}
+                          onClick={() => void runAssistSuggest()}
+                          type="button"
+                        >
+                          {tr("重新生成", "Regenerate")}
+                        </button>
+                        <button
+                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
+                          onClick={() => navigate("/settings")}
+                          type="button"
+                        >
+                          {tr("去设置科目", "Go to settings")}
+                        </button>
+                        <button
+                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
+                          onClick={() => navigate("/fixed-assets")}
+                          type="button"
+                        >
+                          {tr("去新增固定资产", "Add fixed asset")}
+                        </button>
+                        <button
+                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
+                          onClick={() => navigate("/inventory")}
+                          type="button"
+                        >
+                          {tr("去新增库存商品", "Add inventory item")}
+                        </button>
+                      </div>
+                      <div className="mt-3">
+                        <label className="text-xs text-zinc-700">{tr("补充信息（可选）", "Extra info (optional)")}</label>
+                        <textarea
+                          className="mt-1 h-20 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                          value={assistExtra}
+                          onChange={(e) => setAssistExtra(e.target.value)}
+                          placeholder={tr(
+                            "例如：付款方式/供应商/是否含税/用途/借款或资本等。",
+                            "E.g., payment method/vendor/tax included/purpose/loan or capital.",
+                          )}
+                        />
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
+                          disabled={assistBusy || assistMode !== "auto" || !assistText.trim() || !assistExtra.trim()}
+                          onClick={() => {
+                            const merged = `${assistText.trim()}\n\n补充信息：${assistExtra.trim()}`;
+                            void runAssistSuggest(merged);
+                          }}
+                          type="button"
+                        >
+                          {tr("补充并重新生成", "Regenerate")}
+                        </button>
+                        <div className="text-xs text-amber-900/70">
+                          {tr("仅用于生成建议，不会自动过账。", "Used for suggestion only; won't auto-post.")}
+                        </div>
+                      </div>
                     </div>
                   ) : null}
                   {assistSuggestion.warnings?.length ? (
