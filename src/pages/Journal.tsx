@@ -471,7 +471,7 @@ export default function Journal() {
 
   async function openEditModal(entryId: string) {
     if (editingEntryId && editingEntryId !== entryId) {
-      setErr("请先保存或取消当前编辑。");
+      setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
       return;
     }
     setErr(null);
@@ -482,7 +482,7 @@ export default function Journal() {
 
   async function loadDraftForPosting(entryId: string) {
     if (editingEntryId && editingEntryId !== entryId) {
-      setErr("请先保存或取消当前编辑。");
+      setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
       return;
     }
     setBusy(true);
@@ -490,7 +490,7 @@ export default function Journal() {
     try {
       const d = await api<EntryDetail>(`/api/journals/${entryId}`);
       if (d.entry.status !== "draft") {
-        throw new Error("仅支持对草稿凭证使用“新建”");
+        throw new Error(tr("仅支持对草稿凭证使用“新建”", "Only draft journals are supported for this action."));
       }
       setPostDraftId(entryId);
       setEditingEntryId(null);
@@ -617,24 +617,32 @@ export default function Journal() {
     } as const;
 
     const rules =
-      "你是会计分录助手。根据用户输入生成分录建议。\n" +
-      "严格只输出 JSON，不要输出任何解释文字。\n" +
-      "金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；同一行不允许借贷同时为正。\n" +
-      "只允许使用提供的科目代码与成本中心代码。\n" +
-      "如需库存：inventory.details.itemKey 必须匹配提供的库存商品（优先 SKU，否则用商品名称）。\n" +
-      `entryDate 如用户未给出，使用 ${draftDate}。currency 如未给出，使用 ${baseCurrency}。fxRate 同币种为 1。`;
+      tr(
+        "你是会计分录助手。根据用户输入生成分录建议。\n" +
+          "严格只输出 JSON，不要输出任何解释文字。\n" +
+          "金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；同一行不允许借贷同时为正。\n" +
+          "只允许使用提供的科目代码与成本中心代码。\n" +
+          "如需库存：inventory.details.itemKey 必须匹配提供的库存商品（优先 SKU，否则用商品名称）。\n" +
+          `entryDate 如用户未给出，使用 ${draftDate}。currency 如未给出，使用 ${baseCurrency}。fxRate 同币种为 1。`,
+        "You are an accounting journal assistant. Generate a journal suggestion based on the user input.\n" +
+          "Output JSON only, without any extra text.\n" +
+          "Debits and credits must balance. debitTxn/creditTxn are transaction-currency amounts; do not put positive debit and credit on the same line.\n" +
+          "Use only the provided account codes and cost center codes.\n" +
+          "If inventory is needed: inventory.details.itemKey must match an existing item (prefer SKU, otherwise item name).\n" +
+          `If entryDate is not provided, use ${draftDate}. If currency is not provided, use ${baseCurrency}. fxRate is 1 when currency equals base currency.`,
+      );
 
     return (
       rules +
-      "\n\n用户输入：" +
+      tr("\n\n用户输入：", "\n\nUser input: ") +
       assistText.trim() +
-      "\n\n可用科目：\n" +
+      tr("\n\n可用科目：\n", "\n\nAvailable accounts:\n") +
       accountList +
-      "\n\n可用成本中心：\n" +
-      (costCenterList || "(无)") +
-      "\n\n可用库存商品：\n" +
-      (itemList || "(无)") +
-      "\n\n输出 JSON schema：\n" +
+      tr("\n\n可用成本中心：\n", "\n\nAvailable cost centers:\n") +
+      (costCenterList || tr("(无)", "(None)")) +
+      tr("\n\n可用库存商品：\n", "\n\nAvailable inventory items:\n") +
+      (itemList || tr("(无)", "(None)")) +
+      tr("\n\n输出 JSON schema：\n", "\n\nOutput JSON schema:\n") +
       JSON.stringify(schema, null, 2)
     );
   }
@@ -649,7 +657,7 @@ export default function Journal() {
     const entryDate = typeof obj.entryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(obj.entryDate) ? obj.entryDate : draftDate;
 
     if (!Array.isArray(obj.lines) || obj.lines.length < 2) {
-      throw new Error("JSON 缺少 lines（至少 2 行）");
+      throw new Error(tr("JSON 缺少 lines（至少 2 行）", "JSON is missing lines (at least 2 lines)."));
     }
 
     const accountIdByCode = new Map(accounts.map((a) => [normalizeCode(a.code), a.id]));
@@ -691,14 +699,14 @@ export default function Journal() {
     });
 
     if (draftLinesOut.some((l) => !l.accountId)) {
-      throw new Error("科目匹配失败：请使用系统里存在的科目代码");
+      throw new Error(tr("科目匹配失败：请使用系统里存在的科目代码", "Account mapping failed: please use existing account codes."));
     }
 
     const debit = draftLinesOut.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
     const credit = draftLinesOut.reduce((s, l) => s + (Number(l.creditTxn) || 0), 0);
     const diff = Math.round((debit - credit) * 100) / 100;
     if (diff !== 0) {
-      throw new Error(`建议分录借贷不平衡：差额 ${diff.toFixed(2)}`);
+      throw new Error(tr(`建议分录借贷不平衡：差额 ${diff.toFixed(2)}`, `Suggested journal is not balanced: diff ${diff.toFixed(2)}`));
     }
 
     let inventoryDetails: AssistJournalSuggestion["draft"]["inventoryDetails"] | undefined;
@@ -774,7 +782,7 @@ export default function Journal() {
   async function runAssistSuggest() {
     const text = assistText.trim();
     if (!text) {
-      setAssistErr("请输入要生成分录的描述。");
+      setAssistErr(tr("请输入要生成分录的描述。", "Please enter a description."));
       return;
     }
     setAssistBusy(true);
@@ -799,14 +807,14 @@ export default function Journal() {
       await navigator.clipboard.writeText(text);
       setAssistErr(null);
     } catch {
-      setAssistErr("复制失败：请手动全选复制。");
+      setAssistErr(tr("复制失败：请手动全选复制。", "Copy failed. Please select all and copy manually."));
     }
   }
 
   function previewManualJson() {
     const raw = assistManualJson.trim();
     if (!raw) {
-      setAssistErr("请粘贴 AI 返回的 JSON。");
+      setAssistErr(tr("请粘贴 AI 返回的 JSON。", "Please paste the JSON returned by the AI."));
       return;
     }
     setAssistErr(null);
@@ -819,7 +827,7 @@ export default function Journal() {
       setAssistSuggestion(suggestion);
     } catch (e: any) {
       setAssistSuggestion(null);
-      setAssistErr(e?.message || "JSON 解析失败");
+      setAssistErr(e?.message || tr("JSON 解析失败", "Failed to parse JSON"));
     }
   }
 
@@ -978,7 +986,7 @@ export default function Journal() {
     );
     const fx = r.fxRates?.[0]?.fxRate;
     if (!fx) {
-      throw new Error("未找到该日期的历史汇率，请到设置里新增 FX Rate");
+      throw new Error(tr("未找到该日期的历史汇率，请到设置里新增 FX Rate", "No FX rate found for this date. Please add it in Settings."));
     }
     setDraftFx(Number(fx));
   }
@@ -1024,17 +1032,26 @@ export default function Journal() {
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold">
-          {editingEntryId ? "编辑凭证" : postDraftId ? "新建凭证（从草稿过账）" : "新建凭证（直接过账）"}
+          {editingEntryId
+            ? tr("编辑凭证", "Edit journal")
+            : postDraftId
+              ? tr("新建凭证（从草稿过账）", "New journal (post from draft)")
+              : tr("新建凭证（直接过账）", "New journal (post directly)")}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <div>在科目设置勾选“链接库存 FIFO”后，可在分录行借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。</div>
+          <div>
+            {tr(
+              "在科目设置勾选“链接库存 FIFO”后，可在分录行借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。",
+              "After enabling 'Link inventory FIFO' in Chart of Accounts, you can click 'Inventory' on a debit/credit line to enter receipt/shipment details. FIFO cost and stock qty are updated only after posting.",
+            )}
+          </div>
           <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
-            查看库存 FIFO
+            {tr("查看库存 FIFO", "Open Inventory FIFO")}
           </a>
         </div>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="w-44">
-            <label className="text-xs text-zinc-600">日期</label>
+            <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
               value={draftDate}
@@ -1043,7 +1060,7 @@ export default function Journal() {
             />
           </div>
           <div className="w-44">
-            <label className="text-xs text-zinc-600">分录号</label>
+            <label className="text-xs text-zinc-600">{tr("分录号", "Voucher No")}</label>
             <input
               className={
                 "mt-1 w-full rounded-md border px-3 py-2 text-sm " +
@@ -1054,12 +1071,12 @@ export default function Journal() {
                 setVoucherTouched(true);
                 setDraftVoucherNo(e.target.value.toUpperCase());
               }}
-              placeholder="自动生成，可修改"
+              placeholder={tr("自动生成，可修改", "Auto-generated, editable")}
               disabled={readOnly}
             />
           </div>
           <div className="w-28">
-            <label className="text-xs text-zinc-600">币种</label>
+            <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
             <select
               className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
               value={draftCurrency}
@@ -1074,7 +1091,7 @@ export default function Journal() {
             </select>
           </div>
           <div className="w-40">
-            <label className="text-xs text-zinc-600">汇率</label>
+            <label className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
               value={String(draftFx)}
@@ -1097,10 +1114,10 @@ export default function Journal() {
             }}
             type="button"
           >
-            用历史
+            {tr("用历史", "Use history")}
           </button>
           <div className="min-w-[260px] flex-1">
-            <label className="text-xs text-zinc-600">备注</label>
+            <label className="text-xs text-zinc-600">{tr("备注", "Memo")}</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
               value={draftMemo}
@@ -1140,14 +1157,14 @@ export default function Journal() {
             }}
             type="button"
           >
-            对话生成分录
+            {tr("对话生成分录", "AI assist")}
           </button>
-          <div className="text-xs text-zinc-500">仅填入草稿，需你确认后再点“过账”。</div>
+          <div className="text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
 
           {recurringEnabled ? (
             <>
               <div className="w-56">
-                <label className="text-xs text-zinc-600">开始日期</label>
+                <label className="text-xs text-zinc-600">{tr("开始日期", "Start date")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                   value={recurringStartDate || draftDate}
@@ -1161,7 +1178,7 @@ export default function Journal() {
                 />
               </div>
               <div className="w-48">
-                <label className="text-xs text-zinc-600">每隔（月）</label>
+                <label className="text-xs text-zinc-600">{tr("每隔（月）", "Every (months)")}</label>
                 <select
                   className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                   value={recurringEveryMonths}
@@ -1176,7 +1193,7 @@ export default function Journal() {
                 </select>
               </div>
               <div className="w-48">
-                <label className="text-xs text-zinc-600">次数</label>
+                <label className="text-xs text-zinc-600">{tr("次数", "Count")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                   value={recurringCount}
@@ -1188,21 +1205,26 @@ export default function Journal() {
                   disabled={readOnly}
                 />
               </div>
-              <div className="text-xs text-zinc-500">从开始日期生成 {recurringCount} 张凭证</div>
+              <div className="text-xs text-zinc-500">{tr(`从开始日期生成 ${recurringCount} 张凭证`, `Generate ${recurringCount} journals starting from the start date`)}</div>
             </>
           ) : null}
         </div>
-        <div className="mt-1 text-xs text-zinc-500">基准币 {baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。</div>
+        <div className="mt-1 text-xs text-zinc-500">
+          {tr(
+            `基准币 ${baseCurrency}：同币种时汇率为 1；其他币种可从设置里的 FX Rates 维护并回填。`,
+            `Base currency ${baseCurrency}: FX rate is 1 when same currency; maintain FX Rates in Settings for other currencies.`,
+          )}
+        </div>
 
         <div className="mt-4 overflow-auto rounded-lg border border-zinc-100">
           <table className="w-full text-sm">
             <thead className="bg-zinc-50 text-xs text-zinc-600">
               <tr>
-                <th className="px-3 py-2 text-left">科目</th>
-                <th className="px-3 py-2 text-left">摘要</th>
+                <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
+                <th className="px-3 py-2 text-left">{tr("摘要", "Description")}</th>
                 <th className="px-3 py-2 text-left">Cost Center</th>
-                <th className="px-3 py-2 text-right">借</th>
-                <th className="px-3 py-2 text-right">贷</th>
+                <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
+                <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1223,8 +1245,8 @@ export default function Journal() {
                       }}
                       disabled={readOnly}
                     >
-                      <option value="__new_account__">+ 新增科目</option>
-                      <option value="">请选择</option>
+                      <option value="__new_account__">{tr("+ 新增科目", "+ New account")}</option>
+                      <option value="">{tr("请选择", "Select")}</option>
                       {accounts.map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.code} {a.name}
@@ -1255,7 +1277,7 @@ export default function Journal() {
                       }}
                       disabled={readOnly}
                     >
-                      <option value="">(无)</option>
+                      <option value="">{tr("(无)", "(None)")}</option>
                       {costCenters.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.code} {c.name}
@@ -1446,7 +1468,8 @@ export default function Journal() {
 
         <div className="mt-4 flex items-center justify-between">
           <div className={"text-sm " + (txnDiff === 0 ? "text-green-700" : "text-amber-700")}>
-            差额：{txnDiff.toFixed(2)} {draftCurrency}
+            {tr("差额：", "Diff: ")}
+            {txnDiff.toFixed(2)} {draftCurrency}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1455,7 +1478,7 @@ export default function Journal() {
               disabled={busy || readOnly}
               type="button"
             >
-              增加行
+              {tr("增加行", "Add line")}
             </button>
             {editingEntryId ? (
               <button
@@ -1467,7 +1490,7 @@ export default function Journal() {
                 }}
                 type="button"
               >
-                取消编辑
+                {tr("取消编辑", "Cancel")}
               </button>
             ) : null}
             <button
@@ -1479,7 +1502,7 @@ export default function Journal() {
               }}
               type="button"
             >
-              清空
+              {tr("清空", "Clear")}
             </button>
             <button
               className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -1490,7 +1513,7 @@ export default function Journal() {
                   try {
                     const v = await refreshNextVoucherNo(true);
                     if (!String(v || "").trim()) {
-                      setErr("分录号不能为空。");
+                      setErr(tr("分录号不能为空。", "Voucher number cannot be empty."));
                       return;
                     }
                   } catch (e: any) {
@@ -1500,18 +1523,18 @@ export default function Journal() {
                 }
                 if (invDetails.length) {
                   if (invLineIdx == null) {
-                    setErr("请先在借方或贷方点击“库存”并确认明细。");
+                    setErr(tr("请先在借方或贷方点击“库存”并确认明细。", "Please click 'Inventory' on a debit/credit line and confirm details first."));
                     return;
                   }
                   const line = draftLines[invLineIdx];
                   if (!line) {
-                    setErr("库存关联的分录行无效，请重新填写库存明细。");
+                    setErr(tr("库存关联的分录行无效，请重新填写库存明细。", "Invalid linked journal line for inventory. Please re-enter details."));
                     return;
                   }
                   const debit = Number(line.debitTxn) || 0;
                   const credit = Number(line.creditTxn) || 0;
                   if (debit > 0 && credit > 0) {
-                    setErr("库存关联行不能同时有借和贷。");
+                    setErr(tr("库存关联行不能同时有借和贷。", "The inventory-linked line cannot have both debit and credit."));
                     return;
                   }
                   const existingTxn = debit > 0 ? debit : credit > 0 ? credit : 0;
@@ -1521,7 +1544,7 @@ export default function Journal() {
                   const computedShipmentBase = invConfirmed?.quoteBase ?? 0;
 
                   if (!invConfirmed || invConfirmed.mode !== invMode) {
-                    setErr("请先在库存明细弹窗点击“确认”。");
+                    setErr(tr("请先在库存明细弹窗点击“确认”。", "Please click 'Confirm' in the inventory details modal first."));
                     try {
                       openInventoryDetailsModal(invLineIdx, invMode, invDefaultSide);
                     } catch {
@@ -1533,7 +1556,7 @@ export default function Journal() {
                   if (invMode === "receipt") {
                     if (existingTxn > 0) {
                       if (Math.round(existingTxn * 100) / 100 !== Math.round(computedReceiptTxn * 100) / 100) {
-                        setErr("库存入库明细合计必须与该行金额一致。");
+                        setErr(tr("库存入库明细合计必须与该行金额一致。", "Receipt details total must match the line amount."));
                         try {
                           openInventoryDetailsModal(invLineIdx, "receipt", invDefaultSide);
                         } catch {
@@ -1692,7 +1715,7 @@ export default function Journal() {
               }}
               type="button"
             >
-              {editingEntryId ? "保存" : "过账"}
+              {editingEntryId ? tr("保存", "Save") : tr("过账", "Post")}
             </button>
           </div>
         </div>
@@ -1707,7 +1730,12 @@ export default function Journal() {
         {editingEntryId ? (
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm text-zinc-700">编辑模式已开启：可在列表点击“编辑”弹出表单修改并保存。</div>
+              <div className="text-sm text-zinc-700">
+                {tr(
+                  "编辑模式已开启：可在列表点击“编辑”弹出表单修改并保存。",
+                  "Edit mode is active: click 'Edit' in the list to modify and save.",
+                )}
+              </div>
               <button
                 className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                 disabled={busy}
@@ -1717,7 +1745,7 @@ export default function Journal() {
                 }}
                 type="button"
               >
-                取消编辑
+                {tr("取消编辑", "Cancel")}
               </button>
             </div>
           </div>
@@ -1729,7 +1757,9 @@ export default function Journal() {
           <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 p-4">
             <div className="w-full max-w-5xl rounded-xl bg-white p-4 shadow-xl">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">编辑凭证 {draftVoucherNo || "-"}</div>
+                <div className="text-sm font-semibold">
+                  {tr("编辑凭证", "Edit journal")} {draftVoucherNo || "-"}
+                </div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={busy}
@@ -1739,7 +1769,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  关闭
+                  {tr("关闭", "Close")}
                 </button>
               </div>
               <div className="mt-3">
@@ -1764,7 +1794,7 @@ export default function Journal() {
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">对话生成分录（不会自动过账）</div>
+                <div className="text-sm font-semibold">{tr("对话生成分录（不会自动过账）", "AI assist (won't auto-post)")}</div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                   disabled={assistBusy}
@@ -1773,7 +1803,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  关闭
+                  {tr("关闭", "Close")}
                 </button>
               </div>
 
@@ -1791,7 +1821,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  免费手动
+                  {tr("免费手动", "Manual (free)")}
                 </button>
                 <button
                   className={
@@ -1806,18 +1836,22 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  API 自动
+                  {tr("API 自动", "API")}
                 </button>
-                <div className="text-xs text-zinc-500">免费手动：复制提示词到任意网页版 AI，粘贴 JSON 回填。</div>
+                <div className="text-xs text-zinc-500">
+                  {tr("免费手动：复制提示词到任意网页版 AI，粘贴 JSON 回填。", "Manual: copy prompt into any web AI, then paste JSON back here.")}
+                </div>
               </div>
 
               <div className="mt-3">
-                <label className="text-xs text-zinc-600">描述（例如：9/10 银行转账付房租 2000，含税/不含税…）</label>
+                <label className="text-xs text-zinc-600">
+                  {tr("描述（例如：9/10 银行转账付房租 2000，含税/不含税…）", "Description (e.g., 9/10 bank transfer for rent 2000, tax included/excluded...)")}
+                </label>
                 <textarea
                   className="mt-1 h-28 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                   value={assistText}
                   onChange={(e) => setAssistText(e.target.value)}
-                  placeholder="用一句话描述业务，系统会生成借贷平衡的分录草稿。"
+                  placeholder={tr("用一句话描述业务，系统会生成借贷平衡的分录草稿。", "Describe the transaction in one sentence; a balanced draft will be generated.")}
                 />
               </div>
 
@@ -1825,17 +1859,17 @@ export default function Journal() {
                 <>
                   <div className="mt-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-zinc-600">提示词（复制到网页版 AI 对话）</div>
+                      <div className="text-xs text-zinc-600">{tr("提示词（复制到网页版 AI 对话）", "Prompt (copy into a web AI chat)")}</div>
                       <div className="flex items-center gap-2">
                         <a className="text-sm text-blue-700 hover:underline" href="https://kimi.moonshot.cn" target="_blank" rel="noreferrer">
-                          打开 Kimi
+                          {tr("打开 Kimi", "Open Kimi")}
                         </a>
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
                           onClick={() => void copyToClipboard(buildAssistPrompt())}
                           type="button"
                         >
-                          复制提示词
+                          {tr("复制提示词", "Copy prompt")}
                         </button>
                       </div>
                     </div>
@@ -1843,12 +1877,12 @@ export default function Journal() {
                   </div>
 
                   <div className="mt-3">
-                    <div className="text-xs text-zinc-600">AI 返回的 JSON（粘贴到这里）</div>
+                    <div className="text-xs text-zinc-600">{tr("AI 返回的 JSON（粘贴到这里）", "AI JSON output (paste here)")}</div>
                     <textarea
                       className="mt-1 h-40 w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs"
                       value={assistManualJson}
                       onChange={(e) => setAssistManualJson(e.target.value)}
-                      placeholder="粘贴 AI 输出的 JSON（只能是 JSON，不要带解释文字）。"
+                      placeholder={tr("粘贴 AI 输出的 JSON（只能是 JSON，不要带解释文字）。", "Paste AI JSON output (JSON only, no extra text).")}
                     />
                   </div>
 
@@ -1859,9 +1893,11 @@ export default function Journal() {
                       onClick={() => previewManualJson()}
                       type="button"
                     >
-                      解析并预览
+                      {tr("解析并预览", "Parse & preview")}
                     </button>
-                    <div className="text-xs text-zinc-500">预览无误后点击“应用到分录”，再由你手动过账。</div>
+                    <div className="text-xs text-zinc-500">
+                      {tr("预览无误后点击“应用到分录”，再由你手动过账。", "After previewing, click 'Apply to journal', then post manually.")}
+                    </div>
                   </div>
                 </>
               ) : (
@@ -1876,7 +1912,12 @@ export default function Journal() {
                   >
                     {assistBusy ? "生成中…" : "生成建议"}
                   </button>
-                  <div className="text-xs text-zinc-500">需要服务器配置 Key；生成后仍需你点击“应用到分录”再手动过账。</div>
+                  <div className="text-xs text-zinc-500">
+                    {tr(
+                      "需要服务器配置 Key；生成后仍需你点击“应用到分录”再手动过账。",
+                      "Server API key required. After generating, you still need to click 'Apply to journal' and post manually.",
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1886,37 +1927,42 @@ export default function Journal() {
                 <div className="mt-4">
                   {assistSuggestion.missing?.length ? (
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                      缺少项：{assistSuggestion.missing.join("；")}
+                      {tr("缺少项：", "Missing: ")}
+                      {assistSuggestion.missing.join("；")}
                     </div>
                   ) : null}
                   {assistSuggestion.warnings?.length ? (
                     <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                      提示：{assistSuggestion.warnings.join("；")}
+                      {tr("提示：", "Warnings: ")}
+                      {assistSuggestion.warnings.join("；")}
                     </div>
                   ) : null}
 
                   <div className="mt-3 grid gap-3 md:grid-cols-4">
                     <div>
-                      <div className="text-xs text-zinc-600">日期</div>
+                      <div className="text-xs text-zinc-600">{tr("日期", "Date")}</div>
                       <div className="mt-1 text-sm">{assistSuggestion.preview.entryDate}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-zinc-600">币种</div>
+                      <div className="text-xs text-zinc-600">{tr("币种", "Currency")}</div>
                       <div className="mt-1 text-sm">{assistSuggestion.preview.currency}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-zinc-600">汇率</div>
+                      <div className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</div>
                       <div className="mt-1 text-sm">{String(assistSuggestion.preview.fxRate)}</div>
                     </div>
                     <div className="md:col-span-1">
-                      <div className="text-xs text-zinc-600">备注</div>
+                      <div className="text-xs text-zinc-600">{tr("备注", "Memo")}</div>
                       <div className="mt-1 text-sm">{assistSuggestion.preview.memo || ""}</div>
                     </div>
                   </div>
 
                   {assistSuggestion.preview.inventoryDetails?.length ? (
                     <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
-                      库存明细：行 {assistSuggestion.preview.inventoryLinkLineNo || 1}，{assistSuggestion.preview.inventoryDetails[0].moveType}，{assistSuggestion.preview.inventoryDetails.length} 条
+                      {tr("库存明细：", "Inventory details: ")}
+                      {tr("行", "line")}
+                      {" "}
+                      {assistSuggestion.preview.inventoryLinkLineNo || 1}，{assistSuggestion.preview.inventoryDetails[0].moveType}，{assistSuggestion.preview.inventoryDetails.length} {tr("条", "items")}
                     </div>
                   ) : null}
 
@@ -1924,10 +1970,10 @@ export default function Journal() {
                     <table className="w-full text-sm">
                       <thead className="bg-zinc-50 text-xs text-zinc-600">
                         <tr>
-                          <th className="px-3 py-2 text-left">科目</th>
-                          <th className="px-3 py-2 text-left">摘要</th>
-                          <th className="px-3 py-2 text-right">借</th>
-                          <th className="px-3 py-2 text-right">贷</th>
+                          <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
+                          <th className="px-3 py-2 text-left">{tr("摘要", "Description")}</th>
+                          <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
+                          <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1948,9 +1994,9 @@ export default function Journal() {
                       <table className="w-full text-sm">
                         <thead className="bg-zinc-50 text-xs text-zinc-600">
                           <tr>
-                            <th className="px-3 py-2 text-left">库存项目</th>
-                            <th className="px-3 py-2 text-right">数量</th>
-                            <th className="px-3 py-2 text-right">单价（交易币）</th>
+                            <th className="px-3 py-2 text-left">{tr("库存项目", "Item")}</th>
+                            <th className="px-3 py-2 text-right">{tr("数量", "Qty")}</th>
+                            <th className="px-3 py-2 text-right">{tr("单价（交易币）", "Unit (txn)")}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1976,7 +2022,7 @@ export default function Journal() {
                       }}
                       type="button"
                     >
-                      重新生成
+                      {tr("重新生成", "Reset")}
                     </button>
                     <button
                       className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
@@ -1987,7 +2033,7 @@ export default function Journal() {
                       }}
                       type="button"
                     >
-                      应用到分录
+                      {tr("应用到分录", "Apply to journal")}
                     </button>
                   </div>
                 </div>
@@ -2011,7 +2057,7 @@ export default function Journal() {
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">新增资产（随分录过账生成记录）</div>
+                <div className="text-sm font-semibold">{tr("新增资产（随分录过账生成记录）", "New asset (created when posting)")}</div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={busy}
@@ -2021,19 +2067,19 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  关闭
+                  {tr("关闭", "Close")}
                 </button>
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div>
-                  <label className="text-xs text-zinc-600">大类</label>
+                  <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
                   <select
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                     value={faPurchaseForm.category}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, category: e.target.value })}
                   >
-                    <option value="">请选择</option>
+                    <option value="">{tr("请选择", "Select")}</option>
                     <option value="Machinery and Equipment">Machinery and Equipment</option>
                     <option value="Vehicles">Vehicles</option>
                     <option value="Computer">Computer</option>
@@ -2043,17 +2089,21 @@ export default function Journal() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">固定资产编号</label>
+                  <label className="text-xs text-zinc-600">{tr("固定资产编号", "Asset No")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.assetNo}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, assetNo: e.target.value.toUpperCase() })}
-                    placeholder={faPurchaseForm.category ? "例如：FA-COM00001" : "请先选择大类"}
+                    placeholder={
+                      faPurchaseForm.category
+                        ? tr("例如：FA-COM00001", "e.g., FA-COM00001")
+                        : tr("请先选择大类", "Please select a category first")
+                    }
                   />
-                  <div className="mt-1 text-xs text-zinc-500">留空则系统自动生成（按大类递增）。</div>
+                  <div className="mt-1 text-xs text-zinc-500">{tr("留空则系统自动生成（按大类递增）。", "Leave empty to auto-generate (increment by category).")}</div>
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">名称</label>
+                  <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.name}
@@ -2061,7 +2111,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">购置日</label>
+                  <label className="text-xs text-zinc-600">{tr("购置日", "Acquisition date")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.acquisitionDate}
@@ -2069,7 +2119,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">金额（交易币）</label>
+                  <label className="text-xs text-zinc-600">{tr("金额（交易币）", "Amount (txn currency)")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.costTxn}
@@ -2079,7 +2129,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">币种</label>
+                  <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.currency}
@@ -2088,7 +2138,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">汇率</label>
+                  <label className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.fxRate}
@@ -2098,7 +2148,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">折旧月数</label>
+                  <label className="text-xs text-zinc-600">{tr("折旧月数", "Useful life (months)")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.usefulLifeMonths}
@@ -2107,7 +2157,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">残值（本位）</label>
+                  <label className="text-xs text-zinc-600">{tr("残值（本位）", "Salvage (base)")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.salvageBase}
@@ -2117,13 +2167,13 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">贷方科目（现金/应付）</label>
+                  <label className="text-xs text-zinc-600">{tr("贷方科目（现金/应付）", "Credit account (Cash/AP)")}</label>
                   <select
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                     value={faPurchaseForm.offsetAccountId}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, offsetAccountId: e.target.value })}
                   >
-                    <option value="">请选择</option>
+                    <option value="">{tr("请选择", "Select")}</option>
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.code} {a.name}
@@ -2132,7 +2182,7 @@ export default function Journal() {
                   </select>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">备注</label>
+                  <label className="text-xs text-zinc-600">{tr("备注", "Memo")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.memo}
@@ -2151,7 +2201,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  取消
+                  {tr("取消", "Cancel")}
                 </button>
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -2168,13 +2218,13 @@ export default function Journal() {
                     setErr(null);
                     const lineIdx = faPurchaseLineIdx;
                     if (lineIdx == null) {
-                      setErr("保存失败：未关联分录行");
+                      setErr(tr("保存失败：未关联分录行", "Save failed: not linked to a journal line."));
                       return;
                     }
 
                     const costTxn = Number(faPurchaseForm.costTxn) || 0;
                     if (!(costTxn > 0)) {
-                      setErr("金额必须大于 0");
+                      setErr(tr("金额必须大于 0", "Amount must be greater than 0."));
                       return;
                     }
 
@@ -2203,7 +2253,7 @@ export default function Journal() {
                       next[lineIdx] = {
                         category: String(faPurchaseForm.category || "").trim(),
                         assetNo: String(faPurchaseForm.assetNo || "").trim().toUpperCase(),
-                        name: faPurchaseForm.name.trim() || "(未命名资产)",
+                        name: faPurchaseForm.name.trim() || tr("(未命名资产)", "(Unnamed asset)"),
                         acquisitionDate: faPurchaseForm.acquisitionDate,
                         usefulLifeMonths: Number(faPurchaseForm.usefulLifeMonths) || 0,
                         salvageBase: Number(faPurchaseForm.salvageBase) || 0,
@@ -2215,7 +2265,7 @@ export default function Journal() {
                     const next = [...draftLines];
                     const debitLine = next[lineIdx];
                     if (!debitLine) {
-                      setErr("保存失败：分录行不存在");
+                      setErr(tr("保存失败：分录行不存在", "Save failed: journal line not found."));
                       return;
                     }
                     next[lineIdx] = {
@@ -2253,7 +2303,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  保存草稿
+                  {tr("保存草稿", "Save draft")}
                 </button>
               </div>
             </div>
@@ -2275,7 +2325,7 @@ export default function Journal() {
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">折旧（选择资产）</div>
+                <div className="text-sm font-semibold">{tr("折旧（选择资产）", "Depreciation")}</div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={busy}
@@ -2285,19 +2335,19 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  关闭
+                  {tr("关闭", "Close")}
                 </button>
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">折旧资产</label>
+                  <label className="text-xs text-zinc-600">{tr("折旧资产", "Asset")}</label>
                   <select
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                     value={faDepForm.assetId}
                     onChange={(e) => setFaDepForm({ ...faDepForm, assetId: e.target.value })}
                   >
-                    <option value="">请选择</option>
+                    <option value="">{tr("请选择", "Select")}</option>
                     {fixedAssets
                       .filter((a) => a.status === "active")
                       .map((a) => (
@@ -2309,7 +2359,7 @@ export default function Journal() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-zinc-600">金额（交易币）</label>
+                  <label className="text-xs text-zinc-600">{tr("金额（交易币）", "Amount (txn currency)")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faDepForm.amountTxn}
@@ -2319,7 +2369,7 @@ export default function Journal() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">币种</label>
+                  <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
                   <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={draftCurrency} disabled />
                 </div>
               </div>
@@ -2334,7 +2384,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  取消
+                  {tr("取消", "Cancel")}
                 </button>
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -2343,28 +2393,28 @@ export default function Journal() {
                     setErr(null);
                     const lineIdx = faDepLineIdx;
                     if (lineIdx == null) {
-                      setErr("保存失败：未关联分录行");
+                      setErr(tr("保存失败：未关联分录行", "Save failed: not linked to a journal line."));
                       return;
                     }
                     const amountTxn = Number(faDepForm.amountTxn) || 0;
                     if (!(amountTxn > 0)) {
-                      setErr("金额必须大于 0");
+                      setErr(tr("金额必须大于 0", "Amount must be greater than 0."));
                       return;
                     }
                     const asset = fixedAssets.find((x) => x.id === faDepForm.assetId);
                     if (!asset || asset.status !== "active") {
-                      setErr("资产无效");
+                      setErr(tr("资产无效", "Invalid asset."));
                       return;
                     }
                     if (!asset.depExpenseAccountId || !asset.accumDepAccountId) {
-                      setErr("该资产缺少折旧科目设置");
+                      setErr(tr("该资产缺少折旧科目设置", "This asset is missing depreciation account setup."));
                       return;
                     }
 
                     const next = [...draftLines];
                     const debitLine = next[lineIdx];
                     if (!debitLine) {
-                      setErr("保存失败：分录行不存在");
+                      setErr(tr("保存失败：分录行不存在", "Save failed: journal line not found."));
                       return;
                     }
                     next[lineIdx] = {
@@ -2406,7 +2456,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  保存草稿
+                  {tr("保存草稿", "Save draft")}
                 </button>
               </div>
             </div>
@@ -2428,7 +2478,7 @@ export default function Journal() {
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">处置（选择资产）</div>
+                <div className="text-sm font-semibold">{tr("处置（选择资产）", "Disposal")}</div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={busy}
@@ -2438,13 +2488,13 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  关闭
+                  {tr("关闭", "Close")}
                 </button>
               </div>
 
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">处置资产</label>
+                  <label className="text-xs text-zinc-600">{tr("处置资产", "Asset")}</label>
                   <select
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                     value={faDisposeForm.assetId}
@@ -2464,7 +2514,7 @@ export default function Journal() {
                       }
                     }}
                   >
-                    <option value="">请选择</option>
+                    <option value="">{tr("请选择", "Select")}</option>
                     {fixedAssets
                       .filter((a) => a.status === "active")
                       .map((a) => (
@@ -2476,15 +2526,15 @@ export default function Journal() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-zinc-600">类型</label>
+                  <label className="text-xs text-zinc-600">{tr("类型", "Type")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={faDisposeKind === "cost" ? "成本（16xx）" : "累计折旧（161x）"}
+                    value={faDisposeKind === "cost" ? tr("成本（16xx）", "Cost (16xx)") : tr("累计折旧（161x）", "Accum dep (161x)")}
                     disabled
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-600">金额（交易币）</label>
+                  <label className="text-xs text-zinc-600">{tr("金额（交易币）", "Amount (txn currency)")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faDisposeForm.amountTxn}
@@ -2505,7 +2555,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  取消
+                  {tr("取消", "Cancel")}
                 </button>
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -2514,35 +2564,35 @@ export default function Journal() {
                     setErr(null);
                     const lineIdx = faDisposeLineIdx;
                     if (lineIdx == null) {
-                      setErr("保存失败：未关联分录行");
+                      setErr(tr("保存失败：未关联分录行", "Save failed: not linked to a journal line."));
                       return;
                     }
                     const amountTxn = Number(faDisposeForm.amountTxn) || 0;
                     if (!(amountTxn > 0)) {
-                      setErr("金额必须大于 0");
+                      setErr(tr("金额必须大于 0", "Amount must be greater than 0."));
                       return;
                     }
                     const asset = fixedAssets.find((x) => x.id === faDisposeForm.assetId);
                     if (!asset || asset.status !== "active") {
-                      setErr("资产无效");
+                      setErr(tr("资产无效", "Invalid asset."));
                       return;
                     }
                     if (faDisposeKind === "cost") {
                       if (!asset.assetAccountId) {
-                        setErr("该资产缺少资产科目设置");
+                        setErr(tr("该资产缺少资产科目设置", "This asset is missing asset account setup."));
                         return;
                       }
                       if (faDisposeAccumLineIdx != null) {
                         const otherId = fixedAssetIdByLineIdx[faDisposeAccumLineIdx];
                         if (otherId && otherId !== asset.id) {
-                          setErr("处置的成本与累计折旧必须选择同一个固定资产");
+                          setErr(tr("处置的成本与累计折旧必须选择同一个固定资产", "Cost and accumulated depreciation must reference the same asset."));
                           return;
                         }
                       }
                       const next = [...draftLines];
                       const line = next[lineIdx];
                       if (!line) {
-                        setErr("保存失败：分录行不存在");
+                        setErr(tr("保存失败：分录行不存在", "Save failed: journal line not found."));
                         return;
                       }
                       next[lineIdx] = { ...line, accountId: asset.assetAccountId, creditTxn: amountTxn.toFixed(2), debitTxn: "" };
@@ -2551,20 +2601,20 @@ export default function Journal() {
                       setFaDisposeCostLineIdx(lineIdx);
                     } else {
                       if (!asset.accumDepAccountId) {
-                        setErr("该资产缺少累计折旧科目设置");
+                        setErr(tr("该资产缺少累计折旧科目设置", "This asset is missing accumulated depreciation account setup."));
                         return;
                       }
                       if (faDisposeCostLineIdx != null) {
                         const otherId = fixedAssetIdByLineIdx[faDisposeCostLineIdx];
                         if (otherId && otherId !== asset.id) {
-                          setErr("处置的成本与累计折旧必须选择同一个固定资产");
+                          setErr(tr("处置的成本与累计折旧必须选择同一个固定资产", "Cost and accumulated depreciation must reference the same asset."));
                           return;
                         }
                       }
                       const next = [...draftLines];
                       const line = next[lineIdx];
                       if (!line) {
-                        setErr("保存失败：分录行不存在");
+                        setErr(tr("保存失败：分录行不存在", "Save failed: journal line not found."));
                         return;
                       }
                       next[lineIdx] = { ...line, accountId: asset.accumDepAccountId, debitTxn: amountTxn.toFixed(2), creditTxn: "" };
@@ -2576,7 +2626,7 @@ export default function Journal() {
                   }}
                   type="button"
                 >
-                  保存草稿
+                  {tr("保存草稿", "Save draft")}
                 </button>
               </div>
             </div>
@@ -2585,26 +2635,26 @@ export default function Journal() {
 
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">凭证列表</div>
+            <div className="text-sm font-semibold">{tr("凭证列表", "Journals")}</div>
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
               onClick={() => refresh()}
               type="button"
             >
-              刷新
+              {tr("刷新", "Refresh")}
             </button>
           </div>
           <div className="mt-3 max-h-[420px] overflow-auto rounded-lg border border-zinc-100">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
                 <tr>
-                  <th className="px-3 py-2 text-left">日期</th>
-                  <th className="px-3 py-2 text-left">分录号</th>
-                  <th className="px-3 py-2 text-left">状态</th>
-                  <th className="px-3 py-2 text-left">库存</th>
-                  <th className="px-3 py-2 text-left">币种</th>
-                  <th className="px-3 py-2 text-right">金额</th>
-                  <th className="px-3 py-2 text-right">操作</th>
+                  <th className="px-3 py-2 text-left">{tr("日期", "Date")}</th>
+                  <th className="px-3 py-2 text-left">{tr("分录号", "Voucher No")}</th>
+                  <th className="px-3 py-2 text-left">{tr("状态", "Status")}</th>
+                  <th className="px-3 py-2 text-left">{tr("库存", "Inventory")}</th>
+                  <th className="px-3 py-2 text-left">{tr("币种", "Currency")}</th>
+                  <th className="px-3 py-2 text-right">{tr("金额", "Amount")}</th>
+                  <th className="px-3 py-2 text-right">{tr("操作", "Actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2618,7 +2668,7 @@ export default function Journal() {
                     }
                     onClick={() => {
                       if (editingEntryId && editingEntryId !== e.id) {
-                        setErr("请先保存或取消当前编辑。");
+                        setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
                         return;
                       }
                       setSelectedId(e.id);
@@ -2629,7 +2679,7 @@ export default function Journal() {
                       <div className="flex items-center gap-2">
                         <span>{e.voucherNo || "-"}</span>
                         {e.isSystem ? (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">系统</span>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">{tr("系统", "System")}</span>
                         ) : null}
                       </div>
                     </td>
@@ -2643,7 +2693,7 @@ export default function Journal() {
                         {e.status}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-sm">{e.inventoryImpact ? "Yes" : ""}</td>
+                    <td className="px-3 py-2 text-sm">{e.inventoryImpact ? tr("是", "Yes") : ""}</td>
                     <td className="px-3 py-2 text-sm">{e.currency}</td>
                     <td className="px-3 py-2 text-right">
                       {(() => {
@@ -2667,7 +2717,7 @@ export default function Journal() {
                             await openEditModal(e.id);
                           }}
                         >
-                          {e.status === "draft" ? "新建" : "编辑"}
+                          {e.status === "draft" ? tr("新建", "New") : tr("编辑", "Edit")}
                         </button>
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
@@ -2677,11 +2727,16 @@ export default function Journal() {
                             ev.preventDefault();
                             ev.stopPropagation();
                             if (editingEntryId) {
-                              setErr("请先保存或取消当前编辑。");
+                              setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
                               return;
                             }
                             const ok = window.confirm(
-                              e.status === "posted" ? "确认删除该已过账凭证？删除会回滚库存/FIFO 并影响报表。" : "确认删除该草稿凭证？",
+                              e.status === "posted"
+                                ? tr(
+                                    "确认删除该已过账凭证？删除会回滚库存/FIFO 并影响报表。",
+                                    "Delete this posted journal? This will rollback inventory/FIFO and affect reports.",
+                                  )
+                                : tr("确认删除该草稿凭证？", "Delete this draft journal?"),
                             );
                             if (!ok) return;
                             setBusy(true);
@@ -2695,7 +2750,7 @@ export default function Journal() {
                             }
                           }}
                         >
-                          删除
+                          {tr("删除", "Delete")}
                         </button>
                       </div>
                     </td>

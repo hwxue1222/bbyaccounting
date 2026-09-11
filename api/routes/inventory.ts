@@ -42,6 +42,7 @@ router.get("/stock-take/items", requireAuth, async (req: AuthedRequest, res: Res
       i.sku,
       i.name,
       i.uom as "uom",
+      i.is_active as "isActive",
       COALESCE(SUM(l.qty_remaining), 0) as qty,
       COALESCE(SUM(l.qty_remaining * l.unit_cost_base), 0) as "valueBase",
       (
@@ -53,7 +54,7 @@ router.get("/stock-take/items", requireAuth, async (req: AuthedRequest, res: Res
       ) as "latestUnitCostBase"
     FROM inventory_items i
     LEFT JOIN inventory_layers l ON l.org_id = i.org_id AND l.item_id = i.id
-    WHERE i.org_id = ${orgId} AND i.is_active = true
+    WHERE i.org_id = ${orgId}
     GROUP BY i.id
     ORDER BY i.sku ASC NULLS LAST, i.name ASC
   `;

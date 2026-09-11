@@ -44,6 +44,7 @@ type StockTakeItemRow = {
   sku: string | null;
   name: string;
   uom: string;
+  isActive?: boolean;
   qty: string;
   valueBase: string;
   latestUnitCostBase: string | null;
@@ -98,6 +99,23 @@ export default function Inventory() {
   const [stockTakeLines, setStockTakeLines] = useState<Record<string, StockTakeLine>>({});
   const [stockTakePreview, setStockTakePreview] = useState<any>(null);
 
+  const stockTakeItemsSorted = useMemo(() => {
+    const arr = [...stockTakeItems];
+    arr.sort((a, b) => {
+      const sa = (a.sku || "").trim();
+      const sb = (b.sku || "").trim();
+      const aHas = Boolean(sa);
+      const bHas = Boolean(sb);
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      if (sa && sb) {
+        const cmp = sa.localeCompare(sb, undefined, { numeric: true, sensitivity: "base" });
+        if (cmp !== 0) return cmp;
+      }
+      return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
+    });
+    return arr;
+  }, [stockTakeItems]);
+
   const offsetAccounts = useMemo(() => accounts, [accounts]);
 
   async function openJournalModal(entryId: string) {
@@ -110,7 +128,7 @@ export default function Inventory() {
       const d = await api<JournalDetail>(`/api/journals/${encodeURIComponent(entryId)}`);
       setJournalDetail(d);
     } catch (e: any) {
-      setJournalErr(e?.message || "加载分录失败");
+      setJournalErr(e?.message || tr("加载分录失败", "Failed to load journal"));
     } finally {
       setJournalLoading(false);
     }
@@ -216,10 +234,20 @@ export default function Inventory() {
       <div className={panel === "moves" ? "space-y-4" : "grid items-start gap-4 lg:grid-cols-2"}>
         {panel !== "moves" ? (
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold">库存商品</div>
+            <div className="text-sm font-semibold">{tr("库存商品", "Items")}</div>
             <div className="mt-3 flex gap-2">
-              <input className="w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemSku} onChange={(e) => setItemSku(e.target.value)} placeholder="编号" />
-              <input className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="商品名称" />
+              <input
+                className="w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                value={itemSku}
+                onChange={(e) => setItemSku(e.target.value)}
+                placeholder={tr("编号", "SKU")}
+              />
+              <input
+                className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                value={itemName}
+                onChange={(e) => setItemName(e.target.value)}
+                placeholder={tr("商品名称", "Item name")}
+              />
               <button
                 className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
                 disabled={busy || !itemSku.trim() || !itemName.trim()}
@@ -238,13 +266,13 @@ export default function Inventory() {
                   }
                 }}
               >
-                新增
+                {tr("新增", "Add")}
               </button>
             </div>
             <div className="mt-3">
-              <label className="text-xs text-zinc-600">选择商品</label>
+              <label className="text-xs text-zinc-600">{tr("选择商品", "Select item")}</label>
               <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={selectedItemId} onChange={(e) => setSelectedItemId(e.target.value)}>
-                <option value="">请选择</option>
+                <option value="">{tr("请选择", "Select")}</option>
                 {items.map((it) => (
                   <option key={it.id} value={it.id}>
                     {(it.sku ? `${it.sku} ` : "") + it.name}
@@ -253,8 +281,14 @@ export default function Inventory() {
               </select>
               {stock ? (
                 <div className="mt-2 rounded-lg bg-zinc-50 p-3 text-sm">
-                  <div>期末数量：{Math.trunc(stock.qty)}</div>
-                  <div>期末金额：{stock.valueBase.toFixed(2)}</div>
+                  <div>
+                    {tr("期末数量：", "Closing qty: ")}
+                    {Math.trunc(stock.qty)}
+                  </div>
+                  <div>
+                    {tr("期末金额：", "Closing value: ")}
+                    {stock.valueBase.toFixed(2)}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -274,7 +308,7 @@ export default function Inventory() {
                 type="button"
                 onClick={() => setPanel("receipt")}
               >
-                入库
+                {tr("入库", "Receipt")}
               </button>
               <button
                 className={
@@ -285,7 +319,7 @@ export default function Inventory() {
                 type="button"
                 onClick={() => setPanel("shipment")}
               >
-                出库
+                {tr("出库", "Shipment")}
               </button>
               <button
                 className={
@@ -296,7 +330,7 @@ export default function Inventory() {
                 type="button"
                 onClick={() => setPanel("moves")}
               >
-                流水
+                {tr("流水", "Moves")}
               </button>
               <button
                 className={
@@ -312,20 +346,20 @@ export default function Inventory() {
                   refreshStockTakeItems().catch((e) => setErr(e.message));
                 }}
               >
-                盘点
+                {tr("盘点", "Stock take")}
               </button>
             </div>
           </div>
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "receipt" ? "" : "hidden")}>
-            <div className="text-sm font-semibold">入库（生成分录 + FIFO 批次）</div>
+            <div className="text-sm font-semibold">{tr("入库（生成分录 + FIFO 批次）", "Receipt (creates journal + FIFO layer)")}</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
-                <label className="text-xs text-zinc-600">日期</label>
+                <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={receipt.date} onChange={(e) => setReceipt({ ...receipt, date: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">数量</label>
+                <label className="text-xs text-zinc-600">{tr("数量", "Quantity")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                   value={receipt.qty}
@@ -335,7 +369,7 @@ export default function Inventory() {
                 />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">单价（交易币）</label>
+                <label className="text-xs text-zinc-600">{tr("单价（交易币）", "Unit cost (txn currency)")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                   value={receipt.unitCostTxn}
@@ -345,17 +379,17 @@ export default function Inventory() {
                 />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">币种</label>
+                <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={receipt.currency} onChange={(e) => setReceipt({ ...receipt, currency: e.target.value.toUpperCase() })} maxLength={3} />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">汇率</label>
+                <label className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={receipt.fxRate} onChange={(e) => setReceipt({ ...receipt, fxRate: Number(e.target.value) || 1 })} type="number" step="0.0001" />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">贷方科目（应付/现金）</label>
+                <label className="text-xs text-zinc-600">{tr("贷方科目（应付/现金）", "Credit account (AP/Cash)")}</label>
                 <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={receipt.offsetAccountId} onChange={(e) => setReceipt({ ...receipt, offsetAccountId: e.target.value })}>
-                  <option value="">请选择</option>
+                  <option value="">{tr("请选择", "Select")}</option>
                   {offsetAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.code} {a.name}
@@ -384,13 +418,13 @@ export default function Inventory() {
                 }
               }}
             >
-              入库并过账
+              {tr("入库并过账", "Post receipt")}
             </button>
           </div>
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "stockTake" ? "" : "hidden")}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm font-semibold">盘点（Stock Take）</div>
+              <div className="text-sm font-semibold">{tr("盘点（Stock Take）", "Stock take")}</div>
               <button
                 className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                 disabled={busy}
@@ -401,13 +435,13 @@ export default function Inventory() {
                 }}
                 type="button"
               >
-                刷新
+                {tr("刷新", "Refresh")}
               </button>
             </div>
 
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
-                <label className="text-xs text-zinc-600">盘点日期</label>
+                <label className="text-xs text-zinc-600">{tr("盘点日期", "Stock take date")}</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={stockTakeDate} onChange={(e) => setStockTakeDate(e.target.value)} type="date" />
               </div>
               <div className="flex items-end gap-2">
@@ -419,7 +453,7 @@ export default function Inventory() {
                     setErr(null);
                     setStockTakePreview(null);
                     try {
-                      const lines = stockTakeItems
+                      const lines = stockTakeItemsSorted
                         .map((it) => {
                           const st = stockTakeLines[String(it.id)];
                           const onHandQty = Number(it.qty || 0);
@@ -435,7 +469,7 @@ export default function Inventory() {
                         })
                         .filter(Boolean);
                       if (!lines.length) {
-                        setErr("没有需要调整的商品（盘点数量与现有数量一致）。");
+                        setErr(tr("没有需要调整的商品（盘点数量与现有数量一致）。", "No adjustments needed (counted qty equals on-hand).") );
                         return;
                       }
                       const r = await api<any>("/api/inventory/stock-take/preview", {
@@ -451,7 +485,7 @@ export default function Inventory() {
                   }}
                   type="button"
                 >
-                  预览成本
+                  {tr("预览成本", "Preview cost")}
                 </button>
                 <button
                   className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
@@ -460,7 +494,7 @@ export default function Inventory() {
                     setBusy(true);
                     setErr(null);
                     try {
-                      const lines = stockTakeItems
+                      const lines = stockTakeItemsSorted
                         .map((it) => {
                           const st = stockTakeLines[String(it.id)];
                           const onHandQty = Number(it.qty || 0);
@@ -476,7 +510,7 @@ export default function Inventory() {
                         })
                         .filter(Boolean);
                       if (!lines.length) {
-                        setErr("没有需要调整的商品（盘点数量与现有数量一致）。");
+                        setErr(tr("没有需要调整的商品（盘点数量与现有数量一致）。", "No adjustments needed (counted qty equals on-hand).") );
                         return;
                       }
                       const r = await api<any>("/api/inventory/stock-take", {
@@ -496,15 +530,21 @@ export default function Inventory() {
                   }}
                   type="button"
                 >
-                  盘点并过账
+                  {tr("盘点并过账", "Post stock take")}
                 </button>
               </div>
             </div>
 
             {stockTakePreview ? (
               <div className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm">
-                <div>调整金额合计（本位）：{Number(stockTakePreview.totals?.adjustmentBase || 0).toFixed(2)}</div>
-                <div>盘点后库存合计金额（本位）：{Number(stockTakePreview.totals?.closingValueBase || 0).toFixed(2)}</div>
+                <div>
+                  {tr("调整金额合计（本位）：", "Total adjustment (base): ")}
+                  {Number(stockTakePreview.totals?.adjustmentBase || 0).toFixed(2)}
+                </div>
+                <div>
+                  {tr("盘点后库存合计金额（本位）：", "Closing inventory value (base): ")}
+                  {Number(stockTakePreview.totals?.closingValueBase || 0).toFixed(2)}
+                </div>
               </div>
             ) : null}
 
@@ -512,77 +552,92 @@ export default function Inventory() {
               <table className="w-full text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-600">
                   <tr>
-                    <th className="px-3 py-2 text-left">商品</th>
-                    <th className="px-3 py-2 text-right">现有数量</th>
-                    <th className="px-3 py-2 text-right">盘点数量</th>
-                    <th className="px-3 py-2 text-right">盘盈单价（本位）</th>
-                    <th className="px-3 py-2 text-right">盘点后金额（本位）</th>
+                    <th className="px-3 py-2 text-left">{tr("商品", "Item")}</th>
+                    <th className="px-3 py-2 text-right">{tr("现有数量", "On-hand")}</th>
+                    <th className="px-3 py-2 text-right">{tr("盘点数量", "Counted")}</th>
+                    <th className="px-3 py-2 text-right">{tr("盘盈单价（本位）", "Gain unit cost (base)")}</th>
+                    <th className="px-3 py-2 text-right">{tr("盘点后金额（本位）", "Closing value (base)")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stockTakeItems.map((it) => {
-                    const st = stockTakeLines[String(it.id)];
-                    const onHandQty = Number(it.qty || 0);
-                    const countedQty = Number(st?.countedQty) || 0;
-                    const diff = countedQty - onHandQty;
-                    const previewRow = (stockTakePreview?.rows || []).find((r: any) => String(r.itemId) === String(it.id));
-                    return (
-                      <tr key={it.id} className="border-t border-zinc-100">
-                        <td className="px-3 py-2">
-                          {(it.sku ? `${it.sku} ` : "") + it.name} <span className="text-xs text-zinc-500">[{it.uom}]</span>
-                        </td>
-                        <td className="px-3 py-2 text-right">{Math.trunc(onHandQty)}</td>
-                        <td className="px-3 py-2 text-right">
-                          <input
-                            className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
-                            value={st?.countedQty ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setStockTakeLines((prev) => ({
-                                ...prev,
-                                [String(it.id)]: { itemId: String(it.id), countedQty: v, gainUnitCostBase: prev[String(it.id)]?.gainUnitCostBase || "0" },
-                              }));
-                            }}
-                            type="number"
-                            step="1"
-                            min={0}
-                          />
-                          {diff !== 0 ? <div className={"mt-1 text-xs " + (diff > 0 ? "text-blue-700" : "text-amber-700")}>差异 {diff > 0 ? "+" : ""}{Math.trunc(diff)}</div> : null}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <input
-                            className="w-32 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
-                            value={st?.gainUnitCostBase ?? "0"}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setStockTakeLines((prev) => ({
-                                ...prev,
-                                [String(it.id)]: { itemId: String(it.id), countedQty: prev[String(it.id)]?.countedQty || "0", gainUnitCostBase: v },
-                              }));
-                            }}
-                            type="number"
-                            step="0.0001"
-                            disabled={diff <= 0}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right">{previewRow ? Number(previewRow.closingValueBase || 0).toFixed(2) : ""}</td>
-                      </tr>
-                    );
-                  })}
+                  {stockTakeItemsSorted.length ? (
+                    stockTakeItemsSorted.map((it) => {
+                      const st = stockTakeLines[String(it.id)];
+                      const onHandQty = Number(it.qty || 0);
+                      const countedQty = Number(st?.countedQty) || 0;
+                      const diff = countedQty - onHandQty;
+                      const previewRow = (stockTakePreview?.rows || []).find((r: any) => String(r.itemId) === String(it.id));
+                      const isActive = it.isActive !== false;
+                      return (
+                        <tr key={it.id} className="border-t border-zinc-100">
+                          <td className="px-3 py-2">
+                            {(it.sku ? `${it.sku} ` : "") + it.name} <span className="text-xs text-zinc-500">[{it.uom}]</span>
+                            {!isActive ? <span className="ml-2 text-xs text-zinc-400">{tr("已停用", "Inactive")}</span> : null}
+                          </td>
+                          <td className="px-3 py-2 text-right">{Math.trunc(onHandQty)}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                              value={st?.countedQty ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setStockTakeLines((prev) => ({
+                                  ...prev,
+                                  [String(it.id)]: { itemId: String(it.id), countedQty: v, gainUnitCostBase: prev[String(it.id)]?.gainUnitCostBase || "0" },
+                                }));
+                              }}
+                              type="number"
+                              step="1"
+                              min={0}
+                            />
+                            {diff !== 0 ? (
+                              <div className={"mt-1 text-xs " + (diff > 0 ? "text-blue-700" : "text-amber-700")}>
+                                {tr("差异", "Diff")} {diff > 0 ? "+" : ""}
+                                {Math.trunc(diff)}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              className="w-32 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                              value={st?.gainUnitCostBase ?? "0"}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setStockTakeLines((prev) => ({
+                                  ...prev,
+                                  [String(it.id)]: { itemId: String(it.id), countedQty: prev[String(it.id)]?.countedQty || "0", gainUnitCostBase: v },
+                                }));
+                              }}
+                              type="number"
+                              step="0.0001"
+                              disabled={diff <= 0}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">{previewRow ? Number(previewRow.closingValueBase || 0).toFixed(2) : ""}</td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td className="px-3 py-4 text-sm text-zinc-500" colSpan={5}>
+                        {tr("没有商品。请先在左侧新增库存商品。", "No items. Please add inventory items first.")}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "shipment" ? "" : "hidden")}>
-            <div className="text-sm font-semibold">出库（FIFO 计算成本 + 自动结转）</div>
+            <div className="text-sm font-semibold">{tr("出库（FIFO 计算成本 + 自动结转）", "Shipment (FIFO costing + auto posting)")}</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
-                <label className="text-xs text-zinc-600">日期</label>
+                <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
                 <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={shipment.date} onChange={(e) => setShipment({ ...shipment, date: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">数量</label>
+                <label className="text-xs text-zinc-600">{tr("数量", "Quantity")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                   value={shipment.qty}
@@ -609,31 +664,31 @@ export default function Inventory() {
                 }
               }}
             >
-              出库并结转成本
+              {tr("出库并结转成本", "Post shipment")}
             </button>
           </div>
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "moves" ? "" : "hidden")}>
             <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold">库存流水（含分录联动）</div>
+              <div className="text-sm font-semibold">{tr("库存流水（含分录联动）", "Inventory moves")}</div>
               <button
                 className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
                 disabled={busy}
                 onClick={() => refreshAll().catch((e) => setErr(e.message))}
               >
-                刷新
+                {tr("刷新", "Refresh")}
               </button>
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <div className="min-w-60">
-                <div className="text-xs text-zinc-600">商品</div>
+                <div className="text-xs text-zinc-600">{tr("商品", "Item")}</div>
                 <select
                   className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                   value={selectedItemId}
                   onChange={(e) => setSelectedItemId(e.target.value)}
                 >
-                  <option value="">全部商品</option>
+                  <option value="">{tr("全部商品", "All items")}</option>
                   {items.map((it) => (
                     <option key={it.id} value={it.id}>
                       {(it.sku ? `${it.sku} ` : "") + it.name}
@@ -642,7 +697,7 @@ export default function Inventory() {
                 </select>
               </div>
               <div>
-                <div className="text-xs text-zinc-600">时间段</div>
+                <div className="text-xs text-zinc-600">{tr("时间段", "Date range")}</div>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     className="w-36 rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -665,24 +720,24 @@ export default function Inventory() {
             {balances ? (
               <div className="mt-3 grid gap-2 rounded-lg border border-zinc-100 bg-zinc-50 p-3 text-sm md:grid-cols-2">
                 <div>
-                  <div className="text-xs text-zinc-600">期初余额</div>
+                  <div className="text-xs text-zinc-600">{tr("期初余额", "Opening")}</div>
                   <div className="mt-1 flex items-center justify-between">
-                    <div className="text-zinc-700">数量</div>
+                    <div className="text-zinc-700">{tr("数量", "Qty")}</div>
                     <div className="font-medium">{Math.trunc(balances.openingQty)}</div>
                   </div>
                   <div className="mt-1 flex items-center justify-between">
-                    <div className="text-zinc-700">金额(基准)</div>
+                    <div className="text-zinc-700">{tr("金额(基准)", "Value (base)")}</div>
                     <div className="font-medium">{balances.openingValueBase.toFixed(2)}</div>
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-zinc-600">期末余额</div>
+                  <div className="text-xs text-zinc-600">{tr("期末余额", "Closing")}</div>
                   <div className="mt-1 flex items-center justify-between">
-                    <div className="text-zinc-700">数量</div>
+                    <div className="text-zinc-700">{tr("数量", "Qty")}</div>
                     <div className="font-medium">{Math.trunc(balances.closingQty)}</div>
                   </div>
                   <div className="mt-1 flex items-center justify-between">
-                    <div className="text-zinc-700">金额(基准)</div>
+                    <div className="text-zinc-700">{tr("金额(基准)", "Value (base)")}</div>
                     <div className="font-medium">{balances.closingValueBase.toFixed(2)}</div>
                   </div>
                 </div>
@@ -693,22 +748,23 @@ export default function Inventory() {
               <table className="w-full table-fixed text-sm">
                 <thead className="bg-zinc-50 text-xs text-zinc-600">
                   <tr>
-                    <th className="w-28 px-3 py-2 text-left">日期</th>
-                    <th className="w-20 px-3 py-2 text-left">类型</th>
-                    <th className="px-3 py-2 text-left">商品</th>
-                    <th className="w-16 px-3 py-2 text-right">数量</th>
-                    <th className="w-24 px-3 py-2 text-right">单价</th>
-                    <th className="w-24 px-3 py-2 text-right">金额</th>
-                    <th className="hidden w-20 px-3 py-2 text-left md:table-cell">状态</th>
-                    <th className="hidden w-28 px-3 py-2 text-left lg:table-cell">分录号</th>
-                    <th className="hidden w-16 px-3 py-2 text-left lg:table-cell">凭证</th>
+                    <th className="w-28 px-3 py-2 text-left">{tr("日期", "Date")}</th>
+                    <th className="w-20 px-3 py-2 text-left">{tr("类型", "Type")}</th>
+                    <th className="px-3 py-2 text-left">{tr("商品", "Item")}</th>
+                    <th className="w-16 px-3 py-2 text-right">{tr("数量", "Qty")}</th>
+                    <th className="w-24 px-3 py-2 text-right">{tr("单价", "Unit")}</th>
+                    <th className="w-24 px-3 py-2 text-right">{tr("金额", "Amount")}</th>
+                    <th className="hidden w-20 px-3 py-2 text-left md:table-cell">{tr("状态", "Status")}</th>
+                    <th className="hidden w-28 px-3 py-2 text-left lg:table-cell">{tr("分录号", "Voucher")}</th>
+                    <th className="hidden w-16 px-3 py-2 text-left lg:table-cell">{tr("凭证", "Journal")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {moves.map((m) => {
                     const qty = Number(m.qty);
                     const isOut = m.moveType === "shipment";
-                    const typeLabel = m.moveType === "shipment" ? "out" : m.moveType === "receipt" ? "in" : m.moveType;
+                    const typeLabel =
+                      m.moveType === "shipment" ? tr("出库", "out") : m.moveType === "receipt" ? tr("入库", "in") : String(m.moveType || "");
                     const unitTxn = m.unitCostTxn == null ? null : Number(m.unitCostTxn);
                     const amountTxn = unitTxn == null ? null : Math.round(Math.abs(qty) * unitTxn * 100) / 100;
                     const itemLabel = ((m.itemSku ? `${m.itemSku} ` : "") + m.itemName).replace(/\s+/g, " ").trim();
@@ -749,7 +805,7 @@ export default function Inventory() {
                         <td className="hidden px-3 py-2 whitespace-nowrap lg:table-cell">
                           {m.entryId ? (
                             <button className="text-blue-700 hover:underline" onClick={() => openJournalModal(m.entryId!)} type="button">
-                              打开
+                              {tr("打开", "Open")}
                             </button>
                           ) : (
                             "-"
@@ -761,7 +817,7 @@ export default function Inventory() {
                   {!moves.length ? (
                     <tr>
                       <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={9}>
-                        暂无数据
+                        {tr("暂无数据", "No data")}
                       </td>
                     </tr>
                   ) : null}
@@ -772,7 +828,7 @@ export default function Inventory() {
 
           {result ? (
             <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm">
-              <div className="font-semibold">结果</div>
+              <div className="font-semibold">{tr("结果", "Result")}</div>
               <pre className="mt-2 overflow-auto rounded-lg bg-zinc-50 p-3 text-xs">{JSON.stringify(result, null, 2)}</pre>
             </div>
           ) : null}
@@ -791,19 +847,19 @@ export default function Inventory() {
                 }}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm font-semibold">分录详情</div>
+                  <div className="text-sm font-semibold">{tr("分录详情", "Journal detail")}</div>
                   <button
                     className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                     type="button"
                     onClick={() => setJournalModalOpen(false)}
                   >
-                    关闭
+                    {tr("关闭", "Close")}
                   </button>
                 </div>
 
                 <div className="mt-3">
                   {journalLoading ? (
-                    <div className="text-sm text-zinc-600">加载中...</div>
+                    <div className="text-sm text-zinc-600">{tr("加载中...", "Loading...")}</div>
                   ) : journalErr ? (
                     <div className="text-sm text-red-700">{journalErr}</div>
                   ) : journalDetail ? (
@@ -817,11 +873,11 @@ export default function Inventory() {
                         <table className="w-full text-sm">
                           <thead className="bg-zinc-50 text-xs text-zinc-600">
                             <tr>
-                              <th className="px-3 py-2 text-left">行</th>
-                              <th className="px-3 py-2 text-left">科目</th>
-                              <th className="px-3 py-2 text-right">借</th>
-                              <th className="px-3 py-2 text-right">贷</th>
-                              <th className="px-3 py-2 text-left">备注</th>
+                              <th className="px-3 py-2 text-left">{tr("行", "Line")}</th>
+                              <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
+                              <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
+                              <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
+                              <th className="px-3 py-2 text-left">{tr("备注", "Memo")}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -843,7 +899,7 @@ export default function Inventory() {
 
                       {journalDetail.attachments?.length ? (
                         <div>
-                          <div className="mb-2 text-xs text-zinc-600">附件</div>
+                          <div className="mb-2 text-xs text-zinc-600">{tr("附件", "Attachments")}</div>
                           <div className="space-y-1">
                             {journalDetail.attachments.map((a) => (
                               <a
