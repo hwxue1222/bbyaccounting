@@ -84,25 +84,12 @@ async function insertPostedInventoryReceipts(
   if (!details.length) return;
   const fx = Number(fxRate) || 1;
   const currencyCode = String(currency || "BASE").toUpperCase();
-  const rows = details.map((d, i) => {
-    const unitCostTxn = Number(d.unitCostTxn);
-    const unitCostBase = round6(unitCostTxn * fx);
-    return {
-      org_id: orgId,
-      item_id: String(d.itemId),
-      move_type: "receipt",
-      move_date: entryDate,
-      qty: Number(d.qty),
-      unit_cost_base: unitCostBase,
-      unit_cost_txn: round6(unitCostTxn),
-      currency_code: currencyCode,
-      fx_rate: fx,
-      status: "posted",
-      entry_id: entryId,
-      entry_line_no: linkLineNo,
-      entry_seq: i + 1,
-    };
-  });
+
+  const itemIds = details.map((d) => String(d.itemId));
+  const qtys = details.map((d) => Number(d.qty));
+  const unitCostsTxn = details.map((d) => round6(Number(d.unitCostTxn)));
+  const unitCostsBase = details.map((d, i) => round6(Number(unitCostsTxn[i]) * fx));
+  const entrySeqs = details.map((_, i) => i + 1);
 
   await trx`
     WITH ins_moves AS (
@@ -111,22 +98,28 @@ async function insertPostedInventoryReceipts(
         unit_cost_base, unit_cost_txn, currency_code, fx_rate,
         status, entry_id, entry_line_no, entry_seq
       )
-      ${trx(
-        rows,
-        "org_id",
-        "item_id",
-        "move_type",
-        "move_date",
-        "qty",
-        "unit_cost_base",
-        "unit_cost_txn",
-        "currency_code",
-        "fx_rate",
-        "status",
-        "entry_id",
-        "entry_line_no",
-        "entry_seq",
-      )}
+      SELECT
+        ${orgId},
+        x.item_id,
+        'receipt',
+        ${entryDate},
+        x.qty,
+        x.unit_cost_base,
+        x.unit_cost_txn,
+        ${currencyCode},
+        ${fx},
+        'posted',
+        ${entryId},
+        ${linkLineNo},
+        x.entry_seq
+      FROM (
+        SELECT
+          unnest(${itemIds}::uuid[]) as item_id,
+          unnest(${qtys}::numeric[]) as qty,
+          unnest(${unitCostsBase}::numeric[]) as unit_cost_base,
+          unnest(${unitCostsTxn}::numeric[]) as unit_cost_txn,
+          unnest(${entrySeqs}::int[]) as entry_seq
+      ) x
       RETURNING id, org_id, item_id, move_date, qty, unit_cost_base, entry_id
     ),
     ins_layers AS (
