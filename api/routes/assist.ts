@@ -60,6 +60,16 @@ function pickPreferredGeminiModel(models: string[]): string {
   return models[0];
 }
 
+function getGeminiTextFromResponse(raw: any): string {
+  const parts = raw?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
 router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -193,10 +203,12 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     model: string,
     apiVersion: "v1beta" | "v1",
     withSchema: boolean,
+    systemText: string = system,
+    userText: string = user,
   ): Promise<{ ok: boolean; status: number; text: string; model: string; apiVersion: string }> {
     const payload: any = {
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: "user", parts: [{ text: user }] }],
+      systemInstruction: { parts: [{ text: systemText }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
       generationConfig: {
         temperature: 0.1,
         responseMimeType: "application/json",
@@ -280,8 +292,8 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   }
 
   const raw = gem.text ? (JSON.parse(gem.text) as any) : null;
-  const content = raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n");
-  if (typeof content !== "string" || !content.trim()) {
+  let content = getGeminiTextFromResponse(raw);
+  if (!content) {
     res.status(502).json({ success: false, error: "Google Gemini returned empty content" });
     return;
   }
@@ -313,8 +325,41 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
 
   const linesIn: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
   if (linesIn.length < 2) {
-    res.status(400).json({ success: false, error: "Suggestion missing lines" });
-    return;
+    const repairUser =
+      "上一次输出不符合要求：必须包含 lines 数组且至少 2 行，并且借贷平衡。\n" +
+      "请你只输出 JSON，不要解释文字。\n\n" +
+      `上一次输出：\n${stripCodeFences(content)}\n\n` +
+      `原始用户输入：${parsed.data.text}\n\n` +
+      `约束与可用列表：\n${JSON.stringify(prompt)}\n`;
+
+    let repaired = await callGemini(gem.model, gem.apiVersion as any, true, system, repairUser);
+    if (!repaired.ok && repaired.status === 400) {
+      repaired = await callGemini(gem.model, gem.apiVersion as any, false, system, repairUser);
+    }
+
+    if (repaired.ok) {
+      const raw2 = repaired.text ? (JSON.parse(repaired.text) as any) : null;
+      const content2 = getGeminiTextFromResponse(raw2);
+      if (content2) {
+        content = content2;
+        try {
+          suggested = JSON.parse(stripCodeFences(content));
+        } catch {
+          res.status(502).json({ success: false, error: "Google Gemini returned invalid JSON" });
+          return;
+        }
+      }
+    }
+
+    const linesRetry: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
+    if (linesRetry.length < 2) {
+      res.status(502).json({
+        success: false,
+        error:
+          "Google Gemini output is incomplete (missing journal lines). Try adding currency/amount or rephrasing, e.g. 'Bought a car for 30000 SGD, paid by bank transfer'.",
+      });
+      return;
+    }
   }
 
   const lines = linesIn.map((l) => {
