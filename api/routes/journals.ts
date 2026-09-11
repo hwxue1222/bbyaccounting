@@ -30,20 +30,20 @@ function makeErrorId(): string {
   }
 }
 
-function mapPgError(e: any): { status: number; message: string } | null {
+function mapPgError(e: any): { status: number; message: string; errorId: string } | null {
   const code = typeof e?.code === "string" ? e.code : null;
   if (!code) return null;
 
   const id = makeErrorId();
 
-  if (code === "22P02") return { status: 400, message: `字段格式不正确（ID ${id}）` };
-  if (code === "22023") return { status: 400, message: `参数不合法（ID ${id}）` };
-  if (code === "23502") return { status: 400, message: `缺少必填字段（ID ${id}）` };
-  if (code === "23505") return { status: 409, message: `数据重复（唯一约束冲突，ID ${id}）` };
-  if (code === "40001") return { status: 409, message: `并发冲突，请重试（ID ${id}）` };
-  if (code === "42P01") return { status: 500, message: `数据库表缺失（可能迁移未完成，ID ${id}）` };
-  if (code === "42703") return { status: 500, message: `数据库字段缺失（可能迁移未完成，ID ${id}）` };
-  return { status: 500, message: `数据库错误 ${code}（ID ${id}）` };
+  if (code === "22P02") return { status: 400, message: `字段格式不正确（ID ${id}）`, errorId: id };
+  if (code === "22023") return { status: 400, message: `参数不合法（ID ${id}）`, errorId: id };
+  if (code === "23502") return { status: 400, message: `缺少必填字段（ID ${id}）`, errorId: id };
+  if (code === "23505") return { status: 409, message: `数据重复（唯一约束冲突，ID ${id}）`, errorId: id };
+  if (code === "40001") return { status: 409, message: `并发冲突，请重试（ID ${id}）`, errorId: id };
+  if (code === "42P01") return { status: 500, message: `数据库表缺失（可能迁移未完成，ID ${id}）`, errorId: id };
+  if (code === "42703") return { status: 500, message: `数据库字段缺失（可能迁移未完成，ID ${id}）`, errorId: id };
+  return { status: 500, message: `数据库错误 ${code}（ID ${id}）`, errorId: id };
 }
 
 async function tryLogError(sql: any, input: { id: string; orgId: string | null; userId: string | null; route: string; message: string; stack?: string | null }) {
@@ -1018,13 +1018,13 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     const mapped = mapPgError(e);
     if (mapped) {
       console.error("[journals/put]", { orgId, userId: req.auth?.userId, pgCode: e?.code, message: msg });
-      res.status(mapped.status).json({ success: false, error: mapped.message });
+      res.status(mapped.status).json({ success: false, error: mapped.message, errorId: mapped.errorId });
       return;
     }
     const errorId = makeErrorId();
     console.error("[journals/put]", { orgId, userId: req.auth?.userId, errorId, message: msg });
     await tryLogError(sql, { id: errorId, orgId, userId: req.auth?.userId || null, route: "journals/put", message: msg, stack: e?.stack || null });
-    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
+    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})`, errorId });
   }
 });
 
@@ -1674,13 +1674,13 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     const mapped = mapPgError(e);
     if (mapped) {
       console.error("[journals/post]", { orgId, userId: req.auth?.userId, pgCode: e?.code, message: msg });
-      res.status(mapped.status).json({ success: false, error: mapped.message });
+      res.status(mapped.status).json({ success: false, error: mapped.message, errorId: mapped.errorId });
       return;
     }
     const errorId = makeErrorId();
     console.error("[journals/post]", { orgId, userId: req.auth?.userId, errorId, message: msg });
     await tryLogError(sql, { id: errorId, orgId, userId: req.auth?.userId || null, route: "journals/post", message: msg, stack: e?.stack || null });
-    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
+    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})`, errorId });
   }
 });
 
@@ -1761,13 +1761,13 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
     const mapped = mapPgError(e);
     if (mapped) {
       console.error("[journals/delete]", { orgId, userId: req.auth?.userId, pgCode: e?.code, message: msg });
-      res.status(mapped.status).json({ success: false, error: mapped.message });
+      res.status(mapped.status).json({ success: false, error: mapped.message, errorId: mapped.errorId });
       return;
     }
     const errorId = makeErrorId();
     console.error("[journals/delete]", { orgId, userId: req.auth?.userId, errorId, message: msg });
     await tryLogError(sql, { id: errorId, orgId, userId: req.auth?.userId || null, route: "journals/delete", message: msg, stack: e?.stack || null });
-    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})` });
+    res.status(500).json({ success: false, error: `Server internal error (ID ${errorId})`, errorId });
   }
 });
 

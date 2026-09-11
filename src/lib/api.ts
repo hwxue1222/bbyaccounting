@@ -63,6 +63,25 @@ export async function api<T>(
         if (!res.ok || data?.success === false) {
           const msgBase = typeof data?.error === "string" ? data.error : `HTTP ${res.status}`;
           const errorId = typeof data?.errorId === "string" && data.errorId ? data.errorId : null;
+
+          const internalMatch = /Server internal error \(ID ([0-9a-fA-F-]{36})\)/.exec(msgBase);
+          const internalId = internalMatch ? internalMatch[1] : null;
+          if (internalId) {
+            try {
+              const debugRes = await fetch(`/api/debug/errors/${encodeURIComponent(internalId)}`, { credentials: "include" });
+              if (debugRes.ok && debugRes.headers.get("Content-Type")?.includes("application/json")) {
+                const dbg = (await debugRes.json()) as any;
+                const msg = typeof dbg?.data?.error?.message === "string" ? dbg.data.error.message : null;
+                const route = typeof dbg?.data?.error?.route === "string" ? dbg.data.error.route : null;
+                if (msg) {
+                  throw new Error(route ? `${msg} (via ${route}, ID ${internalId})` : `${msg} (ID ${internalId})`);
+                }
+              }
+            } catch (e: any) {
+              if (e?.message) throw e;
+            }
+          }
+
           throw new Error(errorId ? `${msgBase} (ID ${errorId})` : msgBase);
         }
         return (data?.data ?? data) as T;
