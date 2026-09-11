@@ -1038,6 +1038,107 @@ export default function Journal() {
     }
   }
 
+  function resetAssistSuggestion() {
+    setAssistSuggestion(null);
+    setAssistErr(null);
+  }
+
+  function confirmAssistFill() {
+    if (!assistSuggestion) return;
+    const debit = assistEditLines.reduce((s, x) => s + (Number(x.debitTxn) || 0), 0);
+    const credit = assistEditLines.reduce((s, x) => s + (Number(x.creditTxn) || 0), 0);
+    const diff = Math.round((debit - credit) * 100) / 100;
+    if (assistEditLines.length < 2) {
+      setAssistErr(tr("至少需要 2 行分录。", "At least 2 lines are required."));
+      return;
+    }
+    if (diff !== 0) {
+      setAssistErr(tr(`借贷不平衡：差额 ${diff.toFixed(2)}`, `Not balanced: diff ${diff.toFixed(2)}`));
+      return;
+    }
+    if (assistEditLines.some((x) => !x.accountId)) {
+      setAssistErr(tr("请为每一行选择科目。", "Select an account for each line."));
+      return;
+    }
+
+    const invDetailsOut = assistEditInvDetails
+      .map((d) => {
+        const qty = Math.trunc(Number(d.qty) || 0);
+        if (!d.itemId || qty <= 0) return null;
+        if (assistEditInvMode === "receipt") {
+          const unit = Number(d.unitCostTxn) || 0;
+          if (unit <= 0) return null;
+          return { moveType: "receipt" as const, itemId: d.itemId, qty, unitCostTxn: unit };
+        }
+        return { moveType: "shipment" as const, itemId: d.itemId, qty };
+      })
+      .filter(Boolean) as any[];
+
+    const includeInv = invDetailsOut.length > 0;
+
+    const accountIdToCode = new Map(accounts.map((a) => [a.id, String(a.code).trim()]));
+    const accountIdToName = new Map(accounts.map((a) => [a.id, a.name]));
+
+    const previewLines = assistEditLines.map((x) => ({
+      accountCode: accountIdToCode.get(x.accountId) || "",
+      accountName: accountIdToName.get(x.accountId) || "",
+      description: x.description || undefined,
+      debitTxn: Math.max(0, Number(x.debitTxn) || 0),
+      creditTxn: Math.max(0, Number(x.creditTxn) || 0),
+    }));
+
+    const draftLines = assistEditLines.map((x) => ({
+      accountId: x.accountId,
+      description: x.description || undefined,
+      costCenterId: x.costCenterId ? x.costCenterId : null,
+      debitTxn: Math.max(0, Number(x.debitTxn) || 0),
+      creditTxn: Math.max(0, Number(x.creditTxn) || 0),
+    }));
+
+    const editedSuggestion: AssistJournalSuggestion = {
+      draft: {
+        entryDate: assistEditEntryDate || draftDate,
+        currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
+        fxRate: Number(assistEditFxRate) || 1,
+        memo: assistEditMemo || "",
+        inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
+        inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
+        lines: draftLines as any,
+      },
+      preview: {
+        entryDate: assistEditEntryDate || draftDate,
+        currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
+        fxRate: Number(assistEditFxRate) || 1,
+        memo: assistEditMemo || "",
+        inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
+        inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
+        lines: previewLines as any,
+      },
+      warnings: Array.isArray((assistSuggestion as any).warnings) ? (assistSuggestion as any).warnings : [],
+      missing: [],
+    };
+
+    let fa: any = null;
+    if (assistEditFaPurchase && assistEditFaPurchase.category.trim() && assistEditFaPurchase.name.trim()) {
+      const life = Math.trunc(Number(assistEditFaPurchase.usefulLifeMonths) || 0);
+      const salvage = Number(assistEditFaPurchase.salvageBase) || 0;
+      if (life > 0) {
+        fa = {
+          lineIdx: assistEditFaPurchase.lineIdx,
+          category: assistEditFaPurchase.category.trim(),
+          assetNo: assistEditFaPurchase.assetNo.trim(),
+          name: assistEditFaPurchase.name.trim(),
+          acquisitionDate: assistEditFaPurchase.acquisitionDate || (assistEditEntryDate || draftDate),
+          usefulLifeMonths: life,
+          salvageBase: salvage,
+        };
+      }
+    }
+
+    applyAssistSuggestion(editedSuggestion, { faPurchase: fa });
+    setAssistOpen(false);
+  }
+
   useEffect(() => {
     const d = assistSuggestion?.draft;
     if (!d || !Array.isArray(d.lines) || d.lines.length < 2) {
@@ -2117,19 +2218,19 @@ export default function Journal() {
 
         {assistOpen ? (
           <div
-            className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
             onMouseDown={() => {
               setAssistOpen(false);
               setAssistBusy(false);
             }}
           >
             <div
-              className="w-full max-w-4xl rounded-xl bg-white p-4 shadow-xl"
+              className="mx-auto flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col rounded-xl bg-white shadow-xl"
               onMouseDown={(e) => {
                 e.stopPropagation();
               }}
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 p-4">
                 <div className="text-sm font-semibold">{tr("对话生成分录（不会自动过账）", "AI assist (won't auto-post)")}</div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
@@ -2143,39 +2244,40 @@ export default function Journal() {
                 </button>
               </div>
 
-              <div className="mt-3 rounded-lg border border-zinc-200 bg-white">
-                <div className="max-h-72 space-y-2 overflow-auto p-3 text-sm">
-                  {(assistChatMessages.length
-                    ? assistChatMessages
-                    : [
-                        {
-                          role: "assistant" as const,
-                          text: tr(
-                            "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
-                            "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
-                          ),
-                        },
-                      ]
-                  ).map((m, idx) => (
-                    <div key={idx} className={m.role === "user" ? "text-right" : "text-left"}>
-                      <div
-                        className={
-                          m.role === "user"
-                            ? "inline-block max-w-[85%] rounded-2xl bg-blue-700 px-3 py-2 text-white"
-                            : "inline-block max-w-[85%] rounded-2xl bg-zinc-100 px-3 py-2 text-zinc-900"
-                        }
-                      >
-                        {m.text}
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="rounded-lg border border-zinc-200 bg-white">
+                  <div className="max-h-72 space-y-2 overflow-auto p-3 text-sm">
+                    {(assistChatMessages.length
+                      ? assistChatMessages
+                      : [
+                          {
+                            role: "assistant" as const,
+                            text: tr(
+                              "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
+                              "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
+                            ),
+                          },
+                        ]
+                    ).map((m, idx) => (
+                      <div key={idx} className={m.role === "user" ? "text-right" : "text-left"}>
+                        <div
+                          className={
+                            m.role === "user"
+                              ? "inline-block max-w-[85%] rounded-2xl bg-blue-700 px-3 py-2 text-white"
+                              : "inline-block max-w-[85%] rounded-2xl bg-zinc-100 px-3 py-2 text-zinc-900"
+                          }
+                        >
+                          {m.text}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {assistErr ? <div className="mt-3 text-sm text-red-700">{assistErr}</div> : null}
+                {assistErr ? <div className="mt-3 text-sm text-red-700">{assistErr}</div> : null}
 
-              {assistSuggestion ? (
-                <div className="mt-4">
+                {assistSuggestion ? (
+                  <div className="mt-4">
                   {assistSuggestion.missing?.length ? (
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                       <div className="font-medium">{tr("需要补充信息/设置", "Missing info/setup")}</div>
@@ -2582,124 +2684,30 @@ export default function Journal() {
                         </div>
                       ) : null}
 
-                      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                          disabled={assistBusy}
-                          onClick={() => {
-                            setAssistSuggestion(null);
-                            setAssistErr(null);
-                          }}
-                          type="button"
-                        >
-                          {tr("重新生成", "Reset")}
-                        </button>
-                        <button
-                          className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
-                          disabled={assistBusy || !(assistSuggestion as any)?.draft}
-                          onClick={() => {
-                            const debit = assistEditLines.reduce((s, x) => s + (Number(x.debitTxn) || 0), 0);
-                            const credit = assistEditLines.reduce((s, x) => s + (Number(x.creditTxn) || 0), 0);
-                            const diff = Math.round((debit - credit) * 100) / 100;
-                            if (assistEditLines.length < 2) {
-                              setAssistErr(tr("至少需要 2 行分录。", "At least 2 lines are required."));
-                              return;
-                            }
-                            if (diff !== 0) {
-                              setAssistErr(tr(`借贷不平衡：差额 ${diff.toFixed(2)}`, `Not balanced: diff ${diff.toFixed(2)}`));
-                              return;
-                            }
-                            if (assistEditLines.some((x) => !x.accountId)) {
-                              setAssistErr(tr("请为每一行选择科目。", "Select an account for each line."));
-                              return;
-                            }
-
-                            const invDetailsOut = assistEditInvDetails
-                              .map((d) => {
-                                const qty = Math.trunc(Number(d.qty) || 0);
-                                if (!d.itemId || qty <= 0) return null;
-                                if (assistEditInvMode === "receipt") {
-                                  const unit = Number(d.unitCostTxn) || 0;
-                                  if (unit <= 0) return null;
-                                  return { moveType: "receipt" as const, itemId: d.itemId, qty, unitCostTxn: unit };
-                                }
-                                return { moveType: "shipment" as const, itemId: d.itemId, qty };
-                              })
-                              .filter(Boolean) as any[];
-
-                            const includeInv = invDetailsOut.length > 0;
-
-                            const accountIdToCode = new Map(accounts.map((a) => [a.id, String(a.code).trim()]));
-                            const accountIdToName = new Map(accounts.map((a) => [a.id, a.name]));
-
-                            const previewLines = assistEditLines.map((x) => ({
-                              accountCode: accountIdToCode.get(x.accountId) || "",
-                              accountName: accountIdToName.get(x.accountId) || "",
-                              description: x.description || undefined,
-                              debitTxn: Math.max(0, Number(x.debitTxn) || 0),
-                              creditTxn: Math.max(0, Number(x.creditTxn) || 0),
-                            }));
-
-                            const draftLines = assistEditLines.map((x) => ({
-                              accountId: x.accountId,
-                              description: x.description || undefined,
-                              costCenterId: x.costCenterId ? x.costCenterId : null,
-                              debitTxn: Math.max(0, Number(x.debitTxn) || 0),
-                              creditTxn: Math.max(0, Number(x.creditTxn) || 0),
-                            }));
-
-                            const editedSuggestion: AssistJournalSuggestion = {
-                              draft: {
-                                entryDate: assistEditEntryDate || draftDate,
-                                currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
-                                fxRate: Number(assistEditFxRate) || 1,
-                                memo: assistEditMemo || "",
-                                inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
-                                inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
-                                lines: draftLines as any,
-                              },
-                              preview: {
-                                entryDate: assistEditEntryDate || draftDate,
-                                currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
-                                fxRate: Number(assistEditFxRate) || 1,
-                                memo: assistEditMemo || "",
-                                inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
-                                inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
-                                lines: previewLines as any,
-                              },
-                              warnings: Array.isArray((assistSuggestion as any).warnings) ? (assistSuggestion as any).warnings : [],
-                              missing: [],
-                            };
-
-                            let fa: any = null;
-                            if (assistEditFaPurchase && assistEditFaPurchase.category.trim() && assistEditFaPurchase.name.trim()) {
-                              const life = Math.trunc(Number(assistEditFaPurchase.usefulLifeMonths) || 0);
-                              const salvage = Number(assistEditFaPurchase.salvageBase) || 0;
-                              if (life > 0) {
-                                fa = {
-                                  lineIdx: assistEditFaPurchase.lineIdx,
-                                  category: assistEditFaPurchase.category.trim(),
-                                  assetNo: assistEditFaPurchase.assetNo.trim(),
-                                  name: assistEditFaPurchase.name.trim(),
-                                  acquisitionDate: assistEditFaPurchase.acquisitionDate || (assistEditEntryDate || draftDate),
-                                  usefulLifeMonths: life,
-                                  salvageBase: salvage,
-                                };
-                              }
-                            }
-
-                            applyAssistSuggestion(editedSuggestion, { faPurchase: fa });
-                            setAssistOpen(false);
-                          }}
-                          type="button"
-                        >
-                          {tr("确认并填入分录", "Confirm & fill")}
-                        </button>
-                      </div>
                     </>
                   ) : null}
-                </div>
-              ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 bg-white p-4">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistBusy}
+                  onClick={() => resetAssistSuggestion()}
+                  type="button"
+                >
+                  {tr("重新生成", "Reset")}
+                </button>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={assistBusy || !(assistSuggestion as any)?.draft}
+                  onClick={() => confirmAssistFill()}
+                  type="button"
+                >
+                  {tr("确认并填入分录", "Confirm & fill")}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
