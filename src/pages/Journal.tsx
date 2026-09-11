@@ -119,9 +119,14 @@ export default function Journal() {
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
   const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
-  const [assistQuickText, setAssistQuickText] = useState("");
+  const [assistQuickWho, setAssistQuickWho] = useState("");
+  const [assistQuickOnBehalf, setAssistQuickOnBehalf] = useState("");
+  const [assistQuickPayMethod, setAssistQuickPayMethod] = useState("");
+  const [assistQuickAction, setAssistQuickAction] = useState("");
+  const [assistQuickCurrency, setAssistQuickCurrency] = useState("");
+  const [assistQuickAmount, setAssistQuickAmount] = useState("");
+  const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
   const [assistChatMessages, setAssistChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
-  const [assistChatInput, setAssistChatInput] = useState("");
 
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
@@ -830,10 +835,8 @@ export default function Journal() {
 
     const t = (initialText ?? "").trim();
     if (!t) {
-      setAssistChatInput("");
       return;
     }
-    setAssistChatInput("");
 
     setAssistBusy(true);
     setAssistChatMessages((m) => [...m, { role: "user", text: t }]);
@@ -868,7 +871,6 @@ export default function Journal() {
     setAssistBusy(true);
     setAssistErr(null);
     setAssistSuggestion(null);
-    setAssistChatInput("");
     const conversationText = [...assistChatMessages.filter((x) => x.role === "user").map((x) => x.text), t].join("\n");
     setAssistChatMessages((m) => [...m, { role: "user", text: t }]);
     try {
@@ -1123,6 +1125,21 @@ export default function Journal() {
   function renderEditorCard() {
     const voucherEmpty = !draftVoucherNo.trim();
     const readOnly = Boolean(postDraftId);
+
+    const currencyForQuick = (assistQuickCurrency.trim() || draftCurrency || baseCurrency).toUpperCase();
+    const quickTextParts: string[] = [];
+    if (assistQuickWho.trim()) {
+      if (assistQuickOnBehalf.trim()) quickTextParts.push(`${assistQuickWho.trim()}代替${assistQuickOnBehalf.trim()}`);
+      else quickTextParts.push(assistQuickWho.trim());
+    }
+    if (assistQuickPayMethod.trim()) quickTextParts.push(`用${assistQuickPayMethod.trim()}`);
+    if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
+    const amt = assistQuickAmount.trim();
+    if (amt) quickTextParts.push(`${amt} ${currencyForQuick}`.trim());
+    if (assistQuickPurpose.trim()) quickTextParts.push(`用途：${assistQuickPurpose.trim()}`);
+    const quickText = quickTextParts.join("，");
+
+    const canGenerate = !readOnly && !busy && !!assistQuickAction.trim() && !!amt;
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold">
@@ -1134,31 +1151,102 @@ export default function Journal() {
         </div>
 
         <div className="mt-3">
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2">
-            <input
-              className="min-w-[240px] flex-1 bg-transparent text-sm outline-none"
-              value={assistQuickText}
-              onChange={(e) => setAssistQuickText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || e.shiftKey) return;
-                e.preventDefault();
-                const text = assistQuickText.trim();
-                if (!text || readOnly || busy) return;
-                void startAssistChat(text);
-              }}
-              placeholder={tr(
-                "对话生成分录：例如 董事为公司用现金购买车辆 20000 MYR",
-                "AI assist: e.g., Director bought a company car for 20000 MYR paid in cash",
-              )}
-              disabled={readOnly || busy}
-            />
+          <div className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="grid gap-3 md:grid-cols-12">
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("谁", "Who")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistQuickWho}
+                  onChange={(e) => setAssistQuickWho(e.target.value)}
+                  placeholder={tr("董事", "Director")}
+                  disabled={readOnly || busy}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("代替谁", "On behalf")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistQuickOnBehalf}
+                  onChange={(e) => setAssistQuickOnBehalf(e.target.value)}
+                  placeholder={tr("公司", "Company")}
+                  disabled={readOnly || busy}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("付款方式", "Payment")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistQuickPayMethod}
+                  onChange={(e) => setAssistQuickPayMethod(e.target.value)}
+                  placeholder={tr("现金/转账", "Cash/transfer")}
+                  disabled={readOnly || busy}
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="text-xs text-zinc-600">{tr("做什么", "What")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistQuickAction}
+                  onChange={(e) => setAssistQuickAction(e.target.value)}
+                  placeholder={tr("购买一辆汽车", "Bought a car")}
+                  disabled={readOnly || busy}
+                />
+              </div>
+              <div className="md:col-span-1">
+                <label className="text-xs text-zinc-600">{tr("货币", "CCY")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-2 text-sm"
+                  value={currencyForQuick}
+                  onChange={(e) => setAssistQuickCurrency(e.target.value.toUpperCase())}
+                  placeholder={draftCurrency || baseCurrency}
+                  disabled={readOnly || busy}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("金额", "Amount")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistQuickAmount}
+                  onChange={(e) => setAssistQuickAmount(e.target.value)}
+                  placeholder={tr("20000", "20000")}
+                  disabled={readOnly || busy}
+                  inputMode="decimal"
+                />
+              </div>
+              <div className="md:col-span-12">
+                <label className="text-xs text-zinc-600">{tr("用途", "Purpose")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={assistQuickPurpose}
+                  onChange={(e) => setAssistQuickPurpose(e.target.value)}
+                  placeholder={tr("公司使用/办公用途/自用", "Company use/office/personal")}
+                  disabled={readOnly || busy}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || e.shiftKey) return;
+                    e.preventDefault();
+                    if (!canGenerate) return;
+                    void startAssistChat(quickText);
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-zinc-500">
+                {quickText.trim()
+                  ? tr(`将生成：${quickText}`, `Will generate: ${quickText}`)
+                  : tr(
+                      "示例：董事代替公司用现金购买一辆汽车，20000 MYR，用途：公司使用。",
+                      "Example: Director on behalf of company paid cash to buy a car, 20000 MYR, purpose: company use.",
+                    )}
+              </div>
             <button
               className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              disabled={readOnly || busy || !assistQuickText.trim()}
+              disabled={!canGenerate}
               onClick={() => {
-                const text = assistQuickText.trim();
-                if (!text) return;
-                void startAssistChat(text);
+                if (!canGenerate) return;
+                void startAssistChat(quickText);
               }}
               type="button"
             >
@@ -1168,14 +1256,13 @@ export default function Journal() {
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
               disabled={readOnly || busy}
               onClick={() => {
-                const t = assistQuickText.trim();
-                void startAssistChat(t || undefined);
-                if (t) setAssistChatInput(t);
+                void startAssistChat(quickText.trim() || undefined);
               }}
               type="button"
             >
               {tr("展开对话框", "Open")}
             </button>
+            </div>
           </div>
           <div className="mt-1 text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
         </div>
@@ -2012,37 +2099,6 @@ export default function Journal() {
                       </div>
                     ))}
                   </div>
-                  <div className="border-t border-zinc-200 p-3">
-                    <label className="text-xs text-zinc-600">{tr("输入", "Input")}</label>
-                    <textarea
-                      className="mt-1 h-24 w-full resize-none rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                      value={assistChatInput}
-                      onChange={(e) => setAssistChatInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Enter" || e.shiftKey) return;
-                        e.preventDefault();
-                        void sendAssistChatTurn(assistChatInput);
-                      }}
-                      placeholder={tr(
-                        "例如：董事为公司用现金购买车辆 20000 MYR。可补充：用途/是否资本化/折旧年限/是否含税。",
-                        "Example: Director bought a company car for 20000 MYR paid in cash. Add: purpose/capitalize?/useful life/tax.",
-                      )}
-                      disabled={assistBusy}
-                    />
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <button
-                        className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
-                        disabled={assistBusy || !assistChatInput.trim()}
-                        onClick={() => void sendAssistChatTurn(assistChatInput)}
-                        type="button"
-                      >
-                        {tr("发送", "Send")}
-                      </button>
-                      <div className="text-xs text-zinc-500">
-                        {tr("生成建议后可点击“确认并填入分录”。", "After preview, click 'Confirm & fill'.")}
-                      </div>
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -2112,7 +2168,31 @@ export default function Journal() {
                             {tr("重新生成", "Regenerate")}
                           </button>
                         ) : (
-                          <div className="text-xs text-amber-900/70">{tr("请在对话框继续补充并发送。", "Please continue in chat and send.")}</div>
+                          <>
+                            <div className="text-xs text-amber-900/70">{tr("请补充必要信息后继续生成：", "Add missing info and continue:")}</div>
+                            <input
+                              className="w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                              value={assistExtra}
+                              onChange={(e) => setAssistExtra(e.target.value)}
+                              placeholder={tr(
+                                "例如：现金/银行转账；金额 20000 MYR；用途；是否资本化；折旧年限。",
+                                "E.g., cash/bank transfer; amount 20000 MYR; purpose; capitalize?; useful life.",
+                              )}
+                              disabled={assistBusy}
+                            />
+                            <button
+                              className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
+                              disabled={assistBusy || !assistExtra.trim()}
+                              onClick={() => {
+                                const extra = assistExtra.trim();
+                                setAssistExtra("");
+                                void sendAssistChatTurn(extra);
+                              }}
+                              type="button"
+                            >
+                              {tr("补充并继续", "Continue")}
+                            </button>
+                          </>
                         )}
                         <button
                           className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"

@@ -234,27 +234,125 @@ router.patch("/currencies/:id", requireAuth, async (req: AuthedRequest, res: Res
   await ensureMigrated();
   const orgId = await requireOrg(req, res);
   if (!orgId) return;
-  const bodySchema = z.object({ isEnabled: z.boolean() });
+  const bodySchema = z.object({ isEnabled: z.boolean().optional(), code: z.string().min(3).max(3).optional() });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, error: "Invalid input" });
     return;
   }
-  const sql = getSql();
-  const id = req.params.id;
-  const row = (
-    await sql`
-      UPDATE currencies
-      SET is_enabled = ${parsed.data.isEnabled}
-      WHERE id = ${id} AND org_id = ${orgId}
-      RETURNING id, code, is_enabled as "isEnabled"
-    `
-  )[0];
-  if (!row) {
-    res.status(404).json({ success: false, error: "Not found" });
+  if (Object.keys(parsed.data).length === 0) {
+    res.status(400).json({ success: false, error: "No changes" });
     return;
   }
-  res.status(200).json({ success: true, data: { currency: row } });
+  const sql = getSql();
+  const id = req.params.id;
+
+  try {
+    const row = await sql.begin(async (trx) => {
+      const current = (
+        await trx`
+          SELECT id, code, is_enabled as "isEnabled"
+          FROM currencies
+          WHERE id = ${id} AND org_id = ${orgId}
+          LIMIT 1
+        `
+      )[0] as any;
+
+      if (!current) return null;
+
+      const prevCode = String(current.code || "").toUpperCase();
+      const prevEnabled = Boolean(current.isEnabled);
+      const nextCode = parsed.data.code ? parsed.data.code.trim().toUpperCase() : prevCode;
+      const nextEnabled = parsed.data.isEnabled ?? prevEnabled;
+
+      if (nextCode === prevCode && nextEnabled === prevEnabled) {
+        throw new Error("__NO_CHANGES__");
+      }
+
+      if (nextCode !== prevCode) {
+        const orgRow = (
+          await trx`
+            SELECT base_currency as "baseCurrency"
+            FROM organizations
+            WHERE id = ${orgId}
+            LIMIT 1
+          `
+        )[0] as any;
+        const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
+        if (prevCode === baseCurrency) {
+          throw new Error("__BASE_CURRENCY__");
+        }
+
+        const dup = (
+          await trx`
+            SELECT 1
+            FROM currencies
+            WHERE org_id = ${orgId} AND code = ${nextCode} AND id <> ${id}
+            LIMIT 1
+          `
+        )[0];
+        if (dup) {
+          throw new Error("__DUP_CODE__");
+        }
+
+        const fxConflict = (
+          await trx`
+            SELECT 1
+            FROM fx_rates f_old
+            JOIN fx_rates f_new
+              ON f_new.org_id = f_old.org_id
+             AND f_new.rate_date = f_old.rate_date
+            WHERE f_old.org_id = ${orgId}
+              AND f_old.currency_code = ${prevCode}
+              AND f_new.currency_code = ${nextCode}
+            LIMIT 1
+          `
+        )[0];
+        if (fxConflict) {
+          throw new Error("__FX_CONFLICT__");
+        }
+
+        await trx`UPDATE fx_rates SET currency_code = ${nextCode} WHERE org_id = ${orgId} AND currency_code = ${prevCode}`;
+        await trx`UPDATE journal_entries SET currency_code = ${nextCode} WHERE org_id = ${orgId} AND currency_code = ${prevCode}`;
+        await trx`UPDATE inventory_moves SET currency_code = ${nextCode} WHERE org_id = ${orgId} AND currency_code = ${prevCode}`;
+      }
+
+      const updated = (
+        await trx`
+          UPDATE currencies
+          SET code = ${nextCode}, is_enabled = ${nextEnabled}
+          WHERE id = ${id} AND org_id = ${orgId}
+          RETURNING id, code, is_enabled as "isEnabled"
+        `
+      )[0];
+      return updated;
+    });
+
+    if (!row) {
+      res.status(404).json({ success: false, error: "Not found" });
+      return;
+    }
+    res.status(200).json({ success: true, data: { currency: row } });
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    if (msg.includes("__NO_CHANGES__")) {
+      res.status(400).json({ success: false, error: "No changes" });
+      return;
+    }
+    if (msg.includes("__BASE_CURRENCY__")) {
+      res.status(400).json({ success: false, error: "Cannot rename base currency" });
+      return;
+    }
+    if (msg.includes("__DUP_CODE__") || msg.includes("duplicate key")) {
+      res.status(409).json({ success: false, error: "Currency code already exists" });
+      return;
+    }
+    if (msg.includes("__FX_CONFLICT__")) {
+      res.status(409).json({ success: false, error: "FX rates conflict" });
+      return;
+    }
+    throw e;
+  }
 });
 
 router.get("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) => {

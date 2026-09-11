@@ -53,6 +53,9 @@ export default function Settings() {
   const [newCcName, setNewCcName] = useState("");
 
   const [newCurrencyCode, setNewCurrencyCode] = useState("");
+  const [editingCurrencyId, setEditingCurrencyId] = useState<string | null>(null);
+  const [editCurrencyCode, setEditCurrencyCode] = useState("");
+  const [currencyBusy, setCurrencyBusy] = useState(false);
 
   const [fxDate, setFxDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [fxCurrency, setFxCurrency] = useState("SGD");
@@ -91,6 +94,7 @@ export default function Settings() {
     if (!activeOrgId || orgSwitching) return;
     setErr(null);
     setInviteUrl(null);
+    setEditingCurrencyId(null);
     refresh().catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
 
@@ -580,24 +584,94 @@ export default function Settings() {
                 <tbody>
                   {currencies.map((c) => (
                     <tr key={c.id} className="border-t border-zinc-100">
-                      <td className="px-3 py-2">{c.code}</td>
+                      <td className="px-3 py-2">
+                        {editingCurrencyId === c.id ? (
+                          <input
+                            className="w-24 rounded-md border border-zinc-200 px-2 py-1 text-sm"
+                            value={editCurrencyCode}
+                            onChange={(e) => setEditCurrencyCode(e.target.value.toUpperCase())}
+                            maxLength={3}
+                            disabled={currencyBusy}
+                          />
+                        ) : (
+                          c.code
+                        )}
+                      </td>
                       <td className="px-3 py-2">{c.isEnabled ? "yes" : "no"}</td>
                       <td className="px-3 py-2 text-right">
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                          disabled={active?.baseCurrency?.toUpperCase() === c.code.toUpperCase()}
-                          onClick={async () => {
-                            setErr(null);
-                            try {
-                              await api(`/api/settings/currencies/${c.id}`, { method: "PATCH", json: { isEnabled: !c.isEnabled } });
-                              await refresh();
-                            } catch (e: any) {
-                              setErr(e.message);
-                            }
-                          }}
-                        >
-                          {c.isEnabled ? "Disable" : "Enable"}
-                        </button>
+                        {editingCurrencyId === c.id ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              disabled={currencyBusy}
+                              onClick={() => {
+                                setEditingCurrencyId(null);
+                                setEditCurrencyCode("");
+                              }}
+                              type="button"
+                            >
+                              {tr("取消", "Cancel")}
+                            </button>
+                            <button
+                              className="rounded-md bg-blue-700 px-2 py-1 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                              disabled={
+                                currencyBusy ||
+                                editCurrencyCode.trim().length !== 3 ||
+                                editCurrencyCode.trim().toUpperCase() === c.code.toUpperCase()
+                              }
+                              onClick={async () => {
+                                setCurrencyBusy(true);
+                                setErr(null);
+                                try {
+                                  await api(`/api/settings/currencies/${c.id}`, {
+                                    method: "PATCH",
+                                    json: { code: editCurrencyCode.trim().toUpperCase() },
+                                  });
+                                  setEditingCurrencyId(null);
+                                  setEditCurrencyCode("");
+                                  await refresh();
+                                } catch (e: any) {
+                                  setErr(e.message);
+                                } finally {
+                                  setCurrencyBusy(false);
+                                }
+                              }}
+                              type="button"
+                            >
+                              {tr("保存", "Save")}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              disabled={currencyBusy || active?.baseCurrency?.toUpperCase() === c.code.toUpperCase()}
+                              onClick={() => {
+                                setEditingCurrencyId(c.id);
+                                setEditCurrencyCode(c.code.toUpperCase());
+                              }}
+                              type="button"
+                            >
+                              {tr("修改", "Rename")}
+                            </button>
+                            <button
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              disabled={currencyBusy || active?.baseCurrency?.toUpperCase() === c.code.toUpperCase()}
+                              onClick={async () => {
+                                setErr(null);
+                                try {
+                                  await api(`/api/settings/currencies/${c.id}`, { method: "PATCH", json: { isEnabled: !c.isEnabled } });
+                                  await refresh();
+                                } catch (e: any) {
+                                  setErr(e.message);
+                                }
+                              }}
+                              type="button"
+                            >
+                              {c.isEnabled ? "Disable" : "Enable"}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
