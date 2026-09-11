@@ -72,7 +72,6 @@ router.post("/stock-take/preview", requireAuth, async (req: AuthedRequest, res: 
         z.object({
           itemId: z.string().uuid(),
           countedQty: z.number().nonnegative(),
-          gainUnitCostBase: z.number().nonnegative().optional(),
         }),
       )
       .min(1),
@@ -86,9 +85,20 @@ router.post("/stock-take/preview", requireAuth, async (req: AuthedRequest, res: 
   const sql = getSql();
   const itemIds = Array.from(new Set(parsed.data.lines.map((l) => l.itemId)));
   const items = (await sql`
-    SELECT id, sku, name, uom
-    FROM inventory_items
-    WHERE org_id = ${orgId} AND id = ANY(${sql.array(itemIds)}::uuid[])
+    SELECT
+      i.id,
+      i.sku,
+      i.name,
+      i.uom,
+      (
+        SELECT m.unit_cost_base
+        FROM inventory_moves m
+        WHERE m.org_id = i.org_id AND m.item_id = i.id AND m.status = 'posted' AND m.move_type = 'receipt'
+        ORDER BY m.move_date DESC, m.created_at DESC, m.id DESC
+        LIMIT 1
+      ) as "latestUnitCostBase"
+    FROM inventory_items i
+    WHERE i.org_id = ${orgId} AND i.id = ANY(${sql.array(itemIds)}::uuid[])
   `) as any[];
   const itemById = new Map(items.map((it) => [String(it.id), it]));
   if (itemById.size !== itemIds.length) {
@@ -143,8 +153,10 @@ router.post("/stock-take/preview", requireAuth, async (req: AuthedRequest, res: 
     }
 
     if (diffQty > 0) {
-      const gainUnitCostBase = Number(l.gainUnitCostBase) || 0;
-      const gainValueBase = round2(diffQty * gainUnitCostBase);
+      const latestUnitCostBase = it.latestUnitCostBase != null ? Number(it.latestUnitCostBase) : NaN;
+      const fallbackAvg = onHandQty > 0 ? round6(onHandValueBase / onHandQty) : 0;
+      const unitCostBase = Number.isFinite(latestUnitCostBase) && latestUnitCostBase > 0 ? round6(latestUnitCostBase) : fallbackAvg;
+      const gainValueBase = round2(diffQty * unitCostBase);
       const closingValueBase = round2(onHandValueBase + gainValueBase);
       return {
         itemId: l.itemId,
@@ -156,6 +168,7 @@ router.post("/stock-take/preview", requireAuth, async (req: AuthedRequest, res: 
         diffQty,
         adjustmentBase: gainValueBase,
         closingValueBase,
+        unitCostBase,
       };
     }
 
@@ -194,7 +207,6 @@ router.post("/stock-take", requireAuth, async (req: AuthedRequest, res: Response
         z.object({
           itemId: z.string().uuid(),
           countedQty: z.number().nonnegative(),
-          gainUnitCostBase: z.number().nonnegative().optional(),
         }),
       )
       .min(1),
@@ -208,9 +220,22 @@ router.post("/stock-take", requireAuth, async (req: AuthedRequest, res: Response
   const sql = getSql();
   const itemIds = Array.from(new Set(parsed.data.lines.map((l) => l.itemId)));
   const items = (await sql`
-    SELECT id, sku, name, uom, inventory_account_id as "inventoryAccountId", cogs_account_id as "cogsAccountId"
-    FROM inventory_items
-    WHERE org_id = ${orgId} AND id = ANY(${sql.array(itemIds)}::uuid[])
+    SELECT
+      i.id,
+      i.sku,
+      i.name,
+      i.uom,
+      i.inventory_account_id as "inventoryAccountId",
+      i.cogs_account_id as "cogsAccountId",
+      (
+        SELECT m.unit_cost_base
+        FROM inventory_moves m
+        WHERE m.org_id = i.org_id AND m.item_id = i.id AND m.status = 'posted' AND m.move_type = 'receipt'
+        ORDER BY m.move_date DESC, m.created_at DESC, m.id DESC
+        LIMIT 1
+      ) as "latestUnitCostBase"
+    FROM inventory_items i
+    WHERE i.org_id = ${orgId} AND i.id = ANY(${sql.array(itemIds)}::uuid[])
   `) as any[];
   const itemById = new Map(items.map((it) => [String(it.id), it]));
   if (itemById.size !== itemIds.length) {
@@ -328,8 +353,10 @@ router.post("/stock-take", requireAuth, async (req: AuthedRequest, res: Response
         continue;
       }
 
-      const gainUnitCostBase = Number(l.gainUnitCostBase) || 0;
-      const unitCostBase = round6(gainUnitCostBase);
+      const latestUnitCostBase = it.latestUnitCostBase != null ? Number(it.latestUnitCostBase) : NaN;
+      const onHandValueBase = round2(layers.reduce((s, x) => s + (Number(x.qtyRemaining) || 0) * (Number(x.unitCostBase) || 0), 0));
+      const fallbackAvg = onHandQty > 0 ? round6(onHandValueBase / onHandQty) : 0;
+      const unitCostBase = Number.isFinite(latestUnitCostBase) && latestUnitCostBase > 0 ? round6(latestUnitCostBase) : fallbackAvg;
       const totalBase = round2(unitCostBase * diffQty);
 
       await trx`
@@ -359,7 +386,7 @@ router.post("/stock-take", requireAuth, async (req: AuthedRequest, res: Response
       )[0] as any;
       await trx`UPDATE inventory_moves SET created_layer_id = ${layer.id} WHERE org_id = ${orgId} AND id = ${insertedMove.id}`;
 
-      rowsOut.push({ itemId: l.itemId, itemSku: it.sku, itemName: it.name, uom: it.uom, onHandQty, countedQty, diffQty, adjustmentBase: totalBase, gainUnitCostBase: unitCostBase });
+      rowsOut.push({ itemId: l.itemId, itemSku: it.sku, itemName: it.name, uom: it.uom, onHandQty, countedQty, diffQty, adjustmentBase: totalBase, unitCostBase });
     }
 
     const totalAdjustmentBase = round2(rowsOut.reduce((s, r) => s + (Number(r.adjustmentBase) || 0), 0));

@@ -50,7 +50,7 @@ type StockTakeItemRow = {
   latestUnitCostBase: string | null;
 };
 
-type StockTakeLine = { itemId: string; countedQty: string; gainUnitCostBase: string };
+type StockTakeLine = { itemId: string; countedQty: string };
 
 export default function Inventory() {
   const { activeOrgId, orgSwitching } = useAuthStore();
@@ -156,7 +156,6 @@ export default function Inventory() {
           next[id] = {
             itemId: id,
             countedQty: String(Math.trunc(currentQty)),
-            gainUnitCostBase: it.latestUnitCostBase != null ? String(Number(it.latestUnitCostBase) || 0) : "0",
           };
         }
       }
@@ -456,20 +455,13 @@ export default function Inventory() {
                       const lines = stockTakeItemsSorted
                         .map((it) => {
                           const st = stockTakeLines[String(it.id)];
-                          const onHandQty = Number(it.qty || 0);
                           const countedQty = Number(st?.countedQty);
-                          const gainUnitCostBase = Number(st?.gainUnitCostBase);
                           if (!Number.isFinite(countedQty) || countedQty < 0) return null;
-                          if (Math.round((countedQty - onHandQty) * 10000) === 0) return null;
-                          return {
-                            itemId: String(it.id),
-                            countedQty,
-                            gainUnitCostBase: countedQty > onHandQty ? (Number.isFinite(gainUnitCostBase) ? gainUnitCostBase : 0) : undefined,
-                          };
+                          return { itemId: String(it.id), countedQty };
                         })
                         .filter(Boolean);
                       if (!lines.length) {
-                        setErr(tr("没有需要调整的商品（盘点数量与现有数量一致）。", "No adjustments needed (counted qty equals on-hand).") );
+                        setErr(tr("没有商品可盘点。", "No items to stock take."));
                         return;
                       }
                       const r = await api<any>("/api/inventory/stock-take/preview", {
@@ -499,13 +491,11 @@ export default function Inventory() {
                           const st = stockTakeLines[String(it.id)];
                           const onHandQty = Number(it.qty || 0);
                           const countedQty = Number(st?.countedQty);
-                          const gainUnitCostBase = Number(st?.gainUnitCostBase);
                           if (!Number.isFinite(countedQty) || countedQty < 0) return null;
                           if (Math.round((countedQty - onHandQty) * 10000) === 0) return null;
                           return {
                             itemId: String(it.id),
                             countedQty,
-                            gainUnitCostBase: countedQty > onHandQty ? (Number.isFinite(gainUnitCostBase) ? gainUnitCostBase : 0) : undefined,
                           };
                         })
                         .filter(Boolean);
@@ -555,8 +545,7 @@ export default function Inventory() {
                     <th className="px-3 py-2 text-left">{tr("商品", "Item")}</th>
                     <th className="px-3 py-2 text-right">{tr("现有数量", "On-hand")}</th>
                     <th className="px-3 py-2 text-right">{tr("盘点数量", "Counted")}</th>
-                    <th className="px-3 py-2 text-right">{tr("盘盈单价（本位）", "Gain unit cost (base)")}</th>
-                    <th className="px-3 py-2 text-right">{tr("盘点后金额（本位）", "Closing value (base)")}</th>
+                    <th className="px-3 py-2 text-right">{tr("盘存成本", "Closing cost")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -568,6 +557,8 @@ export default function Inventory() {
                       const diff = countedQty - onHandQty;
                       const previewRow = (stockTakePreview?.rows || []).find((r: any) => String(r.itemId) === String(it.id));
                       const isActive = it.isActive !== false;
+                      const baseValue = Number(it.valueBase || 0);
+                      const closingCost = previewRow ? Number(previewRow.closingValueBase || 0) : diff === 0 ? baseValue : NaN;
                       return (
                         <tr key={it.id} className="border-t border-zinc-100">
                           <td className="px-3 py-2">
@@ -583,7 +574,7 @@ export default function Inventory() {
                                 const v = e.target.value;
                                 setStockTakeLines((prev) => ({
                                   ...prev,
-                                  [String(it.id)]: { itemId: String(it.id), countedQty: v, gainUnitCostBase: prev[String(it.id)]?.gainUnitCostBase || "0" },
+                                  [String(it.id)]: { itemId: String(it.id), countedQty: v },
                                 }));
                               }}
                               type="number"
@@ -597,29 +588,13 @@ export default function Inventory() {
                               </div>
                             ) : null}
                           </td>
-                          <td className="px-3 py-2 text-right">
-                            <input
-                              className="w-32 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
-                              value={st?.gainUnitCostBase ?? "0"}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setStockTakeLines((prev) => ({
-                                  ...prev,
-                                  [String(it.id)]: { itemId: String(it.id), countedQty: prev[String(it.id)]?.countedQty || "0", gainUnitCostBase: v },
-                                }));
-                              }}
-                              type="number"
-                              step="0.0001"
-                              disabled={diff <= 0}
-                            />
-                          </td>
-                          <td className="px-3 py-2 text-right">{previewRow ? Number(previewRow.closingValueBase || 0).toFixed(2) : ""}</td>
+                          <td className="px-3 py-2 text-right">{Number.isFinite(closingCost) ? closingCost.toFixed(2) : ""}</td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td className="px-3 py-4 text-sm text-zinc-500" colSpan={5}>
+                      <td className="px-3 py-4 text-sm text-zinc-500" colSpan={4}>
                         {tr("没有商品。请先在左侧新增库存商品。", "No items. Please add inventory items first.")}
                       </td>
                     </tr>
