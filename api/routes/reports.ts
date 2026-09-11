@@ -716,7 +716,6 @@ router.get("/balance-sheet.xlsx", requireAuth, async (req: AuthedRequest, res: R
 
   const amtAsset = (a: any) => Number(a.balance || 0);
   const amtLiabEq = (a: any) => -Number(a.balance || 0);
-  const sum = (xs: any[], f: (x: any) => number) => xs.reduce((s, r) => s + (f(r) || 0), 0);
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Balance Sheet");
@@ -883,12 +882,6 @@ router.get("/profit-loss.xlsx", requireAuth, async (req: AuthedRequest, res: Res
   const expenses = plRows
     .filter((r) => String(r.type) === "expense")
     .map((r) => ({ name: String(r.name), amount: Number(r.debit || 0) - Number(r.credit || 0) }));
-  const sum = (xs: Array<{ amount: number }>) => xs.reduce((s, r) => s + (r.amount || 0), 0);
-  const totalIncome = sum(income);
-  const totalCogs = sum(cogs);
-  const grossProfit = totalIncome - totalCogs;
-  const totalExp = sum(expenses);
-  const netProfit = grossProfit - totalExp;
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Profit and Loss");

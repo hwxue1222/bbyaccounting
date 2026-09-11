@@ -738,7 +738,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
       if (!existing) {
         throw new Error("Not found");
       }
-      if (Boolean(existing.isSystem)) {
+      if (existing.isSystem) {
         throw new Error("System entries cannot be edited directly");
       }
       if (String(existing.status) !== "posted") {
@@ -1849,8 +1849,6 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
     };
   });
 
-  let inventoryMode: "none" | "receipt" | "shipment" = "none";
-
   if (effectiveInventoryImpact) {
     if (!inventoryDetails?.length) {
       res.status(400).json({ success: false, error: "Missing inventoryDetails" });
@@ -1880,7 +1878,6 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       return;
     }
     const requestedMode = detailTypes[0];
-    inventoryMode = requestedMode;
 
     if (requestedMode === "receipt") {
       const receiptDetails = inventoryDetails.filter((d) => d.moveType === "receipt") as Array<{

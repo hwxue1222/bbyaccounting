@@ -39,6 +39,18 @@ type JournalDetail = {
   attachments: Array<{ id: string; fileName: string; mimeType: string; sizeBytes: number; createdAt: string }>;
 };
 
+type StockTakeItemRow = {
+  id: string;
+  sku: string | null;
+  name: string;
+  uom: string;
+  qty: string;
+  valueBase: string;
+  latestUnitCostBase: string | null;
+};
+
+type StockTakeLine = { itemId: string; countedQty: string; gainUnitCostBase: string };
+
 export default function Inventory() {
   const { activeOrgId, orgSwitching } = useAuthStore();
   const tr = useTr();
@@ -79,7 +91,12 @@ export default function Inventory() {
   const [journalErr, setJournalErr] = useState<string | null>(null);
   const [journalLoading, setJournalLoading] = useState(false);
 
-  const [panel, setPanel] = useState<"receipt" | "shipment" | "moves">("moves");
+  const [panel, setPanel] = useState<"receipt" | "shipment" | "moves" | "stockTake">("moves");
+
+  const [stockTakeDate, setStockTakeDate] = useState(today);
+  const [stockTakeItems, setStockTakeItems] = useState<StockTakeItemRow[]>([]);
+  const [stockTakeLines, setStockTakeLines] = useState<Record<string, StockTakeLine>>({});
+  const [stockTakePreview, setStockTakePreview] = useState<any>(null);
 
   const offsetAccounts = useMemo(() => accounts, [accounts]);
 
@@ -106,6 +123,27 @@ export default function Inventory() {
     ]);
     setAccounts(accounts as any);
     setItems(items as any);
+  }
+
+  async function refreshStockTakeItems() {
+    const r = await api<{ items: any[] }>("/api/inventory/stock-take/items");
+    const rows = (r.items || []) as any[];
+    setStockTakeItems(rows as any);
+    setStockTakeLines((prev) => {
+      const next: Record<string, StockTakeLine> = { ...prev };
+      for (const it of rows) {
+        const id = String(it.id);
+        const currentQty = Number(it.qty || 0);
+        if (!next[id]) {
+          next[id] = {
+            itemId: id,
+            countedQty: String(Math.trunc(currentQty)),
+            gainUnitCostBase: it.latestUnitCostBase != null ? String(Number(it.latestUnitCostBase) || 0) : "0",
+          };
+        }
+      }
+      return next;
+    });
   }
 
   async function refreshMoves() {
@@ -150,7 +188,9 @@ export default function Inventory() {
     setSelectedItemId("");
     setStock(null);
     setMoves([]);
-    refresh().catch((e) => setErr(e.message));
+    refresh()
+      .then(() => refreshStockTakeItems())
+      .catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
@@ -224,7 +264,7 @@ export default function Inventory() {
 
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-4 gap-1">
               <button
                 className={
                   panel === "receipt"
@@ -257,6 +297,22 @@ export default function Inventory() {
                 onClick={() => setPanel("moves")}
               >
                 流水
+              </button>
+              <button
+                className={
+                  panel === "stockTake"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => {
+                  setPanel("stockTake");
+                  setErr(null);
+                  setStockTakePreview(null);
+                  refreshStockTakeItems().catch((e) => setErr(e.message));
+                }}
+              >
+                盘点
               </button>
             </div>
           </div>
@@ -330,6 +386,192 @@ export default function Inventory() {
             >
               入库并过账
             </button>
+          </div>
+
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "stockTake" ? "" : "hidden")}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold">盘点（Stock Take）</div>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                disabled={busy}
+                onClick={() => {
+                  setErr(null);
+                  setStockTakePreview(null);
+                  refreshStockTakeItems().catch((e) => setErr(e.message));
+                }}
+                type="button"
+              >
+                刷新
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <label className="text-xs text-zinc-600">盘点日期</label>
+                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={stockTakeDate} onChange={(e) => setStockTakeDate(e.target.value)} type="date" />
+              </div>
+              <div className="flex items-end gap-2">
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setErr(null);
+                    setStockTakePreview(null);
+                    try {
+                      const lines = stockTakeItems
+                        .map((it) => {
+                          const st = stockTakeLines[String(it.id)];
+                          const onHandQty = Number(it.qty || 0);
+                          const countedQty = Number(st?.countedQty);
+                          const gainUnitCostBase = Number(st?.gainUnitCostBase);
+                          if (!Number.isFinite(countedQty) || countedQty < 0) return null;
+                          if (Math.round((countedQty - onHandQty) * 10000) === 0) return null;
+                          return {
+                            itemId: String(it.id),
+                            countedQty,
+                            gainUnitCostBase: countedQty > onHandQty ? (Number.isFinite(gainUnitCostBase) ? gainUnitCostBase : 0) : undefined,
+                          };
+                        })
+                        .filter(Boolean);
+                      if (!lines.length) {
+                        setErr("没有需要调整的商品（盘点数量与现有数量一致）。");
+                        return;
+                      }
+                      const r = await api<any>("/api/inventory/stock-take/preview", {
+                        method: "POST",
+                        json: { date: stockTakeDate, lines },
+                      });
+                      setStockTakePreview(r);
+                    } catch (e: any) {
+                      setErr(e.message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  预览成本
+                </button>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setErr(null);
+                    try {
+                      const lines = stockTakeItems
+                        .map((it) => {
+                          const st = stockTakeLines[String(it.id)];
+                          const onHandQty = Number(it.qty || 0);
+                          const countedQty = Number(st?.countedQty);
+                          const gainUnitCostBase = Number(st?.gainUnitCostBase);
+                          if (!Number.isFinite(countedQty) || countedQty < 0) return null;
+                          if (Math.round((countedQty - onHandQty) * 10000) === 0) return null;
+                          return {
+                            itemId: String(it.id),
+                            countedQty,
+                            gainUnitCostBase: countedQty > onHandQty ? (Number.isFinite(gainUnitCostBase) ? gainUnitCostBase : 0) : undefined,
+                          };
+                        })
+                        .filter(Boolean);
+                      if (!lines.length) {
+                        setErr("没有需要调整的商品（盘点数量与现有数量一致）。");
+                        return;
+                      }
+                      const r = await api<any>("/api/inventory/stock-take", {
+                        method: "POST",
+                        json: { date: stockTakeDate, lines },
+                      });
+                      setResult(r);
+                      await Promise.all([refreshMoves(), refreshStockTakeItems(), selectedItemId ? refreshStock(selectedItemId) : Promise.resolve()]);
+                      if (r?.entryId) {
+                        void openJournalModal(String(r.entryId));
+                      }
+                    } catch (e: any) {
+                      setErr(e.message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  盘点并过账
+                </button>
+              </div>
+            </div>
+
+            {stockTakePreview ? (
+              <div className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm">
+                <div>调整金额合计（本位）：{Number(stockTakePreview.totals?.adjustmentBase || 0).toFixed(2)}</div>
+                <div>盘点后库存合计金额（本位）：{Number(stockTakePreview.totals?.closingValueBase || 0).toFixed(2)}</div>
+              </div>
+            ) : null}
+
+            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs text-zinc-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">商品</th>
+                    <th className="px-3 py-2 text-right">现有数量</th>
+                    <th className="px-3 py-2 text-right">盘点数量</th>
+                    <th className="px-3 py-2 text-right">盘盈单价（本位）</th>
+                    <th className="px-3 py-2 text-right">盘点后金额（本位）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stockTakeItems.map((it) => {
+                    const st = stockTakeLines[String(it.id)];
+                    const onHandQty = Number(it.qty || 0);
+                    const countedQty = Number(st?.countedQty) || 0;
+                    const diff = countedQty - onHandQty;
+                    const previewRow = (stockTakePreview?.rows || []).find((r: any) => String(r.itemId) === String(it.id));
+                    return (
+                      <tr key={it.id} className="border-t border-zinc-100">
+                        <td className="px-3 py-2">
+                          {(it.sku ? `${it.sku} ` : "") + it.name} <span className="text-xs text-zinc-500">[{it.uom}]</span>
+                        </td>
+                        <td className="px-3 py-2 text-right">{Math.trunc(onHandQty)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                            value={st?.countedQty ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setStockTakeLines((prev) => ({
+                                ...prev,
+                                [String(it.id)]: { itemId: String(it.id), countedQty: v, gainUnitCostBase: prev[String(it.id)]?.gainUnitCostBase || "0" },
+                              }));
+                            }}
+                            type="number"
+                            step="1"
+                            min={0}
+                          />
+                          {diff !== 0 ? <div className={"mt-1 text-xs " + (diff > 0 ? "text-blue-700" : "text-amber-700")}>差异 {diff > 0 ? "+" : ""}{Math.trunc(diff)}</div> : null}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            className="w-32 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                            value={st?.gainUnitCostBase ?? "0"}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setStockTakeLines((prev) => ({
+                                ...prev,
+                                [String(it.id)]: { itemId: String(it.id), countedQty: prev[String(it.id)]?.countedQty || "0", gainUnitCostBase: v },
+                              }));
+                            }}
+                            type="number"
+                            step="0.0001"
+                            disabled={diff <= 0}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">{previewRow ? Number(previewRow.closingValueBase || 0).toFixed(2) : ""}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (panel === "shipment" ? "" : "hidden")}>

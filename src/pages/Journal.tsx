@@ -344,11 +344,6 @@ export default function Journal() {
     return r.voucherNo;
   }
 
-  const invLine = useMemo(() => {
-    if (invLineIdx == null) return null;
-    return draftLines[invLineIdx] || null;
-  }, [invLineIdx, draftLines]);
-
   async function refresh() {
     const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
@@ -363,11 +358,6 @@ export default function Journal() {
     setEntries(entries as any);
     setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
     await refreshNextVoucherNo();
-  }
-
-  async function refreshEntriesOnly() {
-    const { entries } = await api<{ entries: any[] }>("/api/journals");
-    setEntries(entries as any);
   }
 
   async function deleteEntry(id: string) {
@@ -559,21 +549,6 @@ export default function Journal() {
       memo: existing?.memo || draftMemo || "",
     });
     setFaPurchaseOpen(true);
-  }
-
-  function getInventoryLinkInfoByLine(line: { debitTxn: string; creditTxn: string }): { mode: "receipt" | "shipment"; expectedTxn: number; expectedBase: number } {
-    const debit = Number(line.debitTxn) || 0;
-    const credit = Number(line.creditTxn) || 0;
-    if (debit > 0 && credit > 0) {
-      throw new Error("该行不能同时有借和贷。");
-    }
-    if (debit > 0) {
-      return { mode: "receipt", expectedTxn: debit, expectedBase: Math.round(debit * draftFx * 100) / 100 };
-    }
-    if (credit > 0) {
-      return { mode: "shipment", expectedTxn: credit, expectedBase: Math.round(credit * draftFx * 100) / 100 };
-    }
-    throw new Error("请先在该行输入借方或贷方金额。");
   }
 
   function newRowId(): string {
@@ -1604,7 +1579,7 @@ export default function Journal() {
                         )
                       : undefined;
 
-                  let effectiveLines = draftLines.map((l) => ({ ...l }));
+                  const effectiveLines = draftLines.map((l) => ({ ...l }));
                   if (inventoryDetails?.length && invLineIdx != null) {
                     const line = effectiveLines[invLineIdx];
                     const debit = Number(line.debitTxn) || 0;
