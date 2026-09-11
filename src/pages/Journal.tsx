@@ -42,30 +42,34 @@ type EntryDetail = {
 };
 
 type AssistJournalSuggestion = {
-  draft: {
-    entryDate: string;
-    currency: string;
-    fxRate: number;
-    memo: string;
-    lines: Array<{ accountId: string; description?: string; costCenterId: string | null; debitTxn: number; creditTxn: number }>;
-    inventoryLinkLineNo?: number;
-    inventoryDetails?: Array<
-      | { moveType: "receipt"; itemId: string; qty: number; unitCostTxn: number }
-      | { moveType: "shipment"; itemId: string; qty: number }
-    >;
-  };
-  preview: {
-    entryDate: string;
-    currency: string;
-    fxRate: number;
-    memo: string;
-    lines: Array<{ accountCode: string; accountName: string; description?: string; debitTxn: number; creditTxn: number }>;
-    inventoryLinkLineNo?: number;
-    inventoryDetails?: Array<
-      | { moveType: "receipt"; itemId: string; qty: number; unitCostTxn: number }
-      | { moveType: "shipment"; itemId: string; qty: number }
-    >;
-  };
+  draft:
+    | {
+        entryDate: string;
+        currency: string;
+        fxRate: number;
+        memo: string;
+        lines: Array<{ accountId: string; description?: string; costCenterId: string | null; debitTxn: number; creditTxn: number }>;
+        inventoryLinkLineNo?: number;
+        inventoryDetails?: Array<
+          | { moveType: "receipt"; itemId: string; qty: number; unitCostTxn: number }
+          | { moveType: "shipment"; itemId: string; qty: number }
+        >;
+      }
+    | null;
+  preview:
+    | {
+        entryDate: string;
+        currency: string;
+        fxRate: number;
+        memo: string;
+        lines: Array<{ accountCode: string; accountName: string; description?: string; debitTxn: number; creditTxn: number }>;
+        inventoryLinkLineNo?: number;
+        inventoryDetails?: Array<
+          | { moveType: "receipt"; itemId: string; qty: number; unitCostTxn: number }
+          | { moveType: "shipment"; itemId: string; qty: number }
+        >;
+      }
+    | null;
   warnings: string[];
   missing: string[];
 };
@@ -116,6 +120,8 @@ export default function Journal() {
   const [assistErr, setAssistErr] = useState<string | null>(null);
   const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
   const [assistQuickText, setAssistQuickText] = useState("");
+  const [assistChatMessages, setAssistChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const [assistChatInput, setAssistChatInput] = useState("");
 
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
@@ -808,6 +814,88 @@ export default function Journal() {
     }
   }
 
+  async function startAssistChat(initialText?: string) {
+    const welcome = tr(
+      "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
+      "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
+    );
+
+    setAssistMode("auto");
+    setAssistErr(null);
+    setAssistSuggestion(null);
+    setAssistManualJson("");
+    setAssistExtra("");
+    setAssistChatMessages([{ role: "assistant", text: welcome }]);
+    setAssistOpen(true);
+
+    const t = (initialText ?? "").trim();
+    if (!t) {
+      setAssistChatInput("");
+      return;
+    }
+    setAssistChatInput("");
+
+    setAssistBusy(true);
+    setAssistChatMessages((m) => [...m, { role: "user", text: t }]);
+    try {
+      const r = await api<{ suggestion: AssistJournalSuggestion }>("/api/assist/journal-suggest", {
+        method: "POST",
+        json: { text: t, memo: draftMemo || undefined, entryDate: draftDate || undefined },
+        timeoutMs: 90_000,
+      });
+      setAssistSuggestion(r.suggestion);
+
+      const missing = Array.isArray((r.suggestion as any)?.missing) ? (r.suggestion as any).missing : [];
+      const hasPreview = Array.isArray((r.suggestion as any)?.preview?.lines) && (r.suggestion as any).preview.lines.length > 0;
+      const assistantText = hasPreview
+        ? tr("我已生成分录建议，请确认或继续补充细节。", "I generated a journal suggestion. Review below or add more details.")
+        : missing.length
+          ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
+          : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
+      setAssistChatMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+    } catch (e: any) {
+      const msg = e?.message || "Error";
+      setAssistErr(msg);
+      setAssistChatMessages((m) => [...m, { role: "assistant", text: msg }]);
+    } finally {
+      setAssistBusy(false);
+    }
+  }
+
+  async function sendAssistChatTurn(text: string) {
+    const t = text.trim();
+    if (!t || assistBusy) return;
+    setAssistBusy(true);
+    setAssistErr(null);
+    setAssistSuggestion(null);
+    setAssistChatInput("");
+    const conversationText = [...assistChatMessages.filter((x) => x.role === "user").map((x) => x.text), t].join("\n");
+    setAssistChatMessages((m) => [...m, { role: "user", text: t }]);
+    try {
+      const r = await api<{ suggestion: AssistJournalSuggestion }>("/api/assist/journal-suggest", {
+        method: "POST",
+        json: { text: conversationText, memo: draftMemo || undefined, entryDate: draftDate || undefined },
+        timeoutMs: 90_000,
+      });
+      setAssistSuggestion(r.suggestion);
+
+      const missing = Array.isArray((r.suggestion as any)?.missing) ? (r.suggestion as any).missing : [];
+      const hasPreview = Array.isArray((r.suggestion as any)?.preview?.lines) && (r.suggestion as any).preview.lines.length > 0;
+      const assistantText = hasPreview
+        ? tr("我已更新分录建议，请确认或继续补充。", "Updated the suggestion. Review below or add more details.")
+        : missing.length
+          ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
+          : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
+      setAssistChatMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+    } catch (e: any) {
+      const msg = e?.message || "Error";
+      setAssistErr(msg);
+      setAssistChatMessages((m) => [...m, { role: "assistant", text: msg }]);
+    } finally {
+      setAssistBusy(false);
+    }
+  }
+
   async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -1056,14 +1144,7 @@ export default function Journal() {
                 e.preventDefault();
                 const text = assistQuickText.trim();
                 if (!text || readOnly || busy) return;
-                setAssistErr(null);
-                setAssistSuggestion(null);
-                setAssistManualJson("");
-                setAssistExtra("");
-                setAssistMode("auto");
-                setAssistText(text);
-                setAssistOpen(true);
-                void runAssistSuggest(text);
+                void startAssistChat(text);
               }}
               placeholder={tr(
                 "对话生成分录：例如 董事为公司用现金购买车辆 20000 MYR",
@@ -1077,14 +1158,7 @@ export default function Journal() {
               onClick={() => {
                 const text = assistQuickText.trim();
                 if (!text) return;
-                setAssistErr(null);
-                setAssistSuggestion(null);
-                setAssistManualJson("");
-                setAssistExtra("");
-                setAssistMode("auto");
-                setAssistText(text);
-                setAssistOpen(true);
-                void runAssistSuggest(text);
+                void startAssistChat(text);
               }}
               type="button"
             >
@@ -1094,12 +1168,9 @@ export default function Journal() {
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
               disabled={readOnly || busy}
               onClick={() => {
-                setAssistErr(null);
-                setAssistSuggestion(null);
-                setAssistText((prev) => prev || assistQuickText.trim());
-                setAssistManualJson("");
-                setAssistExtra("");
-                setAssistOpen(true);
+                const t = assistQuickText.trim();
+                void startAssistChat(t || undefined);
+                if (t) setAssistChatInput(t);
               }}
               type="button"
             >
@@ -1109,17 +1180,6 @@ export default function Journal() {
           <div className="mt-1 text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
         </div>
 
-        <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          <div>
-            {tr(
-              "在科目设置勾选“链接库存 FIFO”后，可在分录行借方/贷方旁点击“库存”录入入库/出库明细；过账后才会影响 FIFO 成本与库存数量。",
-              "After enabling 'Link inventory FIFO' in Chart of Accounts, you can click 'Inventory' on a debit/credit line to enter receipt/shipment details. FIFO cost and stock qty are updated only after posting.",
-            )}
-          </div>
-          <a className="whitespace-nowrap rounded-md border border-amber-200 bg-white px-2 py-1 text-sm hover:bg-amber-100" href="/inventory">
-            {tr("查看库存 FIFO", "Open Inventory FIFO")}
-          </a>
-        </div>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="w-44">
             <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
@@ -1889,6 +1949,19 @@ export default function Journal() {
                     setAssistErr(null);
                     setAssistSuggestion(null);
                     setAssistExtra("");
+                    setAssistChatMessages((prev) =>
+                      prev.length
+                        ? prev
+                        : [
+                            {
+                              role: "assistant",
+                              text: tr(
+                                "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
+                                "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
+                              ),
+                            },
+                          ],
+                    );
                   }}
                   type="button"
                 >
@@ -1899,17 +1972,79 @@ export default function Journal() {
                 </div>
               </div>
 
-              <div className="mt-3">
-                <label className="text-xs text-zinc-600">
-                  {tr("描述（例如：9/10 银行转账付房租 2000，含税/不含税…）", "Description (e.g., 9/10 bank transfer for rent 2000, tax included/excluded...)")}
-                </label>
-                <textarea
-                  className="mt-1 h-28 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                  value={assistText}
-                  onChange={(e) => setAssistText(e.target.value)}
-                  placeholder={tr("用一句话描述业务，系统会生成借贷平衡的分录草稿。", "Describe the transaction in one sentence; a balanced draft will be generated.")}
-                />
-              </div>
+              {assistMode === "manual" ? (
+                <div className="mt-3">
+                  <label className="text-xs text-zinc-600">
+                    {tr("描述（例如：9/10 银行转账付房租 2000，含税/不含税…）", "Description (e.g., 9/10 bank transfer for rent 2000, tax included/excluded...)")}
+                  </label>
+                  <textarea
+                    className="mt-1 h-28 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={assistText}
+                    onChange={(e) => setAssistText(e.target.value)}
+                    placeholder={tr("用一句话描述业务，系统会生成借贷平衡的分录草稿。", "Describe the transaction in one sentence; a balanced draft will be generated.")}
+                  />
+                </div>
+              ) : (
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white">
+                  <div className="max-h-72 space-y-2 overflow-auto p-3 text-sm">
+                    {(assistChatMessages.length
+                      ? assistChatMessages
+                      : [
+                          {
+                            role: "assistant" as const,
+                            text: tr(
+                              "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
+                              "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
+                            ),
+                          },
+                        ]
+                    ).map((m, idx) => (
+                      <div key={idx} className={m.role === "user" ? "text-right" : "text-left"}>
+                        <div
+                          className={
+                            m.role === "user"
+                              ? "inline-block max-w-[85%] rounded-2xl bg-blue-700 px-3 py-2 text-white"
+                              : "inline-block max-w-[85%] rounded-2xl bg-zinc-100 px-3 py-2 text-zinc-900"
+                          }
+                        >
+                          {m.text}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-zinc-200 p-3">
+                    <label className="text-xs text-zinc-600">{tr("输入", "Input")}</label>
+                    <textarea
+                      className="mt-1 h-24 w-full resize-none rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistChatInput}
+                      onChange={(e) => setAssistChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" || e.shiftKey) return;
+                        e.preventDefault();
+                        void sendAssistChatTurn(assistChatInput);
+                      }}
+                      placeholder={tr(
+                        "例如：董事为公司用现金购买车辆 20000 MYR。可补充：用途/是否资本化/折旧年限/是否含税。",
+                        "Example: Director bought a company car for 20000 MYR paid in cash. Add: purpose/capitalize?/useful life/tax.",
+                      )}
+                      disabled={assistBusy}
+                    />
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                        disabled={assistBusy || !assistChatInput.trim()}
+                        onClick={() => void sendAssistChatTurn(assistChatInput)}
+                        type="button"
+                      >
+                        {tr("发送", "Send")}
+                      </button>
+                      <div className="text-xs text-zinc-500">
+                        {tr("生成建议后可点击“确认并填入分录”。", "After preview, click 'Confirm & fill'.")}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {assistMode === "manual" ? (
                 <>
@@ -1956,26 +2091,7 @@ export default function Journal() {
                     </div>
                   </div>
                 </>
-              ) : (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
-                    disabled={assistBusy || !assistText.trim()}
-                    onClick={() => {
-                      void runAssistSuggest();
-                    }}
-                    type="button"
-                  >
-                    {assistBusy ? "生成中…" : "生成建议"}
-                  </button>
-                  <div className="text-xs text-zinc-500">
-                    {tr(
-                      "需要服务器配置 Key；生成后仍需你点击“应用到分录”再手动过账。",
-                      "Server API key required. After generating, you still need to click 'Apply to journal' and post manually.",
-                    )}
-                  </div>
-                </div>
-              )}
+              ) : null}
 
               {assistErr ? <div className="mt-3 text-sm text-red-700">{assistErr}</div> : null}
 
@@ -1986,14 +2102,18 @@ export default function Journal() {
                       <div className="font-medium">{tr("需要补充信息/设置", "Missing info/setup")}</div>
                       <div className="mt-1">{assistSuggestion.missing.join("；")}</div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <button
-                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100 disabled:opacity-50"
-                          disabled={assistBusy}
-                          onClick={() => void runAssistSuggest()}
-                          type="button"
-                        >
-                          {tr("重新生成", "Regenerate")}
-                        </button>
+                        {assistMode === "manual" ? (
+                          <button
+                            className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100 disabled:opacity-50"
+                            disabled={assistBusy}
+                            onClick={() => void runAssistSuggest()}
+                            type="button"
+                          >
+                            {tr("重新生成", "Regenerate")}
+                          </button>
+                        ) : (
+                          <div className="text-xs text-amber-900/70">{tr("请在对话框继续补充并发送。", "Please continue in chat and send.")}</div>
+                        )}
                         <button
                           className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
                           onClick={() => navigate("/settings")}
@@ -2016,34 +2136,38 @@ export default function Journal() {
                           {tr("去新增库存商品", "Add inventory item")}
                         </button>
                       </div>
-                      <div className="mt-3">
-                        <label className="text-xs text-zinc-700">{tr("补充信息（可选）", "Extra info (optional)")}</label>
-                        <textarea
-                          className="mt-1 h-20 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
-                          value={assistExtra}
-                          onChange={(e) => setAssistExtra(e.target.value)}
-                          placeholder={tr(
-                            "例如：付款方式/供应商/是否含税/用途/借款或资本等。",
-                            "E.g., payment method/vendor/tax included/purpose/loan or capital.",
-                          )}
-                        />
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <button
-                          className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
-                          disabled={assistBusy || assistMode !== "auto" || !assistText.trim() || !assistExtra.trim()}
-                          onClick={() => {
-                            const merged = `${assistText.trim()}\n\n补充信息：${assistExtra.trim()}`;
-                            void runAssistSuggest(merged);
-                          }}
-                          type="button"
-                        >
-                          {tr("补充并重新生成", "Regenerate")}
-                        </button>
-                        <div className="text-xs text-amber-900/70">
-                          {tr("仅用于生成建议，不会自动过账。", "Used for suggestion only; won't auto-post.")}
-                        </div>
-                      </div>
+                      {assistMode === "manual" ? (
+                        <>
+                          <div className="mt-3">
+                            <label className="text-xs text-zinc-700">{tr("补充信息（可选）", "Extra info (optional)")}</label>
+                            <textarea
+                              className="mt-1 h-20 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                              value={assistExtra}
+                              onChange={(e) => setAssistExtra(e.target.value)}
+                              placeholder={tr(
+                                "例如：付款方式/供应商/是否含税/用途/借款或资本等。",
+                                "E.g., payment method/vendor/tax included/purpose/loan or capital.",
+                              )}
+                            />
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
+                              disabled={assistBusy || !assistText.trim() || !assistExtra.trim()}
+                              onClick={() => {
+                                const merged = `${assistText.trim()}\n\n补充信息：${assistExtra.trim()}`;
+                                void runAssistSuggest(merged);
+                              }}
+                              type="button"
+                            >
+                              {tr("补充并重新生成", "Regenerate")}
+                            </button>
+                            <div className="text-xs text-amber-900/70">
+                              {tr("仅用于生成建议，不会自动过账。", "Used for suggestion only; won't auto-post.")}
+                            </div>
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
                   {assistSuggestion.warnings?.length ? (
