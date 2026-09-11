@@ -21,6 +21,10 @@ function normalizeCode(input: unknown): string {
   return m ? m[0] : s;
 }
 
+function detectLang(text: string): "zh" | "en" {
+  return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
+}
+
 function stripCodeFences(s: string): string {
   const t = s.trim();
   const m = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -86,9 +90,12 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     return;
   }
 
+  const lang = detectLang(parsed.data.text);
+  const t = (zh: string, en: string) => (lang === "zh" ? zh : en);
+
   const apiKey = typeof process.env.GOOGLE_API_KEY === "string" ? process.env.GOOGLE_API_KEY : null;
   if (!apiKey) {
-    res.status(503).json({ success: false, error: "Missing GOOGLE_API_KEY" });
+    res.status(503).json({ success: false, error: t("缺少 GOOGLE_API_KEY", "Missing GOOGLE_API_KEY") });
     return;
   }
 
@@ -185,15 +192,22 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   };
 
   const system =
-    "你是会计分录助手。根据用户输入生成可直接过账的分录建议。\n" +
-    "严格输出 JSON，符合给定 schema。金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；不允许同时借贷都为正。\n" +
-    "只允许使用提供的科目代码与成本中心代码；若缺少合适科目/商品，请把需求写入 missing 数组，并用最接近的现有科目暂代。\n" +
-    "inventory.details.itemKey 必须匹配提供的库存商品：优先用 SKU，否则用商品名称。\n" +
-    "entryDate 如果用户未给出，使用提供的 entryDate。currency 如果用户未给出，使用 baseCurrency。fxRate 同币种为 1。";
+    lang === "zh"
+      ? "你是会计分录助手。根据用户输入生成可直接过账的分录建议。\n" +
+        "严格输出 JSON，符合给定 schema。金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；不允许同时借贷都为正。\n" +
+        "只允许使用提供的科目代码与成本中心代码；若缺少合适科目/商品，请把需求写入 missing 数组，并用最接近的现有科目暂代。\n" +
+        "inventory.details.itemKey 必须匹配提供的库存商品：优先用 SKU，否则用商品名称。\n" +
+        "entryDate 如果用户未给出，使用提供的 entryDate。currency 如果用户未给出，使用 baseCurrency。fxRate 同币种为 1。"
+      : "You are a journal entry assistant. Generate a post-ready journal suggestion from the user input.\n" +
+        "Return JSON only and conform to the provided schema. Amounts must balance; debitTxn/creditTxn are transaction-currency amounts; do not put positive numbers in both debit and credit.\n" +
+        "Use only the provided account codes and cost center codes. If a suitable account/item is missing, put it into the missing array and temporarily choose the closest available account.\n" +
+        "inventory.details.itemKey must match the provided inventory items (prefer SKU, otherwise use item name).\n" +
+        "If entryDate is not provided by the user, use the provided entryDate. If currency is not provided, use baseCurrency. fxRate is 1 when currency equals baseCurrency.";
 
   const user =
-    `用户输入：${parsed.data.text}\n\n` +
-    `约束与可用列表：\n${JSON.stringify(prompt)}\n`;
+    (lang === "zh"
+      ? `用户输入：${parsed.data.text}\n\n约束与可用列表：\n${JSON.stringify(prompt)}\n`
+      : `User input: ${parsed.data.text}\n\nConstraints & available lists:\n${JSON.stringify(prompt)}\n`);
 
   const envModel = normalizeGeminiModel(process.env.GEMINI_MODEL);
   const discoveredModels = envModel ? [] : await listGeminiModels(apiKey);
@@ -270,13 +284,16 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     const safeDetail = String(detail || "").replace(/\s+/g, " ").trim().slice(0, 280);
     const hint =
       status === 401 || status === 403
-        ? "（请检查 Vercel 的 GOOGLE_API_KEY 是否正确/有权限）"
+        ? t("（请检查 Vercel 的 GOOGLE_API_KEY 是否正确/有权限）", "(Check Vercel GOOGLE_API_KEY)")
         : status === 429
-          ? "（可能触发限流/额度不足，稍后再试）"
+          ? t("（可能触发限流/额度不足，稍后再试）", "(Rate limited / quota exceeded)")
           : status === 400
-            ? "（请求参数可能不被该模型支持，可尝试更换 GEMINI_MODEL）"
+            ? t("（请求参数可能不被该模型支持，可尝试更换 GEMINI_MODEL）", "(Model may not support this request; try another GEMINI_MODEL)")
             : status === 404
-              ? "（模型不存在/无权限。建议用 ListModels 查可用模型，并设置 GEMINI_MODEL）"
+              ? t(
+                  "（模型不存在/无权限。建议先不设置 GEMINI_MODEL 让系统自动选择，或用 ListModels 查可用模型再设置）",
+                  "(Model not found/unauthorized. Remove GEMINI_MODEL to auto-pick, or list models then set GEMINI_MODEL)",
+                )
             : "";
     let modelList: string[] = [];
     if (status === 404) {
@@ -284,7 +301,8 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     }
     const used = gem?.model ? ` model=${gem.model}` : "";
     const ver = gem?.apiVersion ? ` api=${gem.apiVersion}` : "";
-    const listText = modelList.length ? ` Available models: ${modelList.slice(0, 12).join(", ")}` : "";
+    const listText =
+      modelList.length && lang === "en" ? ` Available models: ${modelList.slice(0, 12).join(", ")}` : "";
     res
       .status(502)
       .json({ success: false, error: `Google Gemini API error (${status})${used}${ver} ${hint}${safeDetail ? ": " + safeDetail : ""}${listText}` });
@@ -294,7 +312,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const raw = gem.text ? (JSON.parse(gem.text) as any) : null;
   let content = getGeminiTextFromResponse(raw);
   if (!content) {
-    res.status(502).json({ success: false, error: "Google Gemini returned empty content" });
+    res.status(502).json({ success: false, error: t("Google Gemini 返回内容为空", "Google Gemini returned empty content") });
     return;
   }
 
@@ -302,7 +320,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   try {
     suggested = JSON.parse(stripCodeFences(content));
   } catch {
-    res.status(502).json({ success: false, error: "Google Gemini returned invalid JSON" });
+    res.status(502).json({ success: false, error: t("Google Gemini 返回的 JSON 无法解析", "Google Gemini returned invalid JSON") });
     return;
   }
 
@@ -326,11 +344,17 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const linesIn: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
   if (linesIn.length < 2) {
     const repairUser =
-      "上一次输出不符合要求：必须包含 lines 数组且至少 2 行，并且借贷平衡。\n" +
-      "请你只输出 JSON，不要解释文字。\n\n" +
-      `上一次输出：\n${stripCodeFences(content)}\n\n` +
-      `原始用户输入：${parsed.data.text}\n\n` +
-      `约束与可用列表：\n${JSON.stringify(prompt)}\n`;
+      lang === "zh"
+        ? "上一次输出不符合要求：必须包含 lines 数组且至少 2 行，并且借贷平衡。\n" +
+          "请只输出 JSON，不要输出解释文字。\n\n" +
+          `上一次输出：\n${stripCodeFences(content)}\n\n` +
+          `原始用户输入：${parsed.data.text}\n\n` +
+          `约束与可用列表：\n${JSON.stringify(prompt)}\n`
+        : "The previous output is invalid: it must include a lines array with at least 2 lines, and must balance.\n" +
+          "Return JSON only, no explanations.\n\n" +
+          `Previous output:\n${stripCodeFences(content)}\n\n` +
+          `Original user input: ${parsed.data.text}\n\n` +
+          `Constraints & available lists:\n${JSON.stringify(prompt)}\n`;
 
     let repaired = await callGemini(gem.model, gem.apiVersion as any, true, system, repairUser);
     if (!repaired.ok && repaired.status === 400) {
@@ -345,7 +369,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
         try {
           suggested = JSON.parse(stripCodeFences(content));
         } catch {
-          res.status(502).json({ success: false, error: "Google Gemini returned invalid JSON" });
+          res.status(502).json({ success: false, error: t("Google Gemini 返回的 JSON 无法解析", "Google Gemini returned invalid JSON") });
           return;
         }
       }
@@ -355,8 +379,10 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     if (linesRetry.length < 2) {
       res.status(502).json({
         success: false,
-        error:
+        error: t(
+          "Google Gemini 输出不完整（缺少分录行）。请把金额/币种/付款方式写清楚，例如：董事用现金购买车子 20000 MYR。",
           "Google Gemini output is incomplete (missing journal lines). Try adding currency/amount or rephrasing, e.g. 'Bought a car for 30000 SGD, paid by bank transfer'.",
+        ),
       });
       return;
     }
