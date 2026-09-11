@@ -1282,6 +1282,8 @@ export default function Journal() {
                         const code = acc?.code ? String(acc.code) : "";
                         const linkFa = Boolean(acc?.linkFixedAssets);
                         const linkInv = Boolean(acc?.linkInventoryFifo);
+                        const amount = Number(l.debitTxn) || 0;
+                        const hasAmount = amount > 0;
                         const label =
                           linkFa && code.startsWith("161")
                             ? "处置"
@@ -1294,21 +1296,26 @@ export default function Journal() {
                                   : null;
                         if (!label) return null;
 
+                        const active = invLineIdx === idx && invMode === "receipt" && invDetails.length;
+                        const disabled = busy || readOnly || !hasAmount;
+                        const cls =
+                          "rounded-md border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50 " +
+                          (active
+                            ? "border-blue-300 bg-blue-50 text-blue-700"
+                            : hasAmount
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-zinc-200 bg-white");
+
                         return (
                           <button
-                            className={
-                              "rounded-md border px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 " +
-                              (invLineIdx === idx && invMode === "receipt" && invDetails.length
-                                ? "border-blue-300 bg-blue-50 text-blue-700"
-                                : "border-zinc-200 bg-white")
-                            }
+                            className={cls}
                             onClick={() => {
+                              if (disabled) return;
                               setErr(null);
                               if (label === "处置") {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
-                                const amount = Number(l.debitTxn) || 0;
                                 void openFixedAssetDisposeModal("accumDep", idx, amount);
                                 return;
                               }
@@ -1316,7 +1323,6 @@ export default function Journal() {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
-                                const amount = Number(l.debitTxn) || 0;
                                 openFixedAssetPurchaseModal(idx, amount);
                                 return;
                               }
@@ -1324,7 +1330,6 @@ export default function Journal() {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
-                                const amount = Number(l.debitTxn) || 0;
                                 openFixedAssetDepreciateModal(idx, amount);
                                 return;
                               }
@@ -1339,7 +1344,7 @@ export default function Journal() {
                                 setErr(e.message);
                               }
                             }}
-                            disabled={busy || readOnly}
+                            disabled={disabled}
                             type="button"
                           >
                             {label}
@@ -1367,6 +1372,8 @@ export default function Journal() {
                         const code = acc?.code ? String(acc.code) : "";
                         const linkFa = Boolean(acc?.linkFixedAssets);
                         const linkInv = Boolean(acc?.linkInventoryFifo);
+                        const amount = Number(l.creditTxn) || 0;
+                        const hasAmount = amount > 0;
                         const label =
                           linkFa && (code.startsWith("16") || code.startsWith("161"))
                             ? "处置"
@@ -1377,21 +1384,26 @@ export default function Journal() {
                                 : null;
                         if (!label) return null;
 
+                        const active = invLineIdx === idx && invMode === "shipment" && invDetails.length;
+                        const disabled = busy || readOnly || !hasAmount;
+                        const cls =
+                          "rounded-md border px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50 " +
+                          (active
+                            ? "border-blue-300 bg-blue-50 text-blue-700"
+                            : hasAmount
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-zinc-200 bg-white");
+
                         return (
                           <button
-                            className={
-                              "rounded-md border px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50 " +
-                              (invLineIdx === idx && invMode === "shipment" && invDetails.length
-                                ? "border-blue-300 bg-blue-50 text-blue-700"
-                                : "border-zinc-200 bg-white")
-                            }
+                            className={cls}
                             onClick={() => {
+                              if (disabled) return;
                               setErr(null);
                               if (label === "处置") {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
-                                const amount = Number(l.creditTxn) || 0;
                                 if (code.startsWith("161")) {
                                   void openFixedAssetDisposeModal("accumDep", idx, amount);
                                 } else {
@@ -1403,7 +1415,6 @@ export default function Journal() {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
-                                const amount = Number(l.creditTxn) || 0;
                                 openFixedAssetDepreciateModal(idx, amount);
                                 return;
                               }
@@ -1418,7 +1429,7 @@ export default function Journal() {
                                 setErr(e.message);
                               }
                             }}
-                            disabled={busy || readOnly}
+                            disabled={disabled}
                             type="button"
                           >
                             {label}
