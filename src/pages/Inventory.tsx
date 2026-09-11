@@ -173,7 +173,7 @@ export default function Inventory() {
     return () => {
       window.clearTimeout(t);
     };
-  }, [panel, stockTakeDate, stockTakeChangedKey]);
+  }, [panel, stockTakeDate, stockTakeChangedKey, stockTakeChangedLines]);
 
   const offsetAccounts = useMemo(() => accounts, [accounts]);
 

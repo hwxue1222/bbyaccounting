@@ -1861,8 +1861,8 @@ export default function Journal() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-xs text-zinc-600">{tr("提示词（复制到网页版 AI 对话）", "Prompt (copy into a web AI chat)")}</div>
                       <div className="flex items-center gap-2">
-                        <a className="text-sm text-blue-700 hover:underline" href="https://kimi.moonshot.cn" target="_blank" rel="noreferrer">
-                          {tr("打开 Kimi", "Open Kimi")}
+                        <a className="text-sm text-blue-700 hover:underline" href="https://gemini.google.com" target="_blank" rel="noreferrer">
+                          {tr("打开 Gemini", "Open Gemini")}
                         </a>
                         <button
                           className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"

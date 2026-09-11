@@ -21,6 +21,12 @@ function normalizeCode(input: unknown): string {
   return m ? m[0] : s;
 }
 
+function stripCodeFences(s: string): string {
+  const t = s.trim();
+  const m = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return m ? m[1].trim() : t;
+}
+
 router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = requireOrgId(req, res);
@@ -37,9 +43,9 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     return;
   }
 
-  const apiKey = typeof process.env.MOONSHOT_API_KEY === "string" ? process.env.MOONSHOT_API_KEY : null;
+  const apiKey = typeof process.env.GOOGLE_API_KEY === "string" ? process.env.GOOGLE_API_KEY : null;
   if (!apiKey) {
-    res.status(503).json({ success: false, error: "Missing MOONSHOT_API_KEY" });
+    res.status(503).json({ success: false, error: "Missing GOOGLE_API_KEY" });
     return;
   }
 
@@ -77,56 +83,53 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const extraMemo = parsed.data.memo ? parsed.data.memo.trim() : "";
 
   const jsonSchema = {
-    name: "journal_suggestion",
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        entryDate: { type: "string" },
-        currency: { type: "string" },
-        fxRate: { type: "number" },
-        memo: { type: "string" },
-        lines: {
-          type: "array",
-          minItems: 2,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              accountCode: { type: "string" },
-              description: { type: "string" },
-              costCenterCode: { type: "string" },
-              debitTxn: { type: "number" },
-              creditTxn: { type: "number" },
-            },
-            required: ["accountCode", "debitTxn", "creditTxn"],
-          },
-        },
-        inventory: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      entryDate: { type: "string" },
+      currency: { type: "string" },
+      fxRate: { type: "number" },
+      memo: { type: "string" },
+      lines: {
+        type: "array",
+        minItems: 2,
+        items: {
           type: "object",
           additionalProperties: false,
           properties: {
-            linkLineNo: { type: "integer" },
-            details: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  moveType: { type: "string", enum: ["receipt", "shipment"] },
-                  itemKey: { type: "string" },
-                  qty: { type: "number" },
-                  unitCostTxn: { type: "number" },
-                },
-                required: ["moveType", "itemKey", "qty"],
+            accountCode: { type: "string" },
+            description: { type: "string" },
+            costCenterCode: { type: "string" },
+            debitTxn: { type: "number" },
+            creditTxn: { type: "number" },
+          },
+          required: ["accountCode", "debitTxn", "creditTxn"],
+        },
+      },
+      inventory: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          linkLineNo: { type: "integer" },
+          details: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                moveType: { type: "string", enum: ["receipt", "shipment"] },
+                itemKey: { type: "string" },
+                qty: { type: "number" },
+                unitCostTxn: { type: "number" },
               },
+              required: ["moveType", "itemKey", "qty"],
             },
           },
         },
-        missing: { type: "array", items: { type: "string" } },
       },
-      required: ["currency", "fxRate", "memo", "lines"],
+      missing: { type: "array", items: { type: "string" } },
     },
+    required: ["currency", "fxRate", "memo", "lines"],
   } as const;
 
   const prompt = {
@@ -149,75 +152,80 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     `用户输入：${parsed.data.text}\n\n` +
     `约束与可用列表：\n${JSON.stringify(prompt)}\n`;
 
-  const model = typeof process.env.KIMI_MODEL === "string" && process.env.KIMI_MODEL.trim() ? process.env.KIMI_MODEL.trim() : "kimi-k2.5";
+  const model = typeof process.env.GEMINI_MODEL === "string" && process.env.GEMINI_MODEL.trim() ? process.env.GEMINI_MODEL.trim() : "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-  const url = "https://api.moonshot.cn/v1/chat/completions";
-  const payload = {
-    model,
-    temperature: 0.1,
-    reasoning_effort: "low",
-    response_format: { type: "json_schema", json_schema: jsonSchema },
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  };
-
-  let fetchResp: globalThis.Response | null = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    fetchResp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+  async function callGemini(withSchema: boolean): Promise<{ ok: boolean; status: number; text: string }> {
+    const payload: any = {
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts: [{ text: user }] }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
       },
-      body: JSON.stringify(payload),
-    });
-    if (fetchResp.ok) break;
-    if (![429, 500, 502, 503, 504].includes(fetchResp.status)) break;
-    await new Promise((r) => setTimeout(r, attempt === 0 ? 250 : attempt === 1 ? 800 : 1600));
-  }
+    };
+    if (withSchema) {
+      payload.generationConfig.responseSchema = jsonSchema;
+    }
 
-  if (!fetchResp || !fetchResp.ok) {
+    let fetchResp: globalThis.Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      fetchResp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (fetchResp.ok) break;
+      if (![429, 500, 502, 503, 504].includes(fetchResp.status)) break;
+      await new Promise((r) => setTimeout(r, attempt === 0 ? 250 : attempt === 1 ? 800 : 1600));
+    }
+
     const status = fetchResp ? fetchResp.status : 0;
     const rawText = fetchResp ? await fetchResp.text() : "";
-    let detail = rawText;
+    return { ok: !!fetchResp?.ok, status, text: rawText };
+  }
+
+  let gem = await callGemini(true);
+  if (!gem.ok && gem.status === 400) {
+    gem = await callGemini(false);
+  }
+
+  if (!gem.ok) {
+    let detail = gem.text;
     try {
-      const j = JSON.parse(rawText);
+      const j = JSON.parse(gem.text);
       const msg = j?.error?.message || j?.message || j?.error || j?.msg;
-      if (typeof msg === "string" && msg.trim()) {
-        detail = msg.trim();
-      }
+      if (typeof msg === "string" && msg.trim()) detail = msg.trim();
     } catch {
       void 0;
     }
     const safeDetail = String(detail || "").replace(/\s+/g, " ").trim().slice(0, 280);
     const hint =
-      status === 401 || status === 403
-        ? "（请检查 Vercel 的 MOONSHOT_API_KEY 是否正确/有权限）"
-        : status === 429
+      gem.status === 401 || gem.status === 403
+        ? "（请检查 Vercel 的 GOOGLE_API_KEY 是否正确/有权限）"
+        : gem.status === 429
           ? "（可能触发限流/额度不足，稍后再试）"
-          : status === 400
-            ? "（请求参数可能不被该模型支持，可尝试更换 KIMI_MODEL）"
+          : gem.status === 400
+            ? "（请求参数可能不被该模型支持，可尝试更换 GEMINI_MODEL）"
             : "";
-    res.status(502).json({ success: false, error: `Kimi API error (${status}) ${hint}${safeDetail ? ": " + safeDetail : ""}` });
+    res
+      .status(502)
+      .json({ success: false, error: `Google Gemini API error (${gem.status}) ${hint}${safeDetail ? ": " + safeDetail : ""}` });
     return;
   }
 
-  const resp = fetchResp;
-
-  const raw = (await resp.json()) as any;
-  const content = raw?.choices?.[0]?.message?.content;
+  const raw = gem.text ? (JSON.parse(gem.text) as any) : null;
+  const content = raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n");
   if (typeof content !== "string" || !content.trim()) {
-    res.status(502).json({ success: false, error: "Kimi returned empty content" });
+    res.status(502).json({ success: false, error: "Google Gemini returned empty content" });
     return;
   }
 
   let suggested: any;
   try {
-    suggested = JSON.parse(content);
+    suggested = JSON.parse(stripCodeFences(content));
   } catch {
-    res.status(502).json({ success: false, error: "Kimi returned invalid JSON" });
+    res.status(502).json({ success: false, error: "Google Gemini returned invalid JSON" });
     return;
   }
 
@@ -240,7 +248,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
 
   const linesIn: any[] = Array.isArray(suggested?.lines) ? suggested.lines : [];
   if (linesIn.length < 2) {
-    res.status(400).json({ success: false, error: "Kimi suggestion missing lines" });
+    res.status(400).json({ success: false, error: "Suggestion missing lines" });
     return;
   }
 
