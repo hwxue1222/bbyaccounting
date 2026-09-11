@@ -27,7 +27,10 @@ export default function Reports() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const accountOptions = useMemo(() => accounts.slice().sort((a, b) => a.code.localeCompare(b.code)), [accounts]);
+  const accountOptions = useMemo(
+    () => accounts.filter((a) => ((a as any).isActive ?? true) || a.id === accountId).slice().sort((a, b) => a.code.localeCompare(b.code)),
+    [accounts, accountId],
+  );
 
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;

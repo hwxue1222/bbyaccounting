@@ -168,7 +168,15 @@ export default function FixedAssets() {
     gainLossAccountId: "",
   });
 
-  const cashAccounts = useMemo(() => accounts, [accounts]);
+  const cashAccounts = useMemo(
+    () => accounts.filter((a) => ((a as any).isActive ?? true) || a.id === disposeForm.cashAccountId),
+    [accounts, disposeForm.cashAccountId],
+  );
+
+  const gainLossAccounts = useMemo(
+    () => accounts.filter((a) => ((a as any).isActive ?? true) || a.id === disposeForm.gainLossAccountId),
+    [accounts, disposeForm.gainLossAccountId],
+  );
 
   async function openJournalModal(entryId: string) {
     if (!entryId) return;
@@ -622,7 +630,7 @@ export default function FixedAssets() {
                 <option value="">请选择</option>
                 {cashAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.code} {a.name}
+                    {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
                   </option>
                 ))}
               </select>
@@ -814,9 +822,9 @@ export default function FixedAssets() {
                 onChange={(e) => setDisposeForm({ ...disposeForm, gainLossAccountId: e.target.value })}
               >
                 <option value="">默认</option>
-                {accounts.map((a) => (
+                {gainLossAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.code} {a.name}
+                    {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
                   </option>
                 ))}
               </select>

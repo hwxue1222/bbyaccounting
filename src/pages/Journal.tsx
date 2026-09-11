@@ -128,6 +128,24 @@ export default function Journal() {
   const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
   const [assistChatMessages, setAssistChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
 
+  const [assistEditEntryDate, setAssistEditEntryDate] = useState("");
+  const [assistEditCurrency, setAssistEditCurrency] = useState("");
+  const [assistEditFxRate, setAssistEditFxRate] = useState<number>(1);
+  const [assistEditMemo, setAssistEditMemo] = useState("");
+  const [assistEditLines, setAssistEditLines] = useState<Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string }>>([]);
+  const [assistEditInvMode, setAssistEditInvMode] = useState<"receipt" | "shipment">("receipt");
+  const [assistEditInvLinkLineNo, setAssistEditInvLinkLineNo] = useState<number>(1);
+  const [assistEditInvDetails, setAssistEditInvDetails] = useState<Array<{ rowId: string; itemId: string; qty: string; unitCostTxn: string }>>([]);
+  const [assistEditFaPurchase, setAssistEditFaPurchase] = useState<null | {
+    lineIdx: number;
+    category: string;
+    assetNo: string;
+    name: string;
+    acquisitionDate: string;
+    usefulLifeMonths: string;
+    salvageBase: string;
+  }>(null);
+
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
     const active = orgs.find((o) => o.orgId === activeOrgId);
@@ -149,6 +167,9 @@ export default function Journal() {
     }
     return m;
   }, [inventoryItems]);
+
+  const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a] as const)), [accounts]);
+  const activeAccounts = useMemo(() => accounts.filter((a) => (a as any).isActive ?? true), [accounts]);
 
   const [draftCurrency, setDraftCurrency] = useState("SGD");
   const [draftFx, setDraftFx] = useState(1);
@@ -927,7 +948,20 @@ export default function Journal() {
     }
   }
 
-  function applyAssistSuggestion(s: AssistJournalSuggestion) {
+  function applyAssistSuggestion(
+    s: AssistJournalSuggestion,
+    opts?: {
+      faPurchase?: {
+        lineIdx: number;
+        category: string;
+        assetNo: string;
+        name: string;
+        acquisitionDate: string;
+        usefulLifeMonths: number;
+        salvageBase: number;
+      } | null;
+    },
+  ) {
     setErr(null);
     setDraftDate(s.draft.entryDate);
     setDraftCurrency(String(s.draft.currency || "").toUpperCase());
@@ -947,7 +981,21 @@ export default function Journal() {
       }),
     );
     setFixedAssetIdByLineIdx({});
-    setFaPurchaseByLineIdx({});
+    if (opts?.faPurchase && Number.isFinite(opts.faPurchase.lineIdx) && opts.faPurchase.lineIdx >= 0) {
+      setFaPurchaseByLineIdx({
+        [opts.faPurchase.lineIdx]: {
+          category: opts.faPurchase.category,
+          assetNo: opts.faPurchase.assetNo,
+          name: opts.faPurchase.name,
+          acquisitionDate: opts.faPurchase.acquisitionDate,
+          usefulLifeMonths: opts.faPurchase.usefulLifeMonths,
+          salvageBase: opts.faPurchase.salvageBase,
+          memo: s.draft.memo || "",
+        },
+      });
+    } else {
+      setFaPurchaseByLineIdx({});
+    }
     setFaPurchaseLineIdx(null);
     setFaDisposeCostLineIdx(null);
     setFaDisposeAccumLineIdx(null);
@@ -989,6 +1037,87 @@ export default function Journal() {
       setInvLineIdx(null);
     }
   }
+
+  useEffect(() => {
+    const d = assistSuggestion?.draft;
+    if (!d || !Array.isArray(d.lines) || d.lines.length < 2) {
+      setAssistEditEntryDate("");
+      setAssistEditCurrency("");
+      setAssistEditFxRate(1);
+      setAssistEditMemo("");
+      setAssistEditLines([]);
+      setAssistEditInvMode("receipt");
+      setAssistEditInvLinkLineNo(1);
+      setAssistEditInvDetails([]);
+      setAssistEditFaPurchase(null);
+      return;
+    }
+
+    const entryDate = typeof d.entryDate === "string" && d.entryDate ? d.entryDate : draftDate;
+    const currency = String(d.currency || baseCurrency).toUpperCase().slice(0, 3);
+    const fxRate = Number(d.fxRate) || 1;
+    const memo = typeof d.memo === "string" ? d.memo : "";
+    setAssistEditEntryDate(entryDate);
+    setAssistEditCurrency(currency);
+    setAssistEditFxRate(fxRate);
+    setAssistEditMemo(memo);
+    setAssistEditLines(
+      d.lines.map((l) => {
+        const debit = Number((l as any).debitTxn) || 0;
+        const credit = Number((l as any).creditTxn) || 0;
+        return {
+          accountId: String((l as any).accountId || ""),
+          description: (l as any).description ? String((l as any).description) : "",
+          costCenterId: (l as any).costCenterId ? String((l as any).costCenterId) : "",
+          debitTxn: debit > 0 ? debit.toFixed(2) : "",
+          creditTxn: credit > 0 ? credit.toFixed(2) : "",
+        };
+      }),
+    );
+
+    const inv = (d as any).inventoryDetails;
+    const link = Number((d as any).inventoryLinkLineNo);
+    if (Array.isArray(inv) && inv.length) {
+      const mode = inv[0].moveType === "shipment" ? "shipment" : "receipt";
+      setAssistEditInvMode(mode);
+      setAssistEditInvLinkLineNo(Number.isFinite(link) && link > 0 ? Math.trunc(link) : 1);
+      setAssistEditInvDetails(
+        inv
+          .map((x: any) => {
+            const qty = Number(x?.qty) || 0;
+            if (qty <= 0) return null;
+            const unit = mode === "receipt" && x?.moveType === "receipt" ? Number(x?.unitCostTxn) || 0 : 0;
+            return { rowId: newRowId(), itemId: String(x?.itemId || ""), qty: String(Math.trunc(qty)), unitCostTxn: unit > 0 ? String(unit) : "" };
+          })
+          .filter(Boolean) as any,
+      );
+    } else {
+      setAssistEditInvMode("receipt");
+      setAssistEditInvLinkLineNo(1);
+      setAssistEditInvDetails([]);
+    }
+
+    const accById = new Map(accounts.map((a) => [a.id, a] as const));
+    const fixedIdx = d.lines.findIndex((l) => {
+      const acc = accById.get(String((l as any).accountId || ""));
+      if (!acc || !(acc as any).linkFixedAssets) return false;
+      const debit = Number((l as any).debitTxn) || 0;
+      return debit > 0;
+    });
+    if (fixedIdx >= 0) {
+      setAssistEditFaPurchase({
+        lineIdx: fixedIdx,
+        category: "",
+        assetNo: "",
+        name: tr("固定资产", "Fixed asset"),
+        acquisitionDate: entryDate,
+        usefulLifeMonths: "60",
+        salvageBase: "0",
+      });
+    } else {
+      setAssistEditFaPurchase(null);
+    }
+  }, [assistSuggestion, accounts, baseCurrency, draftDate]);
 
   function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
@@ -1452,9 +1581,11 @@ export default function Journal() {
                     >
                       <option value="__new_account__">{tr("+ 新增科目", "+ New account")}</option>
                       <option value="">{tr("请选择", "Select")}</option>
-                      {accounts.map((a) => (
+                      {accounts
+                        .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
+                        .map((a) => (
                         <option key={a.id} value={a.id}>
-                          {a.code} {a.name}
+                          {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
                         </option>
                       ))}
                     </select>
@@ -2012,146 +2143,34 @@ export default function Journal() {
                 </button>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  className={
-                    assistMode === "manual"
-                      ? "rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white"
-                      : "rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-                  }
-                  onClick={() => {
-                    setAssistMode("manual");
-                    setAssistErr(null);
-                    setAssistSuggestion(null);
-                    setAssistExtra("");
-                  }}
-                  type="button"
-                >
-                  {tr("免费手动", "Manual (free)")}
-                </button>
-                <button
-                  className={
-                    assistMode === "auto"
-                      ? "rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white"
-                      : "rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-                  }
-                  onClick={() => {
-                    setAssistMode("auto");
-                    setAssistErr(null);
-                    setAssistSuggestion(null);
-                    setAssistExtra("");
-                    setAssistChatMessages((prev) =>
-                      prev.length
-                        ? prev
-                        : [
-                            {
-                              role: "assistant",
-                              text: tr(
-                                "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
-                                "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
-                              ),
-                            },
-                          ],
-                    );
-                  }}
-                  type="button"
-                >
-                  {tr("API 自动", "API")}
-                </button>
-                <div className="text-xs text-zinc-500">
-                  {tr("免费手动：复制提示词到任意网页版 AI，粘贴 JSON 回填。", "Manual: copy prompt into any web AI, then paste JSON back here.")}
+              <div className="mt-3 rounded-lg border border-zinc-200 bg-white">
+                <div className="max-h-72 space-y-2 overflow-auto p-3 text-sm">
+                  {(assistChatMessages.length
+                    ? assistChatMessages
+                    : [
+                        {
+                          role: "assistant" as const,
+                          text: tr(
+                            "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
+                            "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
+                          ),
+                        },
+                      ]
+                  ).map((m, idx) => (
+                    <div key={idx} className={m.role === "user" ? "text-right" : "text-left"}>
+                      <div
+                        className={
+                          m.role === "user"
+                            ? "inline-block max-w-[85%] rounded-2xl bg-blue-700 px-3 py-2 text-white"
+                            : "inline-block max-w-[85%] rounded-2xl bg-zinc-100 px-3 py-2 text-zinc-900"
+                        }
+                      >
+                        {m.text}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-
-              {assistMode === "manual" ? (
-                <div className="mt-3">
-                  <label className="text-xs text-zinc-600">
-                    {tr("描述（例如：9/10 银行转账付房租 2000，含税/不含税…）", "Description (e.g., 9/10 bank transfer for rent 2000, tax included/excluded...)")}
-                  </label>
-                  <textarea
-                    className="mt-1 h-28 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={assistText}
-                    onChange={(e) => setAssistText(e.target.value)}
-                    placeholder={tr("用一句话描述业务，系统会生成借贷平衡的分录草稿。", "Describe the transaction in one sentence; a balanced draft will be generated.")}
-                  />
-                </div>
-              ) : (
-                <div className="mt-3 rounded-lg border border-zinc-200 bg-white">
-                  <div className="max-h-72 space-y-2 overflow-auto p-3 text-sm">
-                    {(assistChatMessages.length
-                      ? assistChatMessages
-                      : [
-                          {
-                            role: "assistant" as const,
-                            text: tr(
-                              "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
-                              "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
-                            ),
-                          },
-                        ]
-                    ).map((m, idx) => (
-                      <div key={idx} className={m.role === "user" ? "text-right" : "text-left"}>
-                        <div
-                          className={
-                            m.role === "user"
-                              ? "inline-block max-w-[85%] rounded-2xl bg-blue-700 px-3 py-2 text-white"
-                              : "inline-block max-w-[85%] rounded-2xl bg-zinc-100 px-3 py-2 text-zinc-900"
-                          }
-                        >
-                          {m.text}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {assistMode === "manual" ? (
-                <>
-                  <div className="mt-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-zinc-600">{tr("提示词（复制到网页版 AI 对话）", "Prompt (copy into a web AI chat)")}</div>
-                      <div className="flex items-center gap-2">
-                        <a className="text-sm text-blue-700 hover:underline" href="https://gemini.google.com" target="_blank" rel="noreferrer">
-                          {tr("打开 Gemini", "Open Gemini")}
-                        </a>
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-                          onClick={() => void copyToClipboard(buildAssistPrompt())}
-                          type="button"
-                        >
-                          {tr("复制提示词", "Copy prompt")}
-                        </button>
-                      </div>
-                    </div>
-                    <textarea className="mt-1 h-40 w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs" readOnly value={buildAssistPrompt()} />
-                  </div>
-
-                  <div className="mt-3">
-                    <div className="text-xs text-zinc-600">{tr("AI 返回的 JSON（粘贴到这里）", "AI JSON output (paste here)")}</div>
-                    <textarea
-                      className="mt-1 h-40 w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs"
-                      value={assistManualJson}
-                      onChange={(e) => setAssistManualJson(e.target.value)}
-                      placeholder={tr("粘贴 AI 输出的 JSON（只能是 JSON，不要带解释文字）。", "Paste AI JSON output (JSON only, no extra text).")}
-                    />
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
-                      disabled={!assistText.trim() || !assistManualJson.trim()}
-                      onClick={() => previewManualJson()}
-                      type="button"
-                    >
-                      {tr("解析并预览", "Parse & preview")}
-                    </button>
-                    <div className="text-xs text-zinc-500">
-                      {tr("预览无误后点击“应用到分录”，再由你手动过账。", "After previewing, click 'Apply to journal', then post manually.")}
-                    </div>
-                  </div>
-                </>
-              ) : null}
 
               {assistErr ? <div className="mt-3 text-sm text-red-700">{assistErr}</div> : null}
 
@@ -2162,42 +2181,29 @@ export default function Journal() {
                       <div className="font-medium">{tr("需要补充信息/设置", "Missing info/setup")}</div>
                       <div className="mt-1">{assistSuggestion.missing.join("；")}</div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {assistMode === "manual" ? (
-                          <button
-                            className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100 disabled:opacity-50"
-                            disabled={assistBusy}
-                            onClick={() => void runAssistSuggest()}
-                            type="button"
-                          >
-                            {tr("重新生成", "Regenerate")}
-                          </button>
-                        ) : (
-                          <>
-                            <div className="text-xs text-amber-900/70">{tr("请补充必要信息后继续生成：", "Add missing info and continue:")}</div>
-                            <input
-                              className="w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
-                              value={assistExtra}
-                              onChange={(e) => setAssistExtra(e.target.value)}
-                              placeholder={tr(
-                                "例如：现金/银行转账；金额 20000 MYR；用途；是否资本化；折旧年限。",
-                                "E.g., cash/bank transfer; amount 20000 MYR; purpose; capitalize?; useful life.",
-                              )}
-                              disabled={assistBusy}
-                            />
-                            <button
-                              className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
-                              disabled={assistBusy || !assistExtra.trim()}
-                              onClick={() => {
-                                const extra = assistExtra.trim();
-                                setAssistExtra("");
-                                void sendAssistChatTurn(extra);
-                              }}
-                              type="button"
-                            >
-                              {tr("补充并继续", "Continue")}
-                            </button>
-                          </>
-                        )}
+                        <div className="text-xs text-amber-900/70">{tr("请补充必要信息后继续生成：", "Add missing info and continue:")}</div>
+                        <input
+                          className="w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                          value={assistExtra}
+                          onChange={(e) => setAssistExtra(e.target.value)}
+                          placeholder={tr(
+                            "例如：现金/银行转账；金额 20000 MYR；用途；是否资本化；折旧年限。",
+                            "E.g., cash/bank transfer; amount 20000 MYR; purpose; capitalize?; useful life.",
+                          )}
+                          disabled={assistBusy}
+                        />
+                        <button
+                          className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
+                          disabled={assistBusy || !assistExtra.trim()}
+                          onClick={() => {
+                            const extra = assistExtra.trim();
+                            setAssistExtra("");
+                            void sendAssistChatTurn(extra);
+                          }}
+                          type="button"
+                        >
+                          {tr("补充并继续", "Continue")}
+                        </button>
                         <button
                           className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
                           onClick={() => navigate("/settings")}
@@ -2265,31 +2271,28 @@ export default function Journal() {
                     <>
                       <div className="mt-3 grid gap-3 md:grid-cols-4">
                         <div>
-                          <div className="text-xs text-zinc-600">{tr("日期", "Date")}</div>
-                          <div className="mt-1 text-sm">{(assistSuggestion as any).preview.entryDate}</div>
+                          <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
+                          <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditEntryDate} onChange={(e) => setAssistEditEntryDate(e.target.value)} />
                         </div>
                         <div>
-                          <div className="text-xs text-zinc-600">{tr("币种", "Currency")}</div>
-                          <div className="mt-1 text-sm">{(assistSuggestion as any).preview.currency}</div>
+                          <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
+                          <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={assistEditCurrency} onChange={(e) => setAssistEditCurrency(e.target.value.toUpperCase())}>
+                            {enabledCurrencies.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                         <div>
-                          <div className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</div>
-                          <div className="mt-1 text-sm">{String((assistSuggestion as any).preview.fxRate)}</div>
+                          <label className="text-xs text-zinc-600">{tr("汇率", "FX")}</label>
+                          <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFxRate} onChange={(e) => setAssistEditFxRate(Number(e.target.value) || 1)} type="number" step="0.0001" />
                         </div>
-                        <div className="md:col-span-1">
-                          <div className="text-xs text-zinc-600">{tr("备注", "Memo")}</div>
-                          <div className="mt-1 text-sm">{(assistSuggestion as any).preview.memo || ""}</div>
+                        <div className="md:col-span-4">
+                          <label className="text-xs text-zinc-600">{tr("备注", "Memo")}</label>
+                          <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditMemo} onChange={(e) => setAssistEditMemo(e.target.value)} />
                         </div>
                       </div>
-
-                      {(assistSuggestion as any).preview.inventoryDetails?.length ? (
-                        <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
-                          {tr("库存明细：", "Inventory details: ")}
-                          {tr("行", "line")}
-                          {" "}
-                          {(assistSuggestion as any).preview.inventoryLinkLineNo || 1}，{(assistSuggestion as any).preview.inventoryDetails[0].moveType}，{(assistSuggestion as any).preview.inventoryDetails.length} {tr("条", "items")}
-                        </div>
-                      ) : null}
 
                       <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
                         <table className="w-full text-sm">
@@ -2297,45 +2300,285 @@ export default function Journal() {
                             <tr>
                               <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
                               <th className="px-3 py-2 text-left">{tr("摘要", "Description")}</th>
+                              <th className="px-3 py-2 text-left">{tr("Cost Center", "Cost Center")}</th>
                               <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
                               <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
+                              <th className="px-3 py-2 text-right">{tr("操作", "Action")}</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {(assistSuggestion as any).preview.lines.map((l: any, i: number) => (
+                            {assistEditLines.map((l, i) => (
                               <tr key={i} className="border-t border-zinc-100">
                                 <td className="px-3 py-2">
-                                  {l.accountCode} {l.accountName}
+                                  <select
+                                    className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                                    value={l.accountId}
+                                    onChange={(e) => {
+                                      const nextId = e.target.value;
+                                      setAssistEditLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, accountId: nextId } : x)));
+                                      const acc = accountById.get(nextId);
+                                      if ((acc as any)?.linkFixedAssets) {
+                                        setAssistEditFaPurchase((prev) =>
+                                          prev
+                                            ? { ...prev, lineIdx: i, acquisitionDate: assistEditEntryDate || prev.acquisitionDate }
+                                            : {
+                                                lineIdx: i,
+                                                category: "",
+                                                assetNo: "",
+                                                name: tr("固定资产", "Fixed asset"),
+                                                acquisitionDate: assistEditEntryDate || draftDate,
+                                                usefulLifeMonths: "60",
+                                                salvageBase: "0",
+                                              },
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    <option value="">{tr("请选择", "Select")}</option>
+                                    {(() => {
+                                      const sel = accountById.get(l.accountId);
+                                      const list = sel && (sel as any).isActive === false ? [sel, ...activeAccounts.filter((a) => a.id !== sel.id)] : activeAccounts;
+                                      return list.map((a) => (
+                                        <option key={a.id} value={a.id}>
+                                          {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
+                                        </option>
+                                      ));
+                                    })()}
+                                  </select>
                                 </td>
-                                <td className="px-3 py-2">{l.description || ""}</td>
-                                <td className="px-3 py-2 text-right">{l.debitTxn > 0 ? Number(l.debitTxn).toFixed(2) : ""}</td>
-                                <td className="px-3 py-2 text-right">{l.creditTxn > 0 ? Number(l.creditTxn).toFixed(2) : ""}</td>
+                                <td className="px-3 py-2">
+                                  <input
+                                    className="w-full rounded-md border border-zinc-200 px-2 py-1.5 text-sm"
+                                    value={l.description}
+                                    onChange={(e) => setAssistEditLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, description: e.target.value } : x)))}
+                                  />
+                                </td>
+                                <td className="px-3 py-2">
+                                  <select
+                                    className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                                    value={l.costCenterId}
+                                    onChange={(e) => setAssistEditLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, costCenterId: e.target.value } : x)))}
+                                  >
+                                    <option value="">{tr("(无)", "(None)")}</option>
+                                    {costCenters.map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.code} {c.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <input
+                                    className="w-28 rounded-md border border-zinc-200 px-2 py-1.5 text-sm text-right"
+                                    value={l.debitTxn}
+                                    onChange={(e) => setAssistEditLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, debitTxn: e.target.value, creditTxn: "" } : x)))}
+                                    inputMode="decimal"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <input
+                                    className="w-28 rounded-md border border-zinc-200 px-2 py-1.5 text-sm text-right"
+                                    value={l.creditTxn}
+                                    onChange={(e) => setAssistEditLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, creditTxn: e.target.value, debitTxn: "" } : x)))}
+                                    inputMode="decimal"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                                    disabled={assistEditLines.length <= 2}
+                                    onClick={() => setAssistEditLines((prev) => prev.filter((_, idx) => idx !== i))}
+                                    type="button"
+                                  >
+                                    {tr("删除", "Remove")}
+                                  </button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
 
-                      {(assistSuggestion as any).preview.inventoryDetails?.length ? (
-                        <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-                          <table className="w-full text-sm">
-                            <thead className="bg-zinc-50 text-xs text-zinc-600">
-                              <tr>
-                                <th className="px-3 py-2 text-left">{tr("库存项目", "Item")}</th>
-                                <th className="px-3 py-2 text-right">{tr("数量", "Qty")}</th>
-                                <th className="px-3 py-2 text-right">{tr("单价（交易币）", "Unit (txn)")}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(assistSuggestion as any).preview.inventoryDetails.map((d: any, i: number) => (
-                                <tr key={i} className="border-t border-zinc-100">
-                                  <td className="px-3 py-2">{invItemLabelById.get(String(d.itemId)) || String(d.itemId)}</td>
-                                  <td className="px-3 py-2 text-right">{String(d.qty)}</td>
-                                  <td className="px-3 py-2 text-right">{"unitCostTxn" in d ? Number(d.unitCostTxn || 0).toFixed(2) : ""}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                        <button
+                          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                          onClick={() => setAssistEditLines((prev) => [...prev, { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" }])}
+                          type="button"
+                        >
+                          {tr("增加行", "Add line")}
+                        </button>
+                        <div className="text-zinc-600">
+                          {(() => {
+                            const debit = assistEditLines.reduce((s, x) => s + (Number(x.debitTxn) || 0), 0);
+                            const credit = assistEditLines.reduce((s, x) => s + (Number(x.creditTxn) || 0), 0);
+                            const diff = Math.round((debit - credit) * 100) / 100;
+                            return tr("差额：", "Diff: ") + diff.toFixed(2) + " " + (assistEditCurrency || baseCurrency);
+                          })()}
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const needsInv = assistEditLines.some((x) => {
+                          const acc = accountById.get(x.accountId);
+                          return Boolean((acc as any)?.linkInventoryFifo);
+                        });
+                        const show = needsInv || assistEditInvDetails.length > 0;
+                        if (!show) return null;
+                        return (
+                          <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-semibold">{tr("库存 FIFO 明细（可选）", "Inventory FIFO details (optional)")}</div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  className={assistEditInvMode === "receipt" ? "rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white" : "rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"}
+                                  onClick={() => setAssistEditInvMode("receipt")}
+                                  type="button"
+                                >
+                                  {tr("入库", "Receipt")}
+                                </button>
+                                <button
+                                  className={assistEditInvMode === "shipment" ? "rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white" : "rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"}
+                                  onClick={() => setAssistEditInvMode("shipment")}
+                                  type="button"
+                                >
+                                  {tr("出库", "Shipment")}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 grid gap-3 md:grid-cols-3">
+                              <div>
+                                <label className="text-xs text-zinc-600">{tr("关联分录行", "Link line")}</label>
+                                <select
+                                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                                  value={assistEditInvLinkLineNo}
+                                  onChange={(e) => setAssistEditInvLinkLineNo(Number(e.target.value) || 1)}
+                                >
+                                  {Array.from({ length: Math.max(assistEditLines.length, 1) }, (_, idx) => idx + 1).map((n) => (
+                                    <option key={n} value={n}>
+                                      {n}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+                              <table className="w-full text-sm">
+                                <thead className="bg-zinc-50 text-xs text-zinc-600">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left">{tr("库存项目", "Item")}</th>
+                                    <th className="px-3 py-2 text-right">{tr("数量", "Qty")}</th>
+                                    <th className="px-3 py-2 text-right">{tr("单价（交易币）", "Unit (txn)")}</th>
+                                    <th className="px-3 py-2 text-right">{tr("操作", "Action")}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {assistEditInvDetails.map((d) => (
+                                    <tr key={d.rowId} className="border-t border-zinc-100">
+                                      <td className="px-3 py-2">
+                                        <select
+                                          className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                                          value={d.itemId}
+                                          onChange={(e) => setAssistEditInvDetails((prev) => prev.map((x) => (x.rowId === d.rowId ? { ...x, itemId: e.target.value } : x)))}
+                                        >
+                                          <option value="">{tr("请选择", "Select")}</option>
+                                          {inventoryItems.map((it) => (
+                                            <option key={it.id} value={it.id}>
+                                              {it.sku ? `${it.sku} ` : ""}{it.name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        <input
+                                          className="w-28 rounded-md border border-zinc-200 px-2 py-1.5 text-sm text-right"
+                                          value={d.qty}
+                                          onChange={(e) => setAssistEditInvDetails((prev) => prev.map((x) => (x.rowId === d.rowId ? { ...x, qty: e.target.value } : x)))}
+                                          inputMode="numeric"
+                                        />
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        {assistEditInvMode === "receipt" ? (
+                                          <input
+                                            className="w-28 rounded-md border border-zinc-200 px-2 py-1.5 text-sm text-right"
+                                            value={d.unitCostTxn}
+                                            onChange={(e) => setAssistEditInvDetails((prev) => prev.map((x) => (x.rowId === d.rowId ? { ...x, unitCostTxn: e.target.value } : x)))}
+                                            inputMode="decimal"
+                                          />
+                                        ) : (
+                                          <span className="text-xs text-zinc-500">-</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        <button
+                                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                                          onClick={() => setAssistEditInvDetails((prev) => prev.filter((x) => x.rowId !== d.rowId))}
+                                          type="button"
+                                        >
+                                          {tr("删除", "Remove")}
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            <div className="mt-2">
+                              <button
+                                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                                onClick={() => setAssistEditInvDetails((prev) => [...prev, { rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: "1", unitCostTxn: "" }])}
+                                type="button"
+                              >
+                                {tr("增加明细", "Add detail")}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {assistEditFaPurchase ? (
+                        <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
+                          <div className="text-sm font-semibold">{tr("固定资产信息（可选）", "Fixed asset info (optional)")}</div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <div>
+                              <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
+                              <select
+                                className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                                value={assistEditFaPurchase.category}
+                                onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, category: e.target.value } : p))}
+                              >
+                                <option value="">{tr("请选择", "Select")}</option>
+                                <option value="Machinery and Equipment">Machinery and Equipment</option>
+                                <option value="Vehicles">Vehicles</option>
+                                <option value="Computer">Computer</option>
+                                <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                                <option value="Renovation">Renovation</option>
+                                <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-zinc-600">{tr("编号（可选）", "Asset no (optional)")}</label>
+                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.assetNo} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, assetNo: e.target.value } : p))} />
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="text-xs text-zinc-600">{tr("资产名称", "Name")}</label>
+                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.name} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, name: e.target.value } : p))} />
+                            </div>
+                            <div>
+                              <label className="text-xs text-zinc-600">{tr("购置日", "Acquisition date")}</label>
+                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.acquisitionDate} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, acquisitionDate: e.target.value } : p))} />
+                            </div>
+                            <div>
+                              <label className="text-xs text-zinc-600">{tr("使用年限（月）", "Useful life (months)")}</label>
+                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.usefulLifeMonths} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, usefulLifeMonths: e.target.value } : p))} type="number" step="1" />
+                            </div>
+                            <div>
+                              <label className="text-xs text-zinc-600">{tr("残值（本位）", "Salvage (base)")}</label>
+                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.salvageBase} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, salvageBase: e.target.value } : p))} type="number" step="0.01" />
+                            </div>
+                          </div>
                         </div>
                       ) : null}
 
@@ -2355,7 +2598,97 @@ export default function Journal() {
                           className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
                           disabled={assistBusy || !(assistSuggestion as any)?.draft}
                           onClick={() => {
-                            applyAssistSuggestion(assistSuggestion as any);
+                            const debit = assistEditLines.reduce((s, x) => s + (Number(x.debitTxn) || 0), 0);
+                            const credit = assistEditLines.reduce((s, x) => s + (Number(x.creditTxn) || 0), 0);
+                            const diff = Math.round((debit - credit) * 100) / 100;
+                            if (assistEditLines.length < 2) {
+                              setAssistErr(tr("至少需要 2 行分录。", "At least 2 lines are required."));
+                              return;
+                            }
+                            if (diff !== 0) {
+                              setAssistErr(tr(`借贷不平衡：差额 ${diff.toFixed(2)}`, `Not balanced: diff ${diff.toFixed(2)}`));
+                              return;
+                            }
+                            if (assistEditLines.some((x) => !x.accountId)) {
+                              setAssistErr(tr("请为每一行选择科目。", "Select an account for each line."));
+                              return;
+                            }
+
+                            const invDetailsOut = assistEditInvDetails
+                              .map((d) => {
+                                const qty = Math.trunc(Number(d.qty) || 0);
+                                if (!d.itemId || qty <= 0) return null;
+                                if (assistEditInvMode === "receipt") {
+                                  const unit = Number(d.unitCostTxn) || 0;
+                                  if (unit <= 0) return null;
+                                  return { moveType: "receipt" as const, itemId: d.itemId, qty, unitCostTxn: unit };
+                                }
+                                return { moveType: "shipment" as const, itemId: d.itemId, qty };
+                              })
+                              .filter(Boolean) as any[];
+
+                            const includeInv = invDetailsOut.length > 0;
+
+                            const accountIdToCode = new Map(accounts.map((a) => [a.id, String(a.code).trim()]));
+                            const accountIdToName = new Map(accounts.map((a) => [a.id, a.name]));
+
+                            const previewLines = assistEditLines.map((x) => ({
+                              accountCode: accountIdToCode.get(x.accountId) || "",
+                              accountName: accountIdToName.get(x.accountId) || "",
+                              description: x.description || undefined,
+                              debitTxn: Math.max(0, Number(x.debitTxn) || 0),
+                              creditTxn: Math.max(0, Number(x.creditTxn) || 0),
+                            }));
+
+                            const draftLines = assistEditLines.map((x) => ({
+                              accountId: x.accountId,
+                              description: x.description || undefined,
+                              costCenterId: x.costCenterId ? x.costCenterId : null,
+                              debitTxn: Math.max(0, Number(x.debitTxn) || 0),
+                              creditTxn: Math.max(0, Number(x.creditTxn) || 0),
+                            }));
+
+                            const editedSuggestion: AssistJournalSuggestion = {
+                              draft: {
+                                entryDate: assistEditEntryDate || draftDate,
+                                currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
+                                fxRate: Number(assistEditFxRate) || 1,
+                                memo: assistEditMemo || "",
+                                inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
+                                inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
+                                lines: draftLines as any,
+                              },
+                              preview: {
+                                entryDate: assistEditEntryDate || draftDate,
+                                currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
+                                fxRate: Number(assistEditFxRate) || 1,
+                                memo: assistEditMemo || "",
+                                inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
+                                inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
+                                lines: previewLines as any,
+                              },
+                              warnings: Array.isArray((assistSuggestion as any).warnings) ? (assistSuggestion as any).warnings : [],
+                              missing: [],
+                            };
+
+                            let fa: any = null;
+                            if (assistEditFaPurchase && assistEditFaPurchase.category.trim() && assistEditFaPurchase.name.trim()) {
+                              const life = Math.trunc(Number(assistEditFaPurchase.usefulLifeMonths) || 0);
+                              const salvage = Number(assistEditFaPurchase.salvageBase) || 0;
+                              if (life > 0) {
+                                fa = {
+                                  lineIdx: assistEditFaPurchase.lineIdx,
+                                  category: assistEditFaPurchase.category.trim(),
+                                  assetNo: assistEditFaPurchase.assetNo.trim(),
+                                  name: assistEditFaPurchase.name.trim(),
+                                  acquisitionDate: assistEditFaPurchase.acquisitionDate || (assistEditEntryDate || draftDate),
+                                  usefulLifeMonths: life,
+                                  salvageBase: salvage,
+                                };
+                              }
+                            }
+
+                            applyAssistSuggestion(editedSuggestion, { faPurchase: fa });
                             setAssistOpen(false);
                           }}
                           type="button"

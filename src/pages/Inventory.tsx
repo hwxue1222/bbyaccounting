@@ -175,7 +175,10 @@ export default function Inventory() {
     };
   }, [panel, stockTakeDate, stockTakeChangedKey, stockTakeChangedLines]);
 
-  const offsetAccounts = useMemo(() => accounts, [accounts]);
+  const offsetAccounts = useMemo(
+    () => accounts.filter((a) => ((a as any).isActive ?? true) || a.id === receipt.offsetAccountId),
+    [accounts, receipt.offsetAccountId],
+  );
 
   async function openJournalModal(entryId: string) {
     if (!entryId) return;
