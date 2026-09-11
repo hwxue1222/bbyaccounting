@@ -1128,9 +1128,13 @@ export default function Journal() {
 
     const currencyForQuick = (assistQuickCurrency.trim() || draftCurrency || baseCurrency).toUpperCase();
     const quickTextParts: string[] = [];
-    if (assistQuickWho.trim()) {
-      if (assistQuickOnBehalf.trim()) quickTextParts.push(`${assistQuickWho.trim()}代替${assistQuickOnBehalf.trim()}`);
-      else quickTextParts.push(assistQuickWho.trim());
+    const who = assistQuickWho.trim();
+    const onBehalf = assistQuickOnBehalf.trim();
+    if (who) {
+      if (onBehalf) quickTextParts.push(`${who}代替${onBehalf}`);
+      else quickTextParts.push(who);
+    } else if (onBehalf) {
+      quickTextParts.push(onBehalf);
     }
     if (assistQuickPayMethod.trim()) quickTextParts.push(`用${assistQuickPayMethod.trim()}`);
     if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
