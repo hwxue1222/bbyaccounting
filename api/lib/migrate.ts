@@ -377,12 +377,14 @@ export async function ensureMigrated(): Promise<void> {
       asset_account_id UUID,
       accum_dep_account_id UUID,
       dep_expense_account_id UUID,
-      disposed_at DATE
+      disposed_at DATE,
+      memo TEXT
     )
   `;
 
   await sql`ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS asset_no TEXT`;
   await sql`ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS category TEXT`;
+  await sql`ALTER TABLE fixed_assets ADD COLUMN IF NOT EXISTS memo TEXT`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_org_asset_no_unique ON fixed_assets(org_id, asset_no) WHERE asset_no IS NOT NULL AND asset_no <> ''`;
 
   await sql`

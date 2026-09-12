@@ -35,6 +35,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       asset_no as "assetNo",
       name,
       category,
+      memo,
       acquisition_date as "acquisitionDate",
       cost_base as "costBase",
       useful_life_months as "usefulLifeMonths",
@@ -304,10 +305,10 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       await trx`
         INSERT INTO fixed_assets (
           org_id, asset_no, category, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
-          status, asset_account_id, accum_dep_account_id, dep_expense_account_id
+          status, asset_account_id, accum_dep_account_id, dep_expense_account_id, memo
         ) VALUES (
           ${orgId}, ${assetNo}, ${category}, ${parsed.data.name.trim()}, ${parsed.data.acquisitionDate}, ${costBase}, ${parsed.data.usefulLifeMonths}, ${parsed.data.salvageBase},
-          'draft', ${assetAccountId}, ${accumDepAccountId}, ${depExpenseAccountId}
+          'draft', ${assetAccountId}, ${accumDepAccountId}, ${depExpenseAccountId}, ${parsed.data.memo ? parsed.data.memo.trim() : null}
         )
         RETURNING id
       `

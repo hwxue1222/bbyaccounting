@@ -59,27 +59,29 @@ function buildHeuristicSuggestion(input: {
 
   const { amount, currency } = parseFirstAmountAndCurrency(input.text);
   const ccy = currency || input.baseCurrency;
-  if (!amount) missing.push(t("缺少金额（例如：20000 MYR）", "Missing amount (e.g., 20000 MYR)"));
+  if (!amount) warnings.push(t("缺少金额（例如：20000 MYR）", "Missing amount (e.g., 20000 MYR)"));
   if (!currency) warnings.push(t(`未明确币种，默认使用 ${input.baseCurrency}`, `Currency not specified; defaulting to ${input.baseCurrency}`));
 
   const lower = input.text.toLowerCase();
   const isVehicle = /\bcar\b|vehicle|\u6c7d\u8f66|\u8f66\u8f86|\u8f66/.test(lower);
+  const isFixedAssetNew = /fixed\s*asset|\u56fa\u5b9a\u8d44\u4ea7|\u65b0\u589e\u56fa\u5b9a\u8d44\u4ea7|ppe/.test(lower);
   const payByCash = /cash|\u73b0\u91d1/.test(lower);
   const payByBank = /transfer|bank|\u94f6\u884c|\u8f6c\u8d26/.test(lower);
   const hasDirector = /director|\u8463\u4e8b/.test(lower);
   const hasCompany = /company|\u516c\u53f8/.test(lower);
 
   let debitCode: string | null = null;
-  if (isVehicle) {
-    debitCode =
-      pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u8f66", "\u6c7d\u8f66", "\u4ea4\u901a", "vehicle", "car", "motor"] }) ||
-      pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u56fa\u5b9a\u8d44\u4ea7", "ppe", "property", "plant", "equipment"] });
-    if (!debitCode) missing.push(t("缺少固定资产科目（车辆/PPE）", "Missing PPE account (vehicle)") );
+  if (isVehicle || isFixedAssetNew) {
+    const has1600 = input.accounts.some((a) => String(a.code || "") === "1600");
+    debitCode = has1600
+      ? "1600"
+      : pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u8f66", "\u6c7d\u8f66", "\u4ea4\u901a", "vehicle", "car", "motor"] }) ||
+        pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u56fa\u5b9a\u8d44\u4ea7", "ppe", "property", "plant", "equipment"] });
   }
 
   if (!debitCode) {
     debitCode = pickBestAccountCode(input.accounts, { type: "expense", keywords: ["\u8d2d\u4e70", "\u8d39\u7528", "expense"] });
-    if (!debitCode) missing.push(t("缺少费用或资产科目用于借方", "Missing debit account (expense/asset)") );
+    if (!debitCode) debitCode = input.accounts.find((a) => String(a.type) === "expense")?.code || input.accounts[0]?.code || null;
   }
 
   let creditCode: string | null = null;
@@ -92,7 +94,7 @@ function buildHeuristicSuggestion(input: {
     if (payByCash) creditCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u73b0\u91d1", "cash"] });
     if (!creditCode && payByBank) creditCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u94f6\u884c", "bank"] });
     if (!creditCode) creditCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u73b0\u91d1", "cash", "\u94f6\u884c", "bank"] });
-    if (!creditCode) missing.push(t("缺少现金/银行科目用于贷方", "Missing cash/bank account (credit)") );
+    if (!creditCode) creditCode = input.accounts.find((a) => String(a.type) === "asset")?.code || input.accounts[0]?.code || null;
   }
 
   const codeLines = [

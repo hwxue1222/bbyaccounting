@@ -120,14 +120,18 @@ export default function Journal() {
   const [assistQuickNewFixedAsset, setAssistQuickNewFixedAsset] = useState<"" | "yes">("");
   const [assistQuickExistingInventoryItemId, setAssistQuickExistingInventoryItemId] = useState("");
   const [assistQuickNewFaOpen, setAssistQuickNewFaOpen] = useState(false);
+  const assistQuickNewFaNoReqRef = useRef(0);
   const [assistQuickNewFaForm, setAssistQuickNewFaForm] = useState({
     category: "",
     assetNo: "",
     name: "",
+    memo: "",
     acquisitionDate: "",
     usefulLifeMonths: "60",
     salvageBase: "0",
   });
+  const [assistQuickNewFaNoBusy, setAssistQuickNewFaNoBusy] = useState(false);
+  const [assistQuickNewFaNoErr, setAssistQuickNewFaNoErr] = useState<string | null>(null);
   const [assistQuickNewFaSaved, setAssistQuickNewFaSaved] = useState<typeof assistQuickNewFaForm | null>(null);
   const [assistQuickNewInvOpen, setAssistQuickNewInvOpen] = useState(false);
   const [assistQuickNewInvBusy, setAssistQuickNewInvBusy] = useState(false);
@@ -159,6 +163,7 @@ export default function Journal() {
     category: string;
     assetNo: string;
     name: string;
+    memo?: string;
     acquisitionDate: string;
     usefulLifeMonths: string;
     salvageBase: string;
@@ -997,6 +1002,7 @@ export default function Journal() {
         category: saved?.category || "",
         assetNo: saved?.assetNo || "",
         name: saved?.name || tr("固定资产", "Fixed asset"),
+        memo: saved?.memo || "",
         acquisitionDate: saved?.acquisitionDate || entryDate,
         usefulLifeMonths: saved?.usefulLifeMonths || "60",
         salvageBase: saved?.salvageBase || "0",
@@ -1310,6 +1316,7 @@ export default function Journal() {
                         category: "",
                         assetNo: "",
                         name: "",
+                        memo: "",
                         acquisitionDate: draftDate,
                         usefulLifeMonths: "60",
                         salvageBase: "0",
@@ -2029,6 +2036,7 @@ export default function Journal() {
                           category: v.category,
                           assetNo: v.assetNo || undefined,
                           name: v.name,
+                          memo: v.memo || undefined,
                           acquisitionDate: v.acquisitionDate,
                           usefulLifeMonths: v.usefulLifeMonths,
                           salvageBase: v.salvageBase,
@@ -2103,6 +2111,7 @@ export default function Journal() {
                           category: v.category,
                           assetNo: v.assetNo || undefined,
                           name: v.name,
+                        memo: v.memo || undefined,
                           acquisitionDate: v.acquisitionDate,
                           usefulLifeMonths: v.usefulLifeMonths,
                           salvageBase: v.salvageBase,
@@ -2759,7 +2768,29 @@ export default function Journal() {
                     <select
                       className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                       value={assistQuickNewFaForm.category}
-                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, category: e.target.value }))}
+                      onChange={async (e) => {
+                        const category = e.target.value;
+                        setAssistQuickNewFaForm((p) => ({ ...p, category }));
+                        setAssistQuickNewFaNoErr(null);
+                        if (!category) {
+                          setAssistQuickNewFaForm((p) => ({ ...p, assetNo: "" }));
+                          return;
+                        }
+                        const reqId = ++assistQuickNewFaNoReqRef.current;
+                        setAssistQuickNewFaNoBusy(true);
+                        try {
+                          const r = await api<{ assetNo: string }>(`/api/fixed-assets/next-no?category=${encodeURIComponent(category)}`);
+                          if (assistQuickNewFaNoReqRef.current !== reqId) return;
+                          setAssistQuickNewFaForm((p) => ({ ...p, assetNo: String(r.assetNo || "").toUpperCase() }));
+                        } catch (err: any) {
+                          if (assistQuickNewFaNoReqRef.current !== reqId) return;
+                          setAssistQuickNewFaNoErr(err?.message || "Error");
+                        } finally {
+                          if (assistQuickNewFaNoReqRef.current === reqId) {
+                            setAssistQuickNewFaNoBusy(false);
+                          }
+                        }
+                      }}
                     >
                       <option value="">{tr("请选择", "Select")}</option>
                       <option value="Machinery and Equipment">Machinery and Equipment</option>
@@ -2771,12 +2802,15 @@ export default function Journal() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-zinc-600">{tr("编号（可选）", "Asset no (optional)")}</label>
+                    <label className="text-xs text-zinc-600">{tr("编号（系统按大类自动生成）", "Asset no (auto)")}</label>
                     <input
                       className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                       value={assistQuickNewFaForm.assetNo}
-                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, assetNo: e.target.value }))}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, assetNo: e.target.value.toUpperCase() }))}
+                      disabled={assistQuickNewFaNoBusy}
                     />
+                    {assistQuickNewFaNoBusy ? <div className="mt-1 text-xs text-zinc-500">{tr("编号生成中...", "Generating...")}</div> : null}
+                    {assistQuickNewFaNoErr ? <div className="mt-1 text-xs text-red-700">{assistQuickNewFaNoErr}</div> : null}
                   </div>
                   <div className="md:col-span-2">
                     <label className="text-xs text-zinc-600">{tr("资产名称", "Name")}</label>
@@ -2785,6 +2819,15 @@ export default function Journal() {
                       value={assistQuickNewFaForm.name}
                       onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, name: e.target.value }))}
                       placeholder={tr("例如：公司用车", "e.g. company car")}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">{tr("备注（可选）", "Memo (optional)")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewFaForm.memo}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, memo: e.target.value }))}
+                      placeholder={tr("例如：购车税/保险/用途说明", "e.g. tax/insurance/notes")}
                     />
                   </div>
                   <div>
@@ -2839,6 +2882,7 @@ export default function Journal() {
                       category: assistQuickNewFaForm.category.trim(),
                       assetNo: assistQuickNewFaForm.assetNo.trim(),
                       name: assistQuickNewFaForm.name.trim(),
+                      memo: assistQuickNewFaForm.memo.trim(),
                       acquisitionDate: assistQuickNewFaForm.acquisitionDate || draftDate,
                       usefulLifeMonths: String(Math.trunc(Number(assistQuickNewFaForm.usefulLifeMonths) || 0)),
                       salvageBase: String(Number(assistQuickNewFaForm.salvageBase) || 0),

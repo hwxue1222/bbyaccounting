@@ -541,6 +541,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
       )
       .optional(),
     name: z.string().min(1),
+    memo: z.string().optional(),
     acquisitionDate: z.string().min(10),
     usefulLifeMonths: z.number().int().positive(),
     salvageBase: z.number().nonnegative().default(0),
@@ -816,11 +817,11 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
               INSERT INTO fixed_assets (
                 org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
                 status, asset_account_id, accum_dep_account_id, dep_expense_account_id,
-                category, asset_no
+                category, asset_no, memo
               ) VALUES (
                 ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
                 'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId},
-                ${category}, ${assetNo}
+                ${category}, ${assetNo}, ${p.memo ? String(p.memo).trim() : null}
               )
               RETURNING id
             `
@@ -1060,6 +1061,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       )
       .optional(),
     name: z.string().min(1),
+    memo: z.string().optional(),
     acquisitionDate: z.string().min(10),
     usefulLifeMonths: z.number().int().positive(),
     salvageBase: z.number().nonnegative().default(0),
@@ -1443,11 +1445,11 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               INSERT INTO fixed_assets (
                 org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
                 status, asset_account_id, accum_dep_account_id, dep_expense_account_id,
-                category, asset_no
+                category, asset_no, memo
               ) VALUES (
                 ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
                 'active', ${line.accountId}, ${accumDepAccountId}, ${depExpenseAccountId},
-                ${category}, ${assetNo}
+                ${category}, ${assetNo}, ${p.memo ? String(p.memo).trim() : null}
               )
               RETURNING id
             `
@@ -2019,6 +2021,7 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
       )
       .optional(),
     name: z.string().min(1),
+    memo: z.string().optional(),
     acquisitionDate: z.string().min(10),
     usefulLifeMonths: z.number().int().positive(),
     salvageBase: z.number().nonnegative().default(0),
@@ -2172,11 +2175,11 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
               INSERT INTO fixed_assets (
                 org_id, name, acquisition_date, cost_base, useful_life_months, salvage_value_base,
                 status, asset_account_id, accum_dep_account_id, dep_expense_account_id,
-                category, asset_no
+                category, asset_no, memo
               ) VALUES (
                 ${orgId}, ${p.name.trim()}, ${p.acquisitionDate}, ${costBase}, ${p.usefulLifeMonths}, ${p.salvageBase},
                 'active', ${String(line.accountId)}, ${accumDepAccountId}, ${depExpenseAccountId},
-                ${category}, ${assetNo}
+                ${category}, ${assetNo}, ${p.memo ? String(p.memo).trim() : null}
               )
               RETURNING id
             `
