@@ -144,10 +144,7 @@ export function buildHeuristicSuggestion(input: {
         : pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u5904\u7f6e\u6536\u76ca", "\u5904\u7f6e\u5229\u5f97", "gain", "disposal"] }) ||
           input.accounts.find((a) => String(a.type) === "income")?.code ||
           null;
-      const lossCode =
-        pickBestAccountCode(input.accounts, { type: "expense", keywords: ["\u5904\u7f6e\u635f\u5931", "loss", "disposal"] }) ||
-        input.accounts.find((a) => String(a.type) === "expense")?.code ||
-        null;
+      const lossCode = gainCode;
 
       const missingParts: string[] = [];
       if (!assetCode) missingParts.push(t("固定资产科目（例如 1600）", "Fixed asset account (e.g., 1600)"));
@@ -171,16 +168,9 @@ export function buildHeuristicSuggestion(input: {
       const gainLoss = proceeds - nbv;
 
       if (Math.abs(gainLoss) >= 0.005) {
-        if (gainLoss > 0) {
-          if (!gainCode) {
-            missing.push(t("缺少处置收益科目：请新增 7000 处置收益。", "Missing disposal gain account: please add 7000 Gain on Disposal."));
-            return { draft: null, preview: null, warnings, missing };
-          }
-        } else {
-          if (!lossCode) {
-            missing.push(t("缺少处置损失科目：请在设置新增处置损失科目。", "Missing disposal loss account: please add one in Settings."));
-            return { draft: null, preview: null, warnings, missing };
-          }
+        if (!gainCode) {
+          missing.push(t("缺少处置损益科目：请新增 7000 处置收益/损失。", "Missing disposal gain/loss account: please add 7000 Gain/Loss on Disposal."));
+          return { draft: null, preview: null, warnings, missing };
         }
       }
 

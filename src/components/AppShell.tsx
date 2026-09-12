@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useRef } from "react";
+ 
 import { NavLink } from "react-router-dom";
 import { Building2, FileText, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,31 +31,18 @@ export default function AppShell({ title, children }: { title: string; children:
   const { lang, setLang } = useUiStore();
   const tr = useTr();
   const inflight = useUiStore((s) => s.inflight);
-  const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
-  const inflightRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const el = inflightRef.current;
-    if (!el) return;
-    if (!inflight || !inflightStartedAt) {
-      el.style.display = "none";
-      el.textContent = "";
-      return;
-    }
-
-    el.style.display = "block";
-    const update = () => {
-      const ms = Math.max(0, Date.now() - inflightStartedAt);
-      const sec = (ms / 1000).toFixed(1);
-      el.textContent = tr(`刷新中 ${sec}s`, `Refreshing ${sec}s`);
-    };
-    update();
-    const id = window.setInterval(update, 200);
-    return () => window.clearInterval(id);
-  }, [inflight, inflightStartedAt, tr]);
+  
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
+      {inflight ? (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25">
+          <div className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-xl">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-200 border-t-blue-700" />
+            <div className="text-sm font-medium text-zinc-800">{tr("刷新中...", "Refreshing...")}</div>
+          </div>
+        </div>
+      ) : null}
       <div className="flex min-h-screen">
         <aside className="fixed inset-y-0 left-0 z-[1000] hidden w-64 border-r border-zinc-200 bg-white md:flex md:flex-col">
           <div className="border-b border-zinc-200 p-4">
@@ -162,11 +149,6 @@ export default function AppShell({ title, children }: { title: string; children:
               <div className="min-w-0">
                 <div className="truncate text-base font-semibold">{title}</div>
               </div>
-              <div
-                ref={inflightRef}
-                className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700"
-                style={{ display: "none" }}
-              />
             </div>
           </header>
 

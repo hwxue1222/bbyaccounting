@@ -77,6 +77,20 @@ async function main() {
   assert(s4.draft?.lines?.length === 4, "disposal with gain should have 4 lines");
   assert(String(s4.preview.lines[3].accountCode) === "7000", "disposal gain should use 7000");
 
+  const s5 = buildHeuristicSuggestion({
+    text: "公司，未支付，卖了一辆汽车，售价 30000 MYR，原值 80000，累计折旧 30000",
+    lang: "zh",
+    baseCurrency: "MYR",
+    forcedEntryDate: "2026-09-12",
+    extraMemo: "",
+    accounts,
+    accountIdByCode,
+    accountNameByCode,
+  });
+  assert(s5.draft?.lines?.length === 4, "disposal with loss should have 4 lines");
+  assert(String(s5.preview.lines[3].accountCode) === "7000", "disposal loss should use 7000 on debit");
+  assert(Number(s5.preview.lines[3].debitTxn) > 0, "disposal loss should be debit");
+
   const accountsNoIncome = accounts.filter((a) => a.type !== "income");
   const accountIdByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.id] as const));
   const accountNameByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.name] as const));
