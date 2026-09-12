@@ -56,7 +56,7 @@ export default function AppShell({ title, children }: { title: string; children:
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <div className="flex min-h-screen">
-        <aside className="hidden w-64 shrink-0 border-r border-zinc-200 bg-white md:flex md:flex-col">
+        <aside className="relative z-[60] hidden w-64 shrink-0 border-r border-zinc-200 bg-white md:flex md:flex-col">
           <div className="border-b border-zinc-200 p-4">
             <div className="flex items-center gap-2">
               <Warehouse className="h-5 w-5 text-blue-700" />
