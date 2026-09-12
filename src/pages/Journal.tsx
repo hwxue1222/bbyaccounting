@@ -125,6 +125,20 @@ export default function Journal() {
   const [assistQuickAction, setAssistQuickAction] = useState("");
   const [assistQuickExistingFixedAssetId, setAssistQuickExistingFixedAssetId] = useState("");
   const [assistQuickExistingInventoryItemId, setAssistQuickExistingInventoryItemId] = useState("");
+  const [assistQuickNewFaOpen, setAssistQuickNewFaOpen] = useState(false);
+  const [assistQuickNewFaForm, setAssistQuickNewFaForm] = useState({
+    category: "",
+    assetNo: "",
+    name: "",
+    acquisitionDate: "",
+    usefulLifeMonths: "60",
+    salvageBase: "0",
+  });
+  const [assistQuickNewFaSaved, setAssistQuickNewFaSaved] = useState<typeof assistQuickNewFaForm | null>(null);
+  const [assistQuickNewInvOpen, setAssistQuickNewInvOpen] = useState(false);
+  const [assistQuickNewInvBusy, setAssistQuickNewInvBusy] = useState(false);
+  const [assistQuickNewInvErr, setAssistQuickNewInvErr] = useState<string | null>(null);
+  const [assistQuickNewInvForm, setAssistQuickNewInvForm] = useState({ sku: "", name: "", uom: "EA" });
   const [assistQuickCurrency, setAssistQuickCurrency] = useState("");
   const [assistQuickAmount, setAssistQuickAmount] = useState("");
   const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
@@ -317,6 +331,9 @@ export default function Journal() {
     setRecurringCount(1);
     setAssistQuickExistingFixedAssetId("");
     setAssistQuickExistingInventoryItemId("");
+    setAssistQuickNewFaSaved(null);
+    setAssistQuickNewFaOpen(false);
+    setAssistQuickNewInvOpen(false);
     void refreshNextVoucherNo(true);
   }
 
@@ -396,6 +413,11 @@ export default function Journal() {
     setEntries(entries as any);
     setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
     await refreshNextVoucherNo();
+  }
+
+  async function refreshInventoryItemsOnly() {
+    const r = await api<{ items: any[] }>("/api/inventory/items");
+    setInventoryItems((r.items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
   }
 
   async function deleteEntry(id: string) {
@@ -1210,19 +1232,20 @@ export default function Journal() {
       return debit > 0;
     });
     if (fixedIdx >= 0) {
+      const saved = assistQuickExistingFixedAssetId === "__new__" ? assistQuickNewFaSaved : null;
       setAssistEditFaPurchase({
         lineIdx: fixedIdx,
-        category: "",
-        assetNo: "",
-        name: tr("固定资产", "Fixed asset"),
-        acquisitionDate: entryDate,
-        usefulLifeMonths: "60",
-        salvageBase: "0",
+        category: saved?.category || "",
+        assetNo: saved?.assetNo || "",
+        name: saved?.name || tr("固定资产", "Fixed asset"),
+        acquisitionDate: saved?.acquisitionDate || entryDate,
+        usefulLifeMonths: saved?.usefulLifeMonths || "60",
+        salvageBase: saved?.salvageBase || "0",
       });
     } else {
       setAssistEditFaPurchase(null);
     }
-  }, [assistSuggestion, accounts, baseCurrency, draftDate]);
+  }, [assistSuggestion, accounts, baseCurrency, draftDate, assistQuickExistingFixedAssetId, assistQuickNewFaSaved, tr]);
 
   function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
@@ -1374,7 +1397,17 @@ export default function Journal() {
     if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
 
     if (assistQuickExistingFixedAssetId === "__new__") {
-      quickTextParts.push(tr("新增固定资产", "New fixed asset"));
+      if (assistQuickNewFaSaved?.name.trim()) {
+        const name = assistQuickNewFaSaved.name.trim();
+        const cat = assistQuickNewFaSaved.category.trim();
+        const life = assistQuickNewFaSaved.usefulLifeMonths.trim();
+        const extra = [cat ? tr(`类别:${cat}`, `Category:${cat}`) : "", life ? tr(`折旧(月):${life}`, `Life(m):${life}`) : ""]
+          .filter(Boolean)
+          .join(" ");
+        quickTextParts.push(tr(`新增固定资产：${name}${extra ? `（${extra}）` : ""}`, `New fixed asset: ${name}${extra ? ` (${extra})` : ""}`));
+      } else {
+        quickTextParts.push(tr("新增固定资产", "New fixed asset"));
+      }
     } else if (assistQuickExistingFixedAssetId) {
       const fa = fixedAssets.find((x) => x.id === assistQuickExistingFixedAssetId);
       if (fa) {
@@ -1457,7 +1490,21 @@ export default function Journal() {
                 <select
                   className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                   value={assistQuickExistingFixedAssetId}
-                  onChange={(e) => setAssistQuickExistingFixedAssetId(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAssistQuickExistingFixedAssetId(v);
+                    if (v === "__new__") {
+                      setAssistQuickNewFaForm({
+                        category: "",
+                        assetNo: "",
+                        name: "",
+                        acquisitionDate: draftDate,
+                        usefulLifeMonths: "60",
+                        salvageBase: "0",
+                      });
+                      setAssistQuickNewFaOpen(true);
+                    }
+                  }}
                   onFocus={() => {
                     if (!fixedAssets.length) {
                       refreshFixedAssets().catch((e) => setErr(e.message));
@@ -1485,7 +1532,15 @@ export default function Journal() {
                 <select
                   className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                   value={assistQuickExistingInventoryItemId}
-                  onChange={(e) => setAssistQuickExistingInventoryItemId(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAssistQuickExistingInventoryItemId(v);
+                    if (v === "__new__") {
+                      setAssistQuickNewInvErr(null);
+                      setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
+                      setAssistQuickNewInvOpen(true);
+                    }
+                  }}
                   disabled={readOnly || busy}
                 >
                   <option value="" disabled>
@@ -1504,13 +1559,18 @@ export default function Journal() {
               </div>
               <div className="md:col-span-1">
                 <label className="text-xs text-zinc-600">{tr("货币", "CCY")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-2 text-sm"
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                   value={currencyForQuick}
                   onChange={(e) => setAssistQuickCurrency(e.target.value.toUpperCase())}
-                  placeholder={draftCurrency || baseCurrency}
                   disabled={readOnly || busy}
-                />
+                >
+                  {enabledCurrencies.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="md:col-span-2">
                 <label className="text-xs text-zinc-600">{tr("金额", "Amount")}</label>
@@ -2781,6 +2841,243 @@ export default function Journal() {
                   type="button"
                 >
                   {tr("确认并填入分录", "Confirm & fill")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {assistQuickNewFaOpen ? (
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
+            onMouseDown={() => {
+              setAssistQuickNewFaOpen(false);
+              if (!assistQuickNewFaSaved) {
+                setAssistQuickExistingFixedAssetId("");
+              }
+            }}
+          >
+            <div
+              className="mx-auto w-full max-w-2xl rounded-xl bg-white shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 p-4">
+                <div className="text-sm font-semibold">{tr("新增固定资产信息", "New fixed asset")}</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  onClick={() => {
+                    setAssistQuickNewFaOpen(false);
+                    if (!assistQuickNewFaSaved) {
+                      setAssistQuickExistingFixedAssetId("");
+                    }
+                  }}
+                  type="button"
+                >
+                  {tr("关闭", "Close")}
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                      value={assistQuickNewFaForm.category}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, category: e.target.value }))}
+                    >
+                      <option value="">{tr("请选择", "Select")}</option>
+                      <option value="Machinery and Equipment">Machinery and Equipment</option>
+                      <option value="Vehicles">Vehicles</option>
+                      <option value="Computer">Computer</option>
+                      <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                      <option value="Renovation">Renovation</option>
+                      <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("编号（可选）", "Asset no (optional)")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewFaForm.assetNo}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, assetNo: e.target.value }))}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">{tr("资产名称", "Name")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewFaForm.name}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, name: e.target.value }))}
+                      placeholder={tr("例如：公司用车", "e.g. company car")}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("购置日", "Acquisition date")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewFaForm.acquisitionDate}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, acquisitionDate: e.target.value }))}
+                      type="date"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("使用年限（月）", "Useful life (months)")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewFaForm.usefulLifeMonths}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, usefulLifeMonths: e.target.value }))}
+                      type="number"
+                      step="1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("残值（本位）", "Salvage (base)")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewFaForm.salvageBase}
+                      onChange={(e) => setAssistQuickNewFaForm((p) => ({ ...p, salvageBase: e.target.value }))}
+                      type="number"
+                      step="0.01"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  onClick={() => {
+                    setAssistQuickNewFaOpen(false);
+                    if (!assistQuickNewFaSaved) {
+                      setAssistQuickExistingFixedAssetId("");
+                    }
+                  }}
+                  type="button"
+                >
+                  {tr("取消", "Cancel")}
+                </button>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={!assistQuickNewFaForm.category.trim() || !assistQuickNewFaForm.name.trim()}
+                  onClick={() => {
+                    const v = {
+                      category: assistQuickNewFaForm.category.trim(),
+                      assetNo: assistQuickNewFaForm.assetNo.trim(),
+                      name: assistQuickNewFaForm.name.trim(),
+                      acquisitionDate: assistQuickNewFaForm.acquisitionDate || draftDate,
+                      usefulLifeMonths: String(Math.trunc(Number(assistQuickNewFaForm.usefulLifeMonths) || 0)),
+                      salvageBase: String(Number(assistQuickNewFaForm.salvageBase) || 0),
+                    };
+                    setAssistQuickNewFaSaved(v);
+                    setAssistQuickNewFaOpen(false);
+                  }}
+                  type="button"
+                >
+                  {tr("保存", "Save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {assistQuickNewInvOpen ? (
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
+            onMouseDown={() => {
+              if (assistQuickNewInvBusy) return;
+              setAssistQuickNewInvOpen(false);
+              setAssistQuickExistingInventoryItemId("");
+            }}
+          >
+            <div
+              className="mx-auto w-full max-w-xl rounded-xl bg-white shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 p-4">
+                <div className="text-sm font-semibold">{tr("新增存货", "New inventory item")}</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistQuickNewInvBusy}
+                  onClick={() => {
+                    setAssistQuickNewInvOpen(false);
+                    setAssistQuickExistingInventoryItemId("");
+                  }}
+                  type="button"
+                >
+                  {tr("关闭", "Close")}
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("SKU", "SKU")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewInvForm.sku}
+                      onChange={(e) => setAssistQuickNewInvForm((p) => ({ ...p, sku: e.target.value }))}
+                      disabled={assistQuickNewInvBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("单位", "UOM")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewInvForm.uom}
+                      onChange={(e) => setAssistQuickNewInvForm((p) => ({ ...p, uom: e.target.value }))}
+                      disabled={assistQuickNewInvBusy}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">{tr("商品名称", "Name")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewInvForm.name}
+                      onChange={(e) => setAssistQuickNewInvForm((p) => ({ ...p, name: e.target.value }))}
+                      disabled={assistQuickNewInvBusy}
+                    />
+                  </div>
+                </div>
+                {assistQuickNewInvErr ? <div className="mt-3 text-sm text-red-700">{assistQuickNewInvErr}</div> : null}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistQuickNewInvBusy}
+                  onClick={() => {
+                    setAssistQuickNewInvOpen(false);
+                    setAssistQuickExistingInventoryItemId("");
+                  }}
+                  type="button"
+                >
+                  {tr("取消", "Cancel")}
+                </button>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={assistQuickNewInvBusy || !assistQuickNewInvForm.sku.trim() || !assistQuickNewInvForm.name.trim()}
+                  onClick={async () => {
+                    setAssistQuickNewInvBusy(true);
+                    setAssistQuickNewInvErr(null);
+                    try {
+                      const r = await api<{ item: any }>("/api/inventory/items", {
+                        method: "POST",
+                        json: { sku: assistQuickNewInvForm.sku, name: assistQuickNewInvForm.name, uom: assistQuickNewInvForm.uom || "EA" },
+                      });
+                      const newId = r.item?.id ? String(r.item.id) : "";
+                      await refreshInventoryItemsOnly();
+                      setAssistQuickNewInvOpen(false);
+                      setAssistQuickExistingInventoryItemId(newId);
+                    } catch (e: any) {
+                      setAssistQuickNewInvErr(e.message);
+                    } finally {
+                      setAssistQuickNewInvBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  {tr("保存", "Save")}
                 </button>
               </div>
             </div>
