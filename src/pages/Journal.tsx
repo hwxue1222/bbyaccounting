@@ -215,6 +215,8 @@ export default function Journal() {
     return customers.slice().sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`));
   }, [customers]);
 
+  const inventoryItemById = useMemo(() => new Map(inventoryItems.map((it) => [it.id, it] as const)), [inventoryItems]);
+
   const quickNeedsNewFixedAsset = useMemo(() => {
     const s = assistQuickAction.trim().toLowerCase();
     if (!s) return false;
@@ -2803,12 +2805,24 @@ export default function Journal() {
                                           onChange={(e) => setAssistEditInvDetails((prev) => prev.map((x) => (x.rowId === d.rowId ? { ...x, itemId: e.target.value } : x)))}
                                         >
                                           <option value="">{tr("请选择", "Select")}</option>
-                                          {inventoryItems.map((it) => (
+                                          {inventoryItemsSorted.map((it: any) => (
                                             <option key={it.id} value={it.id}>
-                                              {it.sku ? `${it.sku} ` : ""}{it.name}
+                                              {((it.sku ? `${it.sku} ` : "") + it.name).replace(/\s+/g, " ").trim()}
                                             </option>
                                           ))}
                                         </select>
+                                        {(() => {
+                                          const it = inventoryItemById.get(d.itemId);
+                                          if (!it) return null;
+                                          const sku = (it.sku || "").trim();
+                                          const name = (it.name || "").trim();
+                                          if (!sku && !name) return null;
+                                          return (
+                                            <div className="mt-1 text-xs text-zinc-500">
+                                              {sku ? tr(`编号：${sku}`, `SKU: ${sku}`) : tr("编号：-", "SKU: -")} · {name ? tr(`名称：${name}`, `Name: ${name}`) : tr("名称：-", "Name: -")}
+                                            </div>
+                                          );
+                                        })()}
                                       </td>
                                       <td className="px-3 py-2 text-right">
                                         <input
@@ -4464,12 +4478,24 @@ export default function Journal() {
                             }}
                           >
                             <option value="">请选择</option>
-                            {inventoryItems.map((it) => (
+                            {inventoryItemsSorted.map((it: any) => (
                               <option key={it.id} value={it.id}>
                                 {((it.sku ? `${it.sku} ` : "") + it.name).replace(/\s+/g, " ").trim()}
                               </option>
                             ))}
                           </select>
+                          {(() => {
+                            const it = inventoryItemById.get(r.itemId);
+                            if (!it) return null;
+                            const sku = (it.sku || "").trim();
+                            const name = (it.name || "").trim();
+                            if (!sku && !name) return null;
+                            return (
+                              <div className="mt-1 text-xs text-zinc-500">
+                                {sku ? `编号：${sku}` : "编号：-"} · {name ? `名称：${name}` : "名称：-"}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <input
