@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { NavLink } from "react-router-dom";
 import { Building2, FileText, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,21 +30,10 @@ export default function AppShell({ title, children }: { title: string; children:
   const { lang, setLang } = useUiStore();
   const tr = useTr();
   const inflight = useUiStore((s) => s.inflight);
-  const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!inflight) return;
-    const id = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(id);
-  }, [inflight]);
-
   const inflightText = useMemo(() => {
-    if (!inflight || !inflightStartedAt) return null;
-    const ms = Math.max(0, now - inflightStartedAt);
-    const sec = (ms / 1000).toFixed(1);
-    return tr(`刷新中 ${sec}s`, `Refreshing ${sec}s`);
-  }, [inflight, inflightStartedAt, now, tr]);
+    if (!inflight) return null;
+    return tr("刷新中...", "Refreshing...");
+  }, [inflight, tr]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
