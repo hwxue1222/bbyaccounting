@@ -10,7 +10,7 @@ export const FIXED_ASSET_CATEGORIES = [
 export type FixedAssetCategory = (typeof FIXED_ASSET_CATEGORIES)[number];
 
 function categoryPrefix(category: FixedAssetCategory): string {
-  if (category === "Machinery and Equipment") return "MEQ";
+  if (category === "Machinery and Equipment") return "ME";
   if (category === "Vehicles") return "VEH";
   if (category === "Computer") return "COM";
   if (category === "Furniture and Fixtures") return "FUR";
@@ -59,7 +59,7 @@ export async function issueFixedAssetNo(
                   0
                 ) + 1
               FROM fixed_assets
-              WHERE org_id = ${orgId}
+              WHERE org_id = ${orgId} AND category = ${normalized}
             ),
             1
           ) + 1
@@ -94,7 +94,7 @@ export async function peekNextFixedAssetNo(
         0
       ) as max_no
     FROM fixed_assets
-    WHERE org_id = ${orgId}
+    WHERE org_id = ${orgId} AND category = ${normalized}
   `;
   const maxNo = BigInt((rows[0] as any)?.max_no || 0);
   const next = maxNo + 1n;

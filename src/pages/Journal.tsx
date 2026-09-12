@@ -1296,264 +1296,266 @@ export default function Journal() {
               : tr("新建凭证（直接过账）", "New journal (post directly)")}
         </div>
 
-        <div className="mt-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-3">
-            <div className="grid gap-3 md:grid-cols-12">
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("谁", "Who")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                  value={assistQuickWho}
-                  onChange={(e) => setAssistQuickWho(e.target.value)}
-                  placeholder={tr("董事", "Director")}
-                  disabled={readOnly || busy}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("代替谁", "On behalf")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                  value={assistQuickOnBehalf}
-                  onChange={(e) => setAssistQuickOnBehalf(e.target.value)}
-                  placeholder={tr("公司", "Company")}
-                  disabled={readOnly || busy}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("付款方式", "Payment")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  value={assistQuickPayMethod}
-                  onChange={(e) => setAssistQuickPayMethod(e.target.value)}
-                  disabled={readOnly || busy}
-                >
-                  <option value="" disabled>
-                    {tr("请选择", "Select")}
-                  </option>
-                  <option value="unpaid">{tr("未支付", "Unpaid")}</option>
-                  <option value="cash">{tr("现金", "Cash")}</option>
-                  {activeBankAccountsSorted.map((b) => (
+        {!editingEntryId ? (
+          <div className="mt-3">
+            <div className="rounded-lg border border-zinc-200 bg-white p-3">
+              <div className="grid gap-3 md:grid-cols-12">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("谁", "Who")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={assistQuickWho}
+                    onChange={(e) => setAssistQuickWho(e.target.value)}
+                    placeholder={tr("董事", "Director")}
+                    disabled={readOnly || busy}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("代替谁", "On behalf")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={assistQuickOnBehalf}
+                    onChange={(e) => setAssistQuickOnBehalf(e.target.value)}
+                    placeholder={tr("公司", "Company")}
+                    disabled={readOnly || busy}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("付款方式", "Payment")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    value={assistQuickPayMethod}
+                    onChange={(e) => setAssistQuickPayMethod(e.target.value)}
+                    disabled={readOnly || busy}
+                  >
+                    <option value="" disabled>
+                      {tr("请选择", "Select")}
+                    </option>
+                    <option value="unpaid">{tr("未支付", "Unpaid")}</option>
+                    <option value="cash">{tr("现金", "Cash")}</option>
+                    {activeBankAccountsSorted.map((b) => (
                       <option key={b.id} value={`bank:${b.id}`}>
                         {tr("银行：", "Bank: ")}
                         {b.bankName} {b.accountNo}
                       </option>
                     ))}
-                </select>
-              </div>
-              <div className="md:col-span-3">
-                <label className="text-xs text-zinc-600">{tr("做什么", "What")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                  value={assistQuickAction}
-                  onChange={(e) => setAssistQuickAction(e.target.value)}
-                  placeholder={tr("购买一辆汽车", "Bought a car")}
-                  disabled={readOnly || busy}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("是否新增固定资产", "New fixed asset")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  value={assistQuickNewFixedAsset}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setAssistQuickNewFixedAsset(v as any);
-                    if (v === "yes") {
-                      setAssistQuickNewFaForm({
-                        category: "",
-                        assetNo: "",
-                        name: "",
-                        memo: "",
-                        acquisitionDate: draftDate,
-                        usefulLifeMonths: "60",
-                        salvageBase: "0",
-                      });
-                      setAssistQuickNewFaOpen(true);
-                    }
-                  }}
-                  disabled={readOnly || busy}
-                >
-                  <option value="" disabled>
-                    {tr("请选择", "Select")}
-                  </option>
-                  <option value="yes">{tr("新增", "New")}</option>
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("是否现有存货", "Existing inventory")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  value={assistQuickExistingInventoryItemId}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setAssistQuickExistingInventoryItemId(v);
-                    if (v === "__new__") {
-                      setAssistQuickNewInvErr(null);
-                      setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
-                      setAssistQuickNewInvOpen(true);
-                    }
-                  }}
-                  disabled={readOnly || busy}
-                >
-                  <option value="" disabled>
-                    {tr("请选择", "Select")}
-                  </option>
-                  <option value="__new__">{tr("新增", "New")}</option>
-                  {inventoryItemsSorted.map((it: any) => (
+                  </select>
+                </div>
+                <div className="md:col-span-3">
+                  <label className="text-xs text-zinc-600">{tr("做什么", "What")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={assistQuickAction}
+                    onChange={(e) => setAssistQuickAction(e.target.value)}
+                    placeholder={tr("购买一辆汽车", "Bought a car")}
+                    disabled={readOnly || busy}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("是否新增固定资产", "New fixed asset")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    value={assistQuickNewFixedAsset}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAssistQuickNewFixedAsset(v as any);
+                      if (v === "yes") {
+                        setAssistQuickNewFaForm({
+                          category: "",
+                          assetNo: "",
+                          name: "",
+                          memo: "",
+                          acquisitionDate: draftDate,
+                          usefulLifeMonths: "60",
+                          salvageBase: "0",
+                        });
+                        setAssistQuickNewFaOpen(true);
+                      }
+                    }}
+                    disabled={readOnly || busy}
+                  >
+                    <option value="" disabled>
+                      {tr("请选择", "Select")}
+                    </option>
+                    <option value="yes">{tr("新增", "New")}</option>
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("是否现有存货", "Existing inventory")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    value={assistQuickExistingInventoryItemId}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAssistQuickExistingInventoryItemId(v);
+                      if (v === "__new__") {
+                        setAssistQuickNewInvErr(null);
+                        setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
+                        setAssistQuickNewInvOpen(true);
+                      }
+                    }}
+                    disabled={readOnly || busy}
+                  >
+                    <option value="" disabled>
+                      {tr("请选择", "Select")}
+                    </option>
+                    <option value="__new__">{tr("新增", "New")}</option>
+                    {inventoryItemsSorted.map((it: any) => (
                       <option key={String(it.id)} value={String(it.id)}>
                         {it.sku ? `${it.sku} ` : ""}{it.name}
                       </option>
                     ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  value={draftVendorId}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setDraftVendorId(v);
-                    if (v === "__new__") {
-                      setAssistQuickNewVendorErr(null);
-                      setAssistQuickNewVendorForm({ code: "", name: "" });
-                      setAssistQuickNewVendorOpen(true);
-                    }
-                  }}
-                  onFocus={() => {
-                    if (!vendors.length) {
-                      refreshVendorsOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
-                    }
-                  }}
-                  disabled={readOnly || busy}
-                >
-                  <option value="" disabled>
-                    {tr("请选择", "Select")}
-                  </option>
-                  <option value="__new__">{tr("新增", "New")}</option>
-                  {vendorsSorted
-                    .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftVendorId)
-                    .map((x) => (
-                      <option key={String(x.id)} value={String(x.id)}>
-                        {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
-                        {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("是否涉及现有客户", "Existing customer")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  value={draftCustomerId}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setDraftCustomerId(v);
-                    if (v === "__new__") {
-                      setAssistQuickNewCustomerErr(null);
-                      setAssistQuickNewCustomerForm({ code: "", name: "" });
-                      setAssistQuickNewCustomerOpen(true);
-                    }
-                  }}
-                  onFocus={() => {
-                    if (!customers.length) {
-                      refreshCustomersOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
-                    }
-                  }}
-                  disabled={readOnly || busy}
-                >
-                  <option value="" disabled>
-                    {tr("请选择", "Select")}
-                  </option>
-                  <option value="__new__">{tr("新增", "New")}</option>
-                  {customersSorted
-                    .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftCustomerId)
-                    .map((x) => (
-                      <option key={String(x.id)} value={String(x.id)}>
-                        {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
-                        {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div className="md:col-span-1">
-                <label className="text-xs text-zinc-600">{tr("货币", "CCY")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
-                  value={currencyForQuick}
-                  onChange={(e) => setAssistQuickCurrency(e.target.value.toUpperCase())}
-                  disabled={readOnly || busy}
-                >
-                  {enabledCurrencies.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    value={draftVendorId}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDraftVendorId(v);
+                      if (v === "__new__") {
+                        setAssistQuickNewVendorErr(null);
+                        setAssistQuickNewVendorForm({ code: "", name: "" });
+                        setAssistQuickNewVendorOpen(true);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (!vendors.length) {
+                        refreshVendorsOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
+                      }
+                    }}
+                    disabled={readOnly || busy}
+                  >
+                    <option value="" disabled>
+                      {tr("请选择", "Select")}
                     </option>
-                  ))}
-                </select>
+                    <option value="__new__">{tr("新增", "New")}</option>
+                    {vendorsSorted
+                      .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftVendorId)
+                      .map((x) => (
+                        <option key={String(x.id)} value={String(x.id)}>
+                          {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
+                          {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("是否涉及现有客户", "Existing customer")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    value={draftCustomerId}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDraftCustomerId(v);
+                      if (v === "__new__") {
+                        setAssistQuickNewCustomerErr(null);
+                        setAssistQuickNewCustomerForm({ code: "", name: "" });
+                        setAssistQuickNewCustomerOpen(true);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (!customers.length) {
+                        refreshCustomersOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
+                      }
+                    }}
+                    disabled={readOnly || busy}
+                  >
+                    <option value="" disabled>
+                      {tr("请选择", "Select")}
+                    </option>
+                    <option value="__new__">{tr("新增", "New")}</option>
+                    {customersSorted
+                      .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftCustomerId)
+                      .map((x) => (
+                        <option key={String(x.id)} value={String(x.id)}>
+                          {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
+                          {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="text-xs text-zinc-600">{tr("货币", "CCY")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={currencyForQuick}
+                    onChange={(e) => setAssistQuickCurrency(e.target.value.toUpperCase())}
+                    disabled={readOnly || busy}
+                  >
+                    {enabledCurrencies.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("金额", "Amount")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={assistQuickAmount}
+                    onChange={(e) => setAssistQuickAmount(e.target.value)}
+                    placeholder={tr("20000", "20000")}
+                    disabled={readOnly || busy}
+                    inputMode="decimal"
+                  />
+                </div>
+                <div className="md:col-span-12">
+                  <label className="text-xs text-zinc-600">{tr("用途", "Purpose")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={assistQuickPurpose}
+                    onChange={(e) => setAssistQuickPurpose(e.target.value)}
+                    placeholder={tr("公司使用/办公用途/自用", "Company use/office/personal")}
+                    disabled={readOnly || busy}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" || e.shiftKey) return;
+                      e.preventDefault();
+                      if (!canGenerate) return;
+                      void startAssistChat(quickText);
+                    }}
+                  />
+                </div>
               </div>
-              <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("金额", "Amount")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                  value={assistQuickAmount}
-                  onChange={(e) => setAssistQuickAmount(e.target.value)}
-                  placeholder={tr("20000", "20000")}
-                  disabled={readOnly || busy}
-                  inputMode="decimal"
-                />
-              </div>
-              <div className="md:col-span-12">
-                <label className="text-xs text-zinc-600">{tr("用途", "Purpose")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                  value={assistQuickPurpose}
-                  onChange={(e) => setAssistQuickPurpose(e.target.value)}
-                  placeholder={tr("公司使用/办公用途/自用", "Company use/office/personal")}
-                  disabled={readOnly || busy}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter" || e.shiftKey) return;
-                    e.preventDefault();
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-zinc-500">
+                  {quickText.trim()
+                    ? tr(`将生成：${quickText}`, `Will generate: ${quickText}`)
+                    : tr(
+                        "示例：董事代替公司用现金购买一辆汽车，20000 MYR，用途：公司使用。",
+                        "Example: Director on behalf of company paid cash to buy a car, 20000 MYR, purpose: company use.",
+                      )}
+                </div>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={!canGenerate}
+                  onClick={() => {
                     if (!canGenerate) return;
                     void startAssistChat(quickText);
                   }}
-                />
+                  type="button"
+                >
+                  {tr("生成建议", "Generate")}
+                </button>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={readOnly || busy}
+                  onClick={() => {
+                    void startAssistChat(quickText.trim() || undefined);
+                  }}
+                  type="button"
+                >
+                  {tr("展开对话框", "Open")}
+                </button>
               </div>
             </div>
-
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs text-zinc-500">
-                {quickText.trim()
-                  ? tr(`将生成：${quickText}`, `Will generate: ${quickText}`)
-                  : tr(
-                      "示例：董事代替公司用现金购买一辆汽车，20000 MYR，用途：公司使用。",
-                      "Example: Director on behalf of company paid cash to buy a car, 20000 MYR, purpose: company use.",
-                    )}
-              </div>
-            <button
-              className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              disabled={!canGenerate}
-              onClick={() => {
-                if (!canGenerate) return;
-                void startAssistChat(quickText);
-              }}
-              type="button"
-            >
-              {tr("生成建议", "Generate")}
-            </button>
-            <button
-              className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-              disabled={readOnly || busy}
-              onClick={() => {
-                void startAssistChat(quickText.trim() || undefined);
-              }}
-              type="button"
-            >
-              {tr("展开对话框", "Open")}
-            </button>
-            </div>
+            <div className="mt-1 text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
           </div>
-          <div className="mt-1 text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
-        </div>
+        ) : null}
 
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="w-full sm:w-44">
