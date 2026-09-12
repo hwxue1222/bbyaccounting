@@ -123,6 +123,8 @@ export default function Journal() {
   const [assistQuickOnBehalf, setAssistQuickOnBehalf] = useState("");
   const [assistQuickPayMethod, setAssistQuickPayMethod] = useState("");
   const [assistQuickAction, setAssistQuickAction] = useState("");
+  const [assistQuickExistingFixedAssetId, setAssistQuickExistingFixedAssetId] = useState("");
+  const [assistQuickExistingInventoryItemId, setAssistQuickExistingInventoryItemId] = useState("");
   const [assistQuickCurrency, setAssistQuickCurrency] = useState("");
   const [assistQuickAmount, setAssistQuickAmount] = useState("");
   const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
@@ -313,6 +315,8 @@ export default function Journal() {
     setRecurringEnabled(false);
     setRecurringEveryMonths(1);
     setRecurringCount(1);
+    setAssistQuickExistingFixedAssetId("");
+    setAssistQuickExistingInventoryItemId("");
     void refreshNextVoucherNo(true);
   }
 
@@ -1368,6 +1372,27 @@ export default function Journal() {
     }
     if (assistQuickPayMethod.trim()) quickTextParts.push(`用${assistQuickPayMethod.trim()}`);
     if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
+
+    if (assistQuickExistingFixedAssetId === "__new__") {
+      quickTextParts.push(tr("新增固定资产", "New fixed asset"));
+    } else if (assistQuickExistingFixedAssetId) {
+      const fa = fixedAssets.find((x) => x.id === assistQuickExistingFixedAssetId);
+      if (fa) {
+        const label = `${fa.assetNo ? `${fa.assetNo} ` : ""}${fa.name}`.trim();
+        quickTextParts.push(tr(`现有固定资产：${label}`, `Existing fixed asset: ${label}`));
+      }
+    }
+
+    if (assistQuickExistingInventoryItemId === "__new__") {
+      quickTextParts.push(tr("新增存货", "New inventory item"));
+    } else if (assistQuickExistingInventoryItemId) {
+      const it = inventoryItems.find((x: any) => String(x.id) === assistQuickExistingInventoryItemId);
+      if (it) {
+        const label = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
+        quickTextParts.push(tr(`现有存货：${label}`, `Existing inventory: ${label}`));
+      }
+    }
+
     const amt = assistQuickAmount.trim();
     if (amt) quickTextParts.push(`${amt} ${currencyForQuick}`.trim());
     if (assistQuickPurpose.trim()) quickTextParts.push(`用途：${assistQuickPurpose.trim()}`);
@@ -1426,6 +1451,56 @@ export default function Journal() {
                   placeholder={tr("购买一辆汽车", "Bought a car")}
                   disabled={readOnly || busy}
                 />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("是否现有固定资产", "Existing FA")}</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={assistQuickExistingFixedAssetId}
+                  onChange={(e) => setAssistQuickExistingFixedAssetId(e.target.value)}
+                  onFocus={() => {
+                    if (!fixedAssets.length) {
+                      refreshFixedAssets().catch((e) => setErr(e.message));
+                    }
+                  }}
+                  disabled={readOnly || busy}
+                >
+                  <option value="" disabled>
+                    {tr("请选择", "Select")}
+                  </option>
+                  <option value="__new__">{tr("新增", "New")}</option>
+                  {fixedAssets
+                    .filter((x) => String(x.status).toLowerCase() === "active")
+                    .slice()
+                    .sort((a, b) => `${a.assetNo || ""} ${a.name}`.localeCompare(`${b.assetNo || ""} ${b.name}`))
+                    .map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.assetNo ? `${x.assetNo} ` : ""}{x.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("是否现有存货", "Existing inventory")}</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={assistQuickExistingInventoryItemId}
+                  onChange={(e) => setAssistQuickExistingInventoryItemId(e.target.value)}
+                  disabled={readOnly || busy}
+                >
+                  <option value="" disabled>
+                    {tr("请选择", "Select")}
+                  </option>
+                  <option value="__new__">{tr("新增", "New")}</option>
+                  {inventoryItems
+                    .slice()
+                    .sort((a: any, b: any) => `${a.sku || ""} ${a.name}`.localeCompare(`${b.sku || ""} ${b.name}`))
+                    .map((it: any) => (
+                      <option key={String(it.id)} value={String(it.id)}>
+                        {it.sku ? `${it.sku} ` : ""}{it.name}
+                      </option>
+                    ))}
+                </select>
               </div>
               <div className="md:col-span-1">
                 <label className="text-xs text-zinc-600">{tr("货币", "CCY")}</label>
