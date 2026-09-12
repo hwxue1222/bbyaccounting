@@ -394,7 +394,27 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const orgId = requireOrgId(req, res);
   if (!orgId) return;
   const sql = getSql();
+  const q = z
+    .object({
+      limit: z.coerce.number().int().min(1).max(500).optional(),
+    })
+    .safeParse({ limit: req.query.limit });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid query" });
+    return;
+  }
+  const limit = q.data.limit ?? 200;
+
   const rows = await sql`
+    WITH sums AS (
+      SELECT
+        entry_id,
+        COALESCE(SUM(debit_txn), 0) as "totalDebitTxn",
+        COALESCE(SUM(debit_base), 0) as "totalDebitBase"
+      FROM journal_lines
+      WHERE org_id = ${orgId}
+      GROUP BY entry_id
+    )
     SELECT
       e.id,
       to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
@@ -409,12 +429,13 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       e.customer_id as "customerId",
       e.inventory_impact as "inventoryImpact",
       e.created_at as "createdAt",
-      (SELECT COALESCE(SUM(debit_txn),0) FROM journal_lines l WHERE l.entry_id = e.id) as "totalDebitTxn",
-      (SELECT COALESCE(SUM(debit_base),0) FROM journal_lines l WHERE l.entry_id = e.id) as "totalDebitBase"
+      COALESCE(s."totalDebitTxn", 0) as "totalDebitTxn",
+      COALESCE(s."totalDebitBase", 0) as "totalDebitBase"
     FROM journal_entries e
+    LEFT JOIN sums s ON s.entry_id = e.id
     WHERE e.org_id = ${orgId}
     ORDER BY e.entry_date DESC, e.created_at DESC
-    LIMIT 200
+    LIMIT ${limit}
   `;
   res.status(200).json({ success: true, data: { entries: rows } });
 });

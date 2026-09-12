@@ -20,11 +20,22 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const orgId = requireOrgId(req, res);
   if (!orgId) return;
   const sql = getSql();
+  const q = z
+    .object({
+      limit: z.coerce.number().int().min(1).max(5000).optional(),
+    })
+    .safeParse({ limit: req.query.limit });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid query" });
+    return;
+  }
+  const limit = q.data.limit ?? 500;
   const rows = await sql`
     SELECT id, code, name, notes, is_active as "isActive", created_at as "createdAt"
     FROM vendors
     WHERE org_id = ${orgId}
     ORDER BY is_active DESC, code ASC NULLS LAST, name ASC
+    LIMIT ${limit}
   `;
   res.status(200).json({ success: true, data: { vendors: rows } });
 });

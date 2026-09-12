@@ -29,32 +29,21 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const orgId = requireOrgId(req, res);
   if (!orgId) return;
   const sql = getSql();
+  const q = z
+    .object({
+      limit: z.coerce.number().int().min(1).max(2000).optional(),
+    })
+    .safeParse({ limit: req.query.limit });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid query" });
+    return;
+  }
+  const limit = q.data.limit ?? 200;
+
   const rows = await sql`
-    SELECT
-      id,
-      asset_no as "assetNo",
-      name,
-      category,
-      memo,
-      acquisition_date as "acquisitionDate",
-      cost_base as "costBase",
-      useful_life_months as "usefulLifeMonths",
-      salvage_value_base as "salvageValueBase",
-      status,
-      disposed_at as "disposedAt",
-      asset_account_id as "assetAccountId",
-      accum_dep_account_id as "accumDepAccountId",
-      dep_expense_account_id as "depExpenseAccountId",
-      p.entry_id as "purchaseEntryId",
-      p.voucher_no as "purchaseVoucherNo",
-      p.currency_code as "purchaseCurrency",
-      p.fx_rate as "purchaseFxRate",
-      p.memo as "purchaseMemo",
-      p.cost_txn as "purchaseCostTxn",
-      p.offset_account_id as "purchaseOffsetAccountId"
-    FROM fixed_assets
-    LEFT JOIN LATERAL (
-      SELECT
+    WITH purchase AS (
+      SELECT DISTINCT ON (l1.fixed_asset_id)
+        l1.fixed_asset_id,
         e.id as entry_id,
         e.voucher_no as voucher_no,
         e.currency_code,
@@ -63,7 +52,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
         l1.debit_txn as cost_txn,
         l2.account_id as offset_account_id
       FROM journal_lines l1
-      JOIN journal_entries e ON e.id = l1.entry_id AND e.org_id = ${orgId}
+      JOIN journal_entries e ON e.id = l1.entry_id AND e.org_id = ${orgId} AND e.status = 'posted'
       LEFT JOIN LATERAL (
         SELECT l.account_id
         FROM journal_lines l
@@ -75,16 +64,38 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
         LIMIT 1
       ) l2 ON true
       WHERE l1.org_id = ${orgId}
-        AND l1.fixed_asset_id = fixed_assets.id
-        AND e.status = 'posted'
-        AND l1.account_id = fixed_assets.asset_account_id
+        AND l1.fixed_asset_id IS NOT NULL
         AND COALESCE(l1.debit_base, 0) > 0
-      ORDER BY e.entry_date ASC, e.id ASC
-      LIMIT 1
-    ) p ON true
-    WHERE fixed_assets.org_id = ${orgId}
-      AND fixed_assets.status <> 'draft'
-    ORDER BY acquisition_date DESC
+      ORDER BY l1.fixed_asset_id, e.entry_date ASC, e.id ASC
+    )
+    SELECT
+      a.id,
+      a.asset_no as "assetNo",
+      a.name,
+      a.category,
+      a.memo,
+      a.acquisition_date as "acquisitionDate",
+      a.cost_base as "costBase",
+      a.useful_life_months as "usefulLifeMonths",
+      a.salvage_value_base as "salvageValueBase",
+      a.status,
+      a.disposed_at as "disposedAt",
+      a.asset_account_id as "assetAccountId",
+      a.accum_dep_account_id as "accumDepAccountId",
+      a.dep_expense_account_id as "depExpenseAccountId",
+      p.entry_id as "purchaseEntryId",
+      p.voucher_no as "purchaseVoucherNo",
+      p.currency_code as "purchaseCurrency",
+      p.fx_rate as "purchaseFxRate",
+      p.memo as "purchaseMemo",
+      p.cost_txn as "purchaseCostTxn",
+      p.offset_account_id as "purchaseOffsetAccountId"
+    FROM fixed_assets a
+    LEFT JOIN purchase p ON p.fixed_asset_id = a.id
+    WHERE a.org_id = ${orgId}
+      AND a.status <> 'draft'
+    ORDER BY a.acquisition_date DESC
+    LIMIT ${limit}
   `;
   res.status(200).json({ success: true, data: { assets: rows } });
 });

@@ -1,5 +1,5 @@
 import type React from "react";
-import { useMemo } from "react";
+import { useEffect, useRef } from "react";
 import { NavLink } from "react-router-dom";
 import { Building2, FileText, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,10 +30,28 @@ export default function AppShell({ title, children }: { title: string; children:
   const { lang, setLang } = useUiStore();
   const tr = useTr();
   const inflight = useUiStore((s) => s.inflight);
-  const inflightText = useMemo(() => {
-    if (!inflight) return null;
-    return tr("刷新中...", "Refreshing...");
-  }, [inflight, tr]);
+  const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
+  const inflightRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = inflightRef.current;
+    if (!el) return;
+    if (!inflight || !inflightStartedAt) {
+      el.style.display = "none";
+      el.textContent = "";
+      return;
+    }
+
+    el.style.display = "block";
+    const update = () => {
+      const ms = Math.max(0, Date.now() - inflightStartedAt);
+      const sec = (ms / 1000).toFixed(1);
+      el.textContent = tr(`刷新中 ${sec}s`, `Refreshing ${sec}s`);
+    };
+    update();
+    const id = window.setInterval(update, 200);
+    return () => window.clearInterval(id);
+  }, [inflight, inflightStartedAt, tr]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -143,9 +161,11 @@ export default function AppShell({ title, children }: { title: string; children:
               <div className="min-w-0">
                 <div className="truncate text-base font-semibold">{title}</div>
               </div>
-              {inflightText ? (
-                <div className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700">{inflightText}</div>
-              ) : null}
+              <div
+                ref={inflightRef}
+                className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700"
+                style={{ display: "none" }}
+              />
             </div>
           </header>
 

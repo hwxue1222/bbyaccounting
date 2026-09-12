@@ -274,6 +274,8 @@ export async function ensureMigrated(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(org_id, account_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_entry ON journal_lines(org_id, entry_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_fixed_asset ON journal_lines(org_id, fixed_asset_id)`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS attachments (

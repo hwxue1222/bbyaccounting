@@ -2,7 +2,7 @@ import { useUiStore } from "@/stores/uiStore";
 
 const responseCache = new Map<string, { ts: number; value: unknown }>();
 const inflight = new Map<string, Promise<unknown>>();
-const CACHE_TTL_MS = 15_000;
+const CACHE_TTL_MS = 60_000;
 
 export async function api<T>(
   input: string,
