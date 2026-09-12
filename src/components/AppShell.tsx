@@ -100,7 +100,7 @@ export default function AppShell({ title, children }: { title: string; children:
           </div>
 
           <nav className="flex-1 space-y-1 p-3">
-            <SideLink to="/" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} />
+            <SideLink to="/settings" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} />
             <SideLink to="/journal" label={tr("分录", "Journals")} icon={<FileText className="h-4 w-4" />} />
             <SideLink to="/inventory" label={tr("库存 FIFO", "Inventory FIFO")} icon={<Package className="h-4 w-4" />} />
             <SideLink to="/fixed-assets" label={tr("固定资产", "Fixed Assets")} icon={<Warehouse className="h-4 w-4" />} />
