@@ -118,6 +118,14 @@ export default function Journal() {
   const [assistDisposalAssetId, setAssistDisposalAssetId] = useState("");
   const [assistDisposalBusy, setAssistDisposalBusy] = useState(false);
   const [assistDisposalErr, setAssistDisposalErr] = useState<string | null>(null);
+  const [assistEditFaInfo, setAssistEditFaInfo] = useState<null | {
+    category: string;
+    assetNo: string;
+    name: string;
+    acquisitionDate: string;
+    usefulLifeMonths: string;
+    salvageBase: string;
+  }>(null);
   const [assistQuickWho, setAssistQuickWho] = useState("");
   const [assistQuickOnBehalf, setAssistQuickOnBehalf] = useState("");
   const [assistQuickPayMethod, setAssistQuickPayMethod] = useState("");
@@ -307,6 +315,10 @@ export default function Journal() {
       category: string | null;
       name: string;
       status: string;
+      acquisitionDate: string | null;
+      usefulLifeMonths: number | null;
+      salvageValueBase: number | null;
+      memo: string | null;
       costBase: number;
       depExpenseAccountId: string | null;
       accumDepAccountId: string | null;
@@ -383,6 +395,10 @@ export default function Journal() {
         category: a.category ? String(a.category) : null,
         name: String(a.name || ""),
         status: String(a.status || ""),
+        acquisitionDate: a.acquisitionDate ? String(a.acquisitionDate) : null,
+        usefulLifeMonths: a.usefulLifeMonths != null ? Number(a.usefulLifeMonths) : null,
+        salvageValueBase: a.salvageValueBase != null ? Number(a.salvageValueBase) : null,
+        memo: a.memo ? String(a.memo) : null,
         costBase: Number(a.costBase || 0),
         depExpenseAccountId: a.depExpenseAccountId ? String(a.depExpenseAccountId) : null,
         accumDepAccountId: a.accumDepAccountId ? String(a.accumDepAccountId) : null,
@@ -862,6 +878,9 @@ export default function Journal() {
   function resetAssistSuggestion() {
     setAssistSuggestion(null);
     setAssistErr(null);
+    setAssistDisposalAssetId("");
+    setAssistDisposalErr(null);
+    setAssistEditFaInfo(null);
   }
 
   function confirmAssistFill() {
@@ -972,6 +991,7 @@ export default function Journal() {
       setAssistEditInvLinkLineNo(1);
       setAssistEditInvDetails([]);
       setAssistEditFaPurchase(null);
+      setAssistEditFaInfo(null);
       return;
     }
 
@@ -2380,6 +2400,16 @@ export default function Journal() {
                                   const cost = Number(snap.costBase || 0);
                                   const accum = Number(snap.accumDepBase || 0);
                                   setAssistExtra(`${label}；原值 ${cost}；累计折旧 ${accum}`);
+                                  if (asset) {
+                                    setAssistEditFaInfo({
+                                      category: asset.category || "",
+                                      assetNo: asset.assetNo || "",
+                                      name: asset.name || "",
+                                      acquisitionDate: asset.acquisitionDate || draftDate,
+                                      usefulLifeMonths: String(asset.usefulLifeMonths ?? 60),
+                                      salvageBase: String(asset.salvageValueBase ?? 0),
+                                    });
+                                  }
                                 } catch (err: any) {
                                   setAssistDisposalErr(err?.message || "Failed to load fixed asset snapshot");
                                 } finally {
@@ -2777,7 +2807,11 @@ export default function Journal() {
                         );
                       })()}
 
-                      {assistEditFaPurchase ? (
+                      {(() => {
+                        const faInfo = assistEditFaPurchase || assistEditFaInfo;
+                        if (!faInfo) return null;
+                        const isPurchase = Boolean(assistEditFaPurchase);
+                        return (
                         <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
                           <div className="text-sm font-semibold">{tr("固定资产信息（可选）", "Fixed asset info (optional)")}</div>
                           <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -2785,8 +2819,12 @@ export default function Journal() {
                               <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
                               <select
                                 className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
-                                value={assistEditFaPurchase.category}
-                                onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, category: e.target.value } : p))}
+                                value={faInfo.category}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, category: v } : p));
+                                  else setAssistEditFaInfo((p) => (p ? { ...p, category: v } : p));
+                                }}
                               >
                                 <option value="">{tr("请选择", "Select")}</option>
                                 <option value="Machinery and Equipment">Machinery and Equipment</option>
@@ -2799,27 +2837,72 @@ export default function Journal() {
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("编号（可选）", "Asset no (optional)")}</label>
-                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.assetNo} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, assetNo: e.target.value } : p))} />
+                              <input
+                                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                                value={faInfo.assetNo}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, assetNo: v } : p));
+                                  else setAssistEditFaInfo((p) => (p ? { ...p, assetNo: v } : p));
+                                }}
+                              />
                             </div>
                             <div className="md:col-span-2">
                               <label className="text-xs text-zinc-600">{tr("资产名称", "Name")}</label>
-                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.name} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, name: e.target.value } : p))} />
+                              <input
+                                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                                value={faInfo.name}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, name: v } : p));
+                                  else setAssistEditFaInfo((p) => (p ? { ...p, name: v } : p));
+                                }}
+                              />
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("购置日", "Acquisition date")}</label>
-                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.acquisitionDate} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, acquisitionDate: e.target.value } : p))} />
+                              <input
+                                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                                value={faInfo.acquisitionDate}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, acquisitionDate: v } : p));
+                                  else setAssistEditFaInfo((p) => (p ? { ...p, acquisitionDate: v } : p));
+                                }}
+                              />
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("使用年限（月）", "Useful life (months)")}</label>
-                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.usefulLifeMonths} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, usefulLifeMonths: e.target.value } : p))} type="number" step="1" />
+                              <input
+                                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                                value={faInfo.usefulLifeMonths}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, usefulLifeMonths: v } : p));
+                                  else setAssistEditFaInfo((p) => (p ? { ...p, usefulLifeMonths: v } : p));
+                                }}
+                                type="number"
+                                step="1"
+                              />
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("残值（本位）", "Salvage (base)")}</label>
-                              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assistEditFaPurchase.salvageBase} onChange={(e) => setAssistEditFaPurchase((p) => (p ? { ...p, salvageBase: e.target.value } : p))} type="number" step="0.01" />
+                              <input
+                                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                                value={faInfo.salvageBase}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, salvageBase: v } : p));
+                                  else setAssistEditFaInfo((p) => (p ? { ...p, salvageBase: v } : p));
+                                }}
+                                type="number"
+                                step="0.01"
+                              />
                             </div>
                           </div>
                         </div>
-                      ) : null}
+                        );
+                      })()}
 
                     </>
                   ) : null}
