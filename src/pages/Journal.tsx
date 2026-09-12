@@ -93,6 +93,8 @@ export default function Journal() {
   const tr = useTr();
   const [searchParams, setSearchParams] = useSearchParams();
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const pageAbortRef = useRef<AbortController | null>(null);
+  const invQuoteAbortRef = useRef<AbortController | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -180,6 +182,27 @@ export default function Journal() {
     const uniq = Array.from(new Set([baseCurrency, ...list]));
     return uniq.sort();
   }, [currencies, baseCurrency]);
+
+  const activeBankAccountsSorted = useMemo(() => {
+    return bankAccounts
+      .filter((b) => b.isActive)
+      .slice()
+      .sort((a, b) => `${a.bankName} ${a.accountNo}`.localeCompare(`${b.bankName} ${b.accountNo}`));
+  }, [bankAccounts]);
+
+  const inventoryItemsSorted = useMemo(() => {
+    return inventoryItems
+      .slice()
+      .sort((a: any, b: any) => `${a.sku || ""} ${a.name}`.localeCompare(`${b.sku || ""} ${b.name}`));
+  }, [inventoryItems]);
+
+  const vendorsSorted = useMemo(() => {
+    return vendors.slice().sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`));
+  }, [vendors]);
+
+  const customersSorted = useMemo(() => {
+    return customers.slice().sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`));
+  }, [customers]);
 
   const bankAccountById = useMemo(() => new Map(bankAccounts.map((b) => [b.id, b] as const)), [bankAccounts]);
 
@@ -337,11 +360,11 @@ export default function Journal() {
     setAssistQuickNewInvOpen(false);
     setDraftVendorId("");
     setDraftCustomerId("");
-    void refreshNextVoucherNo(true);
+    void refreshNextVoucherNo(true, pageAbortRef.current?.signal);
   }
 
-  async function refreshFixedAssets() {
-    const r = await api<{ assets: any[] }>("/api/fixed-assets");
+  async function refreshFixedAssets(signal?: AbortSignal) {
+    const r = await api<{ assets: any[] }>("/api/fixed-assets", { signal });
     setFixedAssets(
       (r.assets || []).map((a: any) => ({
         id: String(a.id),
@@ -391,8 +414,8 @@ export default function Journal() {
     }
   }
 
-  async function refreshNextVoucherNo(force?: boolean): Promise<string> {
-    const r = await api<{ voucherNo: string }>("/api/journals/voucher/next");
+  async function refreshNextVoucherNo(force?: boolean, signal?: AbortSignal): Promise<string> {
+    const r = await api<{ voucherNo: string }>("/api/journals/voucher/next", { signal });
     if (force) {
       setVoucherTouched(false);
       setDraftVoucherNo(r.voucherNo);
@@ -402,37 +425,37 @@ export default function Journal() {
     return r.voucherNo;
   }
 
-  async function refreshCore() {
+  async function refreshCore(signal?: AbortSignal) {
     const [{ accounts }, { costCenters }, { currencies }, { entries }] = await Promise.all([
-      api<{ accounts: any[] }>("/api/settings/accounts"),
-      api<{ costCenters: any[] }>("/api/settings/cost-centers"),
-      api<{ currencies: any[] }>("/api/settings/currencies"),
-      api<{ entries: any[] }>("/api/journals"),
+      api<{ accounts: any[] }>("/api/settings/accounts", { signal }),
+      api<{ costCenters: any[] }>("/api/settings/cost-centers", { signal }),
+      api<{ currencies: any[] }>("/api/settings/currencies", { signal }),
+      api<{ entries: any[] }>("/api/journals", { signal }),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setEntries(entries as any);
-    await refreshNextVoucherNo();
+    await refreshNextVoucherNo(undefined, signal);
   }
 
-  async function refreshVendorsOnly() {
-    const r = await api<{ vendors: any[] }>("/api/vendors");
+  async function refreshVendorsOnly(signal?: AbortSignal) {
+    const r = await api<{ vendors: any[] }>("/api/vendors", { signal });
     setVendors(r.vendors as any);
   }
 
-  async function refreshCustomersOnly() {
-    const r = await api<{ customers: any[] }>("/api/customers");
+  async function refreshCustomersOnly(signal?: AbortSignal) {
+    const r = await api<{ customers: any[] }>("/api/customers", { signal });
     setCustomers(r.customers as any);
   }
 
-  async function refreshBankAccountsOnly() {
-    const r = await api<{ bankAccounts: any[] }>("/api/settings/bank-accounts");
+  async function refreshBankAccountsOnly(signal?: AbortSignal) {
+    const r = await api<{ bankAccounts: any[] }>("/api/settings/bank-accounts", { signal });
     setBankAccounts(r.bankAccounts as any);
   }
 
-  async function refreshInventoryItemsOnly() {
-    const r = await api<{ items: any[] }>("/api/inventory/items");
+  async function refreshInventoryItemsOnly(signal?: AbortSignal) {
+    const r = await api<{ items: any[] }>("/api/inventory/items", { signal });
     setInventoryItems((r.items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
   }
 
@@ -1055,27 +1078,38 @@ export default function Journal() {
 
   useEffect(() => {
     if (!invModalOpen || invMode !== "shipment") return;
-    let cancelled = false;
+    invQuoteAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    invQuoteAbortRef.current = ctrl;
+
     const rows = invEditingDetails.filter((d) => d.itemId && (Number(d.qty) || 0) > 0);
-    (async () => {
-      const pairs = await Promise.all(
-        rows.map(async (r) => {
-          try {
-            const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
-              `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(Number(r.qty) || 0))}`,
-            );
-            return [r.rowId, { base: Number(resp.totalBase), err: null }] as const;
-          } catch (e: any) {
-            return [r.rowId, { base: null, err: e?.message || "Quote failed" }] as const;
-          }
-        }),
-      );
-      if (cancelled) return;
-      const updates = Object.fromEntries(pairs);
-      setInvQuoteByRow((prev) => ({ ...prev, ...updates }));
-    })();
+    const id = window.setTimeout(() => {
+      void (async () => {
+        const pairs = await Promise.all(
+          rows.map(async (r) => {
+            try {
+              const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
+                `/api/inventory/shipments/quote?itemId=${encodeURIComponent(r.itemId)}&qty=${encodeURIComponent(String(Number(r.qty) || 0))}`,
+                { signal: ctrl.signal },
+              );
+              return [r.rowId, { base: Number(resp.totalBase), err: null }] as const;
+            } catch (e: any) {
+              if (e?.name === "AbortError") {
+                return [r.rowId, { base: null, err: null }] as const;
+              }
+              return [r.rowId, { base: null, err: e?.message || "Quote failed" }] as const;
+            }
+          }),
+        );
+        if (ctrl.signal.aborted) return;
+        const updates = Object.fromEntries(pairs);
+        setInvQuoteByRow((prev) => ({ ...prev, ...updates }));
+      })();
+    }, 350);
+
     return () => {
-      cancelled = true;
+      window.clearTimeout(id);
+      ctrl.abort();
     };
   }, [invModalOpen, invMode, invEditingDetails]);
 
@@ -1090,7 +1124,7 @@ export default function Journal() {
     setInvLineIdx(null);
   }, [activeOrgId]);
 
-  async function fillFxFromHistory() {
+  async function fillFxFromHistory(signal?: AbortSignal) {
     const cc = draftCurrency.toUpperCase();
     if (cc === baseCurrency) {
       setDraftFx(1);
@@ -1098,6 +1132,7 @@ export default function Journal() {
     }
     const r = await api<{ fxRates: Array<{ fxRate: number }> }>(
       `/api/settings/fx-rates?rateDate=${draftDate}&currencyCode=${encodeURIComponent(cc)}`,
+      { signal },
     );
     const fx = r.fxRates?.[0]?.fxRate;
     if (!fx) {
@@ -1106,22 +1141,32 @@ export default function Journal() {
     setDraftFx(Number(fx));
   }
 
-  async function loadDetail(id: string) {
-    const d = await api<EntryDetail>(`/api/journals/${id}`);
+  async function loadDetail(id: string, signal?: AbortSignal) {
+    const d = await api<EntryDetail>(`/api/journals/${id}`, { signal });
     setDetail(d);
   }
 
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
+    pageAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    pageAbortRef.current = ctrl;
     setErr(null);
     setEntries([]);
     setSelectedId(null);
     setDetail(null);
-    refreshCore().catch((e) => setErr(e.message));
-    refreshInventoryItemsOnly().catch(() => null);
-    refreshVendorsOnly().catch(() => null);
-    refreshCustomersOnly().catch(() => null);
-    refreshBankAccountsOnly().catch(() => null);
+    refreshCore(ctrl.signal).catch((e) => {
+      if (e?.name === "AbortError") return;
+      if (e?.message === "请求超时，请重试") return;
+      setErr(e.message);
+    });
+    refreshInventoryItemsOnly(ctrl.signal).catch(() => null);
+    refreshVendorsOnly(ctrl.signal).catch(() => null);
+    refreshCustomersOnly(ctrl.signal).catch(() => null);
+    refreshBankAccountsOnly(ctrl.signal).catch(() => null);
+    return () => {
+      ctrl.abort();
+    };
   }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
@@ -1142,7 +1187,12 @@ export default function Journal() {
       setDetail(null);
       return;
     }
-    loadDetail(selectedId).catch((e) => setErr(e.message));
+    const ctrl = new AbortController();
+    loadDetail(selectedId, ctrl.signal).catch((e) => {
+      if (e?.name === "AbortError") return;
+      setErr(e.message);
+    });
+    return () => ctrl.abort();
   }, [selectedId]);
 
   function renderEditorCard() {
@@ -1282,11 +1332,7 @@ export default function Journal() {
                   </option>
                   <option value="unpaid">{tr("未支付", "Unpaid")}</option>
                   <option value="cash">{tr("现金", "Cash")}</option>
-                  {bankAccounts
-                    .filter((b) => b.isActive)
-                    .slice()
-                    .sort((a, b) => `${a.bankName} ${a.accountNo}`.localeCompare(`${b.bankName} ${b.accountNo}`))
-                    .map((b) => (
+                  {activeBankAccountsSorted.map((b) => (
                       <option key={b.id} value={`bank:${b.id}`}>
                         {tr("银行：", "Bank: ")}
                         {b.bankName} {b.accountNo}
@@ -1353,10 +1399,7 @@ export default function Journal() {
                     {tr("请选择", "Select")}
                   </option>
                   <option value="__new__">{tr("新增", "New")}</option>
-                  {inventoryItems
-                    .slice()
-                    .sort((a: any, b: any) => `${a.sku || ""} ${a.name}`.localeCompare(`${b.sku || ""} ${b.name}`))
-                    .map((it: any) => (
+                  {inventoryItemsSorted.map((it: any) => (
                       <option key={String(it.id)} value={String(it.id)}>
                         {it.sku ? `${it.sku} ` : ""}{it.name}
                       </option>
@@ -1379,7 +1422,7 @@ export default function Journal() {
                   }}
                   onFocus={() => {
                     if (!vendors.length) {
-                      refreshVendorsOnly().catch((e) => setErr(e.message));
+                      refreshVendorsOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
                     }
                   }}
                   disabled={readOnly || busy}
@@ -1388,10 +1431,8 @@ export default function Journal() {
                     {tr("请选择", "Select")}
                   </option>
                   <option value="__new__">{tr("新增", "New")}</option>
-                  {vendors
+                  {vendorsSorted
                     .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftVendorId)
-                    .slice()
-                    .sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`))
                     .map((x) => (
                       <option key={String(x.id)} value={String(x.id)}>
                         {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
@@ -1416,7 +1457,7 @@ export default function Journal() {
                   }}
                   onFocus={() => {
                     if (!customers.length) {
-                      refreshCustomersOnly().catch((e) => setErr(e.message));
+                      refreshCustomersOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
                     }
                   }}
                   disabled={readOnly || busy}
@@ -1425,10 +1466,8 @@ export default function Journal() {
                     {tr("请选择", "Select")}
                   </option>
                   <option value="__new__">{tr("新增", "New")}</option>
-                  {customers
+                  {customersSorted
                     .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftCustomerId)
-                    .slice()
-                    .sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`))
                     .map((x) => (
                       <option key={String(x.id)} value={String(x.id)}>
                         {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
@@ -1574,7 +1613,7 @@ export default function Journal() {
             onClick={async () => {
               setErr(null);
               try {
-                await fillFxFromHistory();
+                await fillFxFromHistory(pageAbortRef.current?.signal);
               } catch (e: any) {
                 setErr(e.message);
               }
@@ -1963,7 +2002,7 @@ export default function Journal() {
                 setErr(null);
                 if (!draftVoucherNo.trim()) {
                   try {
-                    const v = await refreshNextVoucherNo(true);
+                    const v = await refreshNextVoucherNo(true, pageAbortRef.current?.signal);
                     if (!String(v || "").trim()) {
                       setErr(tr("分录号不能为空。", "Voucher number cannot be empty."));
                       return;
