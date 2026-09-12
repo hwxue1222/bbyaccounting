@@ -67,11 +67,23 @@ function buildHeuristicSuggestion(input: {
   const isFixedAssetNew = /fixed\s*asset|\u56fa\u5b9a\u8d44\u4ea7|\u65b0\u589e\u56fa\u5b9a\u8d44\u4ea7|ppe/.test(lower);
   const payByCash = /cash|\u73b0\u91d1/.test(lower);
   const payByBank = /transfer|bank|\u94f6\u884c|\u8f6c\u8d26/.test(lower);
+  const payUnpaid = /unpaid|\u672a\u652f\u4ed8/.test(lower);
+  const hasVendor = /vendor|\u4f9b\u5e94\u5546/.test(lower);
+  const hasCustomer = /customer|\u5ba2\u6237/.test(lower);
   const hasDirector = /director|\u8463\u4e8b/.test(lower);
   const hasCompany = /company|\u516c\u53f8/.test(lower);
 
   let debitCode: string | null = null;
-  if (isVehicle || isFixedAssetNew) {
+  const isCustomerFlow = hasCustomer && !hasVendor && (payUnpaid || (!payByCash && !payByBank));
+  if (isCustomerFlow) {
+    const has1200 = input.accounts.some((a) => String(a.code || "") === "1200");
+    debitCode = has1200
+      ? "1200"
+      : pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u5e94\u6536", "\u5ba2\u6237", "receivable", "ar"] }) ||
+        input.accounts.find((a) => String(a.type) === "asset")?.code ||
+        input.accounts[0]?.code ||
+        null;
+  } else if (isVehicle || isFixedAssetNew) {
     const has1600 = input.accounts.some((a) => String(a.code || "") === "1600");
     debitCode = has1600
       ? "1600"
@@ -86,9 +98,22 @@ function buildHeuristicSuggestion(input: {
 
   let creditCode: string | null = null;
   const useDueToDirector = hasDirector && hasCompany && !(lower.includes("\u516c\u53f8\u73b0\u91d1") || lower.includes("company cash"));
+  if (isCustomerFlow) {
+    creditCode =
+      pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u6536\u5165", "\u8425\u4e1a\u6536\u5165", "\u9500\u552e", "revenue", "sales", "income"] }) ||
+      input.accounts.find((a) => String(a.type) === "income")?.code ||
+      input.accounts[0]?.code ||
+      null;
+  }
   if (useDueToDirector) {
     creditCode = pickBestAccountCode(input.accounts, { type: "liability", keywords: ["\u8463\u4e8b", "\u501f\u6b3e", "\u5e94\u4ed8", "due", "loan"] });
     if (!creditCode) warnings.push(t("未找到“应付董事/董事借款”科目，将尝试使用现金/银行科目。", "No 'due to director/loan' account; falling back to cash/bank.") );
+  }
+  if (!creditCode && !isCustomerFlow && hasVendor && !hasCustomer && (payUnpaid || (!payByCash && !payByBank && !useDueToDirector))) {
+    const has2000 = input.accounts.some((a) => String(a.code || "") === "2000");
+    creditCode = has2000
+      ? "2000"
+      : pickBestAccountCode(input.accounts, { type: "liability", keywords: ["\u5e94\u4ed8", "\u4f9b\u5e94\u5546", "payable", "ap", "vendor"] });
   }
   if (!creditCode) {
     if (payByCash) creditCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u73b0\u91d1", "cash"] });
@@ -97,20 +122,35 @@ function buildHeuristicSuggestion(input: {
     if (!creditCode) creditCode = input.accounts.find((a) => String(a.type) === "asset")?.code || input.accounts[0]?.code || null;
   }
 
-  const codeLines = [
-    {
-      accountCode: debitCode || "",
-      description: t("购置/费用", "Purchase/expense"),
-      debitTxn: amount || 0,
-      creditTxn: 0,
-    },
-    {
-      accountCode: creditCode || "",
-      description: t("付款", "Payment"),
-      debitTxn: 0,
-      creditTxn: amount || 0,
-    },
-  ];
+  const codeLines = isCustomerFlow
+    ? [
+        {
+          accountCode: debitCode || "",
+          description: t("客户应收", "Accounts receivable"),
+          debitTxn: amount || 0,
+          creditTxn: 0,
+        },
+        {
+          accountCode: creditCode || "",
+          description: t("收入", "Revenue"),
+          debitTxn: 0,
+          creditTxn: amount || 0,
+        },
+      ]
+    : [
+        {
+          accountCode: debitCode || "",
+          description: t("购置/费用", "Purchase/expense"),
+          debitTxn: amount || 0,
+          creditTxn: 0,
+        },
+        {
+          accountCode: creditCode || "",
+          description: hasVendor && !payByCash && !payByBank ? t("供应商应付", "Accounts payable") : t("付款", "Payment"),
+          debitTxn: 0,
+          creditTxn: amount || 0,
+        },
+      ];
 
   const lines = codeLines.map((l) => {
     const code = String(l.accountCode || "");
