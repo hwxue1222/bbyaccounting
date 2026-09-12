@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
@@ -161,6 +161,10 @@ export default function Journal() {
   const [assistQuickCurrency, setAssistQuickCurrency] = useState("");
   const [assistQuickAmount, setAssistQuickAmount] = useState("");
   const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
+  const [assistQuickPurposeKind, setAssistQuickPurposeKind] = useState<
+    "" | "faPurchase" | "faDisposal" | "invPurchase" | "invSale" | "other"
+  >("");
+  const [assistQuickDisposalAssetId, setAssistQuickDisposalAssetId] = useState("");
   const [assistChatMessages, setAssistChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
 
   const [assistEditEntryDate, setAssistEditEntryDate] = useState("");
@@ -217,19 +221,10 @@ export default function Journal() {
 
   const inventoryItemById = useMemo(() => new Map(inventoryItems.map((it) => [it.id, it] as const)), [inventoryItems]);
 
-  const quickNeedsNewFixedAsset = useMemo(() => {
-    const s = assistQuickAction.trim().toLowerCase();
-    if (!s) return false;
-    const isSell = /卖|出售|处置|sell|disposal/.test(s);
-    if (isSell) return false;
-    const hasBuy = /买|购买|购入|purchase|bought|acquir/.test(s);
-    const hasFa = /固定资产|车辆|汽车|\bcar\b|vehicle|machinery|equipment|computer|furniture|renovation|intangible|设备|机器|电脑|家具|装修|无形/.test(s);
-    return hasBuy && hasFa;
-  }, [assistQuickAction]);
+  const quickNeedsNewFixedAsset = assistQuickPurposeKind === "faPurchase";
+  const quickMissingNewFixedAsset = quickNeedsNewFixedAsset && !assistQuickNewFaSaved?.name?.trim();
 
-  const quickMissingNewFixedAsset = quickNeedsNewFixedAsset && assistQuickNewFixedAsset !== "yes";
-
-  function triggerQuickNewFixedAsset() {
+  const triggerQuickNewFixedAsset = useCallback(() => {
     setAssistQuickNewFixedAsset("yes");
     setAssistQuickNewFaForm({
       category: "",
@@ -241,7 +236,7 @@ export default function Journal() {
       salvageBase: "0",
     });
     setAssistQuickNewFaOpen(true);
-  }
+  }, [draftDate]);
 
   const assistNeedsFaDisposalInfo = useMemo(() => {
     const missing = Array.isArray((assistSuggestion as any)?.missing) ? ((assistSuggestion as any).missing as any[]) : [];
@@ -252,6 +247,38 @@ export default function Journal() {
   }, [assistSuggestion]);
 
   const bankAccountById = useMemo(() => new Map(bankAccounts.map((b) => [b.id, b] as const)), [bankAccounts]);
+
+  useEffect(() => {
+    if (assistQuickPurposeKind === "faPurchase") {
+      setAssistQuickNewFixedAsset("yes");
+      if (!assistQuickNewFaSaved?.name?.trim()) {
+        triggerQuickNewFixedAsset();
+      }
+    } else {
+      if (assistQuickNewFixedAsset) setAssistQuickNewFixedAsset("");
+      if (assistQuickNewFaSaved) setAssistQuickNewFaSaved(null);
+    }
+
+    if (assistQuickPurposeKind !== "invPurchase" && assistQuickPurposeKind !== "invSale") {
+      if (assistQuickExistingInventoryItemId) setAssistQuickExistingInventoryItemId("");
+    }
+
+    if (assistQuickPurposeKind !== "faDisposal") {
+      if (assistQuickDisposalAssetId) setAssistQuickDisposalAssetId("");
+    }
+
+    if (assistQuickPurposeKind !== "other") {
+      if (assistQuickPurpose.trim()) setAssistQuickPurpose("");
+    }
+  }, [
+    assistQuickPurposeKind,
+    assistQuickNewFixedAsset,
+    assistQuickNewFaSaved,
+    assistQuickExistingInventoryItemId,
+    assistQuickDisposalAssetId,
+    assistQuickPurpose,
+    triggerQuickNewFixedAsset,
+  ]);
 
   const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a] as const)), [accounts]);
   const activeAccounts = useMemo(() => accounts.filter((a) => (a as any).isActive ?? true), [accounts]);
@@ -406,6 +433,9 @@ export default function Journal() {
     setRecurringCount(1);
     setAssistQuickNewFixedAsset("");
     setAssistQuickExistingInventoryItemId("");
+    setAssistQuickPurposeKind("");
+    setAssistQuickDisposalAssetId("");
+    setAssistQuickPurpose("");
     setAssistQuickNewFaSaved(null);
     setAssistQuickNewFaOpen(false);
     setAssistQuickNewInvOpen(false);
@@ -1307,7 +1337,22 @@ export default function Journal() {
     }
     if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
 
-    if (assistQuickNewFixedAsset === "yes") {
+    if (assistQuickPurposeKind === "faPurchase") {
+      quickTextParts.push(tr("购买固定资产", "Purchase fixed asset"));
+    } else if (assistQuickPurposeKind === "faDisposal") {
+      quickTextParts.push(tr("处置固定资产", "Dispose fixed asset"));
+      const fa = fixedAssets.find((x) => String(x.id) === assistQuickDisposalAssetId);
+      if (fa) {
+        const label = `${fa.assetNo ? `${fa.assetNo} ` : ""}${fa.name}`.trim();
+        quickTextParts.push(tr(`固定资产：${label}`, `Fixed asset: ${label}`));
+      }
+    } else if (assistQuickPurposeKind === "invPurchase") {
+      quickTextParts.push(tr("购买存货", "Buy inventory"));
+    } else if (assistQuickPurposeKind === "invSale") {
+      quickTextParts.push(tr("出售存货", "Sell inventory"));
+    }
+
+    if (assistQuickPurposeKind === "faPurchase") {
       if (assistQuickNewFaSaved?.name.trim()) {
         const name = assistQuickNewFaSaved.name.trim();
         const cat = assistQuickNewFaSaved.category.trim();
@@ -1321,13 +1366,15 @@ export default function Journal() {
       }
     }
 
-    if (assistQuickExistingInventoryItemId === "__new__") {
-      quickTextParts.push(tr("新增存货", "New inventory item"));
-    } else if (assistQuickExistingInventoryItemId) {
-      const it = inventoryItems.find((x: any) => String(x.id) === assistQuickExistingInventoryItemId);
-      if (it) {
-        const label = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
-        quickTextParts.push(tr(`现有存货：${label}`, `Existing inventory: ${label}`));
+    if (assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale") {
+      if (assistQuickExistingInventoryItemId === "__new__") {
+        quickTextParts.push(tr("新增存货", "New inventory item"));
+      } else if (assistQuickExistingInventoryItemId) {
+        const it = inventoryItems.find((x: any) => String(x.id) === assistQuickExistingInventoryItemId);
+        if (it) {
+          const label = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
+          quickTextParts.push(tr(`现有存货：${label}`, `Existing inventory: ${label}`));
+        }
       }
     }
 
@@ -1363,10 +1410,19 @@ export default function Journal() {
 
     const amt = assistQuickAmount.trim();
     if (amt) quickTextParts.push(`${amt} ${currencyForQuick}`.trim());
-    if (assistQuickPurpose.trim()) quickTextParts.push(`用途：${assistQuickPurpose.trim()}`);
+    if (assistQuickPurposeKind === "other" && assistQuickPurpose.trim()) {
+      quickTextParts.push(`用途：${assistQuickPurpose.trim()}`);
+    }
     const quickText = quickTextParts.join("，");
 
-    const canGenerate = !readOnly && !busy && !!assistQuickAction.trim() && !!amt;
+    const needsOtherInfo = assistQuickPurposeKind === "other";
+    const canGenerate =
+      !readOnly &&
+      !busy &&
+      !!assistQuickAction.trim() &&
+      !!amt &&
+      !!assistQuickPurposeKind &&
+      (!needsOtherInfo || !!assistQuickPurpose.trim());
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold">
@@ -1431,56 +1487,6 @@ export default function Journal() {
                     placeholder={tr("购买一辆汽车", "Bought a car")}
                     disabled={readOnly || busy}
                   />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("是否新增固定资产", "New fixed asset")}</label>
-                  <select
-                    className={
-                      "mt-1 w-full rounded-md border bg-white px-3 py-2 text-sm " +
-                      (quickMissingNewFixedAsset ? "border-red-300" : "border-zinc-200")
-                    }
-                    value={assistQuickNewFixedAsset}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setAssistQuickNewFixedAsset(v as any);
-                      if (v === "yes") {
-                        triggerQuickNewFixedAsset();
-                      }
-                    }}
-                    disabled={readOnly || busy}
-                  >
-                    <option value="" disabled>
-                      {tr("请选择", "Select")}
-                    </option>
-                    <option value="yes">{tr("新增", "New")}</option>
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("是否现有存货", "Existing inventory")}</label>
-                  <select
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                    value={assistQuickExistingInventoryItemId}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setAssistQuickExistingInventoryItemId(v);
-                      if (v === "__new__") {
-                        setAssistQuickNewInvErr(null);
-                        setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
-                        setAssistQuickNewInvOpen(true);
-                      }
-                    }}
-                    disabled={readOnly || busy}
-                  >
-                    <option value="" disabled>
-                      {tr("请选择", "Select")}
-                    </option>
-                    <option value="__new__">{tr("新增", "New")}</option>
-                    {inventoryItemsSorted.map((it: any) => (
-                      <option key={String(it.id)} value={String(it.id)}>
-                        {it.sku ? `${it.sku} ` : ""}{it.name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
                 <div className="md:col-span-2">
                   <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
@@ -1580,23 +1586,133 @@ export default function Journal() {
                 </div>
                 <div className="md:col-span-12">
                   <label className="text-xs text-zinc-600">{tr("用途", "Purpose")}</label>
-                  <input
-                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={assistQuickPurpose}
-                    onChange={(e) => setAssistQuickPurpose(e.target.value)}
-                    placeholder={tr("公司使用/办公用途/自用", "Company use/office/personal")}
-                    disabled={readOnly || busy}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter" || e.shiftKey) return;
-                      e.preventDefault();
-                      if (!canGenerate) return;
-                      if (quickMissingNewFixedAsset) {
-                        triggerQuickNewFixedAsset();
-                        return;
-                      }
-                      void startAssistChat(quickText);
-                    }}
-                  />
+                  <div className="mt-1 grid gap-3 md:grid-cols-12">
+                    <div className="md:col-span-3">
+                      <select
+                        className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                        value={assistQuickPurposeKind}
+                        onChange={(e) => setAssistQuickPurposeKind(e.target.value as any)}
+                        disabled={readOnly || busy}
+                      >
+                        <option value="" disabled>
+                          {tr("请选择", "Select")}
+                        </option>
+                        <option value="faPurchase">{tr("购买固定资产", "Buy fixed asset")}</option>
+                        <option value="faDisposal">{tr("处置固定资产", "Dispose fixed asset")}</option>
+                        <option value="invPurchase">{tr("购买存货", "Buy inventory")}</option>
+                        <option value="invSale">{tr("出售存货", "Sell inventory")}</option>
+                        <option value="other">{tr("其他", "Other")}</option>
+                      </select>
+                    </div>
+
+                    {assistQuickPurposeKind === "other" ? (
+                      <div className="md:col-span-9">
+                        <input
+                          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                          value={assistQuickPurpose}
+                          onChange={(e) => setAssistQuickPurpose(e.target.value)}
+                          placeholder={tr("请输入用途/说明", "Enter purpose/notes")}
+                          disabled={readOnly || busy}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter" || e.shiftKey) return;
+                            e.preventDefault();
+                            if (!canGenerate) return;
+                            void startAssistChat(quickText);
+                          }}
+                        />
+                      </div>
+                    ) : null}
+
+                    {assistQuickPurposeKind === "faPurchase" ? (
+                      <div className="md:col-span-9">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            className={
+                              "rounded-md border bg-white px-3 py-2 text-sm hover:bg-zinc-50 " +
+                              (quickMissingNewFixedAsset ? "border-red-300" : "border-zinc-200")
+                            }
+                            type="button"
+                            disabled={readOnly || busy}
+                            onClick={() => triggerQuickNewFixedAsset()}
+                          >
+                            {tr("填写固定资产信息", "Fill fixed asset info")}
+                          </button>
+                          {assistQuickNewFaSaved?.name?.trim() ? (
+                            <div className="text-sm text-zinc-700">
+                              {tr("已选择：", "Selected: ")}
+                              {assistQuickNewFaSaved.name.trim()}
+                              {assistQuickNewFaSaved.assetNo.trim() ? ` (${assistQuickNewFaSaved.assetNo.trim()})` : ""}
+                            </div>
+                          ) : (
+                            <div className={"text-sm " + (quickMissingNewFixedAsset ? "text-red-600" : "text-zinc-500")}>
+                              {tr("未填写固定资产信息", "Fixed asset info not filled")}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {assistQuickPurposeKind === "faDisposal" ? (
+                      <div className="md:col-span-5">
+                        <select
+                          className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                          value={assistQuickDisposalAssetId}
+                          onChange={(e) => setAssistQuickDisposalAssetId(e.target.value)}
+                          onFocus={() => {
+                            if (!fixedAssets.length) {
+                              refreshFixedAssets(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
+                            }
+                          }}
+                          disabled={readOnly || busy}
+                        >
+                          <option value="" disabled>
+                            {tr("请选择固定资产", "Select fixed asset")}
+                          </option>
+                          {fixedAssets
+                            .filter((x) => String(x.status || "").toLowerCase() !== "disposed")
+                            .map((fa) => (
+                              <option key={fa.id} value={fa.id}>
+                                {fa.assetNo ? `${fa.assetNo} ` : ""}{fa.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    ) : null}
+
+                    {assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale" ? (
+                      <div className="md:col-span-5">
+                        <select
+                          className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                          value={assistQuickExistingInventoryItemId}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setAssistQuickExistingInventoryItemId(v);
+                            if (v === "__new__") {
+                              setAssistQuickNewInvErr(null);
+                              setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
+                              setAssistQuickNewInvOpen(true);
+                            }
+                          }}
+                          onFocus={() => {
+                            if (!inventoryItems.length) {
+                              refreshInventoryItemsOnly(pageAbortRef.current?.signal).catch((e) => setErr(e.message));
+                            }
+                          }}
+                          disabled={readOnly || busy}
+                        >
+                          <option value="" disabled>
+                            {tr("请选择存货（可选）", "Select inventory (optional)")}
+                          </option>
+                          <option value="__new__">{tr("新增", "New")}</option>
+                          {inventoryItemsSorted.map((it: any) => (
+                            <option key={String(it.id)} value={String(it.id)}>
+                              {it.sku ? `${it.sku} ` : ""}{it.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -1608,8 +1724,8 @@ export default function Journal() {
                 ) : (
                   <div className="text-xs text-zinc-500">
                     {tr(
-                      "示例：董事代替公司用现金购买一辆汽车，20000 MYR，用途：公司使用。",
-                      "Example: Director on behalf of company paid cash to buy a car, 20000 MYR, purpose: company use.",
+                      "示例：董事代替公司，未支付，买了一把刀；用途选择“购买存货”；20 MYR。",
+                      "Example: Director on behalf of company, unpaid, bought a knife; purpose: Buy inventory; 20 MYR.",
                     )}
                   </div>
                 )}
@@ -1622,6 +1738,9 @@ export default function Journal() {
                       triggerQuickNewFixedAsset();
                       return;
                     }
+                    if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
+                      setAssistDisposalAssetId(assistQuickDisposalAssetId);
+                    }
                     void startAssistChat(quickText);
                   }}
                   type="button"
@@ -1632,6 +1751,9 @@ export default function Journal() {
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={readOnly || busy}
                   onClick={() => {
+                    if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
+                      setAssistDisposalAssetId(assistQuickDisposalAssetId);
+                    }
                     void startAssistChat(quickText.trim() || undefined);
                   }}
                   type="button"

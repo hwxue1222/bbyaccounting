@@ -1,5 +1,6 @@
 import type React from "react";
- 
+
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { Building2, FileText, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,11 +32,22 @@ export default function AppShell({ title, children }: { title: string; children:
   const { lang, setLang } = useUiStore();
   const tr = useTr();
   const inflight = useUiStore((s) => s.inflight);
-  
+
+  const [showMask, setShowMask] = useState(false);
+
+  useEffect(() => {
+    if (!inflight) {
+      setShowMask(false);
+      return;
+    }
+    const t = window.setTimeout(() => setShowMask(true), 300);
+    return () => window.clearTimeout(t);
+  }, [inflight]);
+
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      {inflight ? (
+      {showMask ? (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25">
           <div className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-xl">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-200 border-t-blue-700" />
