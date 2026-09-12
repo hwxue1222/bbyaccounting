@@ -909,6 +909,18 @@ export default function Journal() {
     setAssistEditFaInfo(null);
   }
 
+  function closeAssist() {
+    setAssistOpen(false);
+    setAssistBusy(false);
+    setAssistErr(null);
+    setAssistSuggestion(null);
+    setAssistExtra("");
+    setAssistChatMessages([]);
+    setAssistDisposalAssetId("");
+    setAssistDisposalErr(null);
+    setAssistEditFaInfo(null);
+  }
+
   function confirmAssistFill() {
     if (!assistSuggestion) return;
     const debit = assistEditLines.reduce((s, x) => s + (Number(x.debitTxn) || 0), 0);
@@ -1002,7 +1014,7 @@ export default function Journal() {
     }
 
     applyAssistSuggestion(editedSuggestion, { faPurchase: fa });
-    setAssistOpen(false);
+    closeAssist();
   }
 
   useEffect(() => {
@@ -1062,6 +1074,12 @@ export default function Journal() {
       setAssistEditInvMode("receipt");
       setAssistEditInvLinkLineNo(1);
       setAssistEditInvDetails([]);
+    }
+
+    if (!assistNeedsFaDisposalInfo) {
+      setAssistDisposalAssetId("");
+      setAssistDisposalErr(null);
+      setAssistEditFaInfo(null);
     }
 
     if (assistNeedsFaDisposalInfo || assistDisposalAssetId) {
@@ -2347,8 +2365,7 @@ export default function Journal() {
           <div
             className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
             onMouseDown={() => {
-              setAssistOpen(false);
-              setAssistBusy(false);
+              closeAssist();
             }}
           >
             <div
@@ -2363,7 +2380,7 @@ export default function Journal() {
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                   disabled={assistBusy}
                   onClick={() => {
-                    setAssistOpen(false);
+                    closeAssist();
                   }}
                   type="button"
                 >
@@ -2433,11 +2450,13 @@ export default function Journal() {
                                   const accum = Number(snap.accumDepBase || 0);
                                   setAssistExtra(`${label}；原值 ${cost}；累计折旧 ${accum}`);
                                   if (asset) {
+                                    const acq = asset.acquisitionDate || draftDate;
+                                    const acqDate = acq.includes("T") ? acq.slice(0, 10) : acq;
                                     setAssistEditFaInfo({
                                       category: asset.category || "",
                                       assetNo: asset.assetNo || "",
                                       name: asset.name || "",
-                                      acquisitionDate: asset.acquisitionDate || draftDate,
+                                      acquisitionDate: acqDate,
                                       usefulLifeMonths: String(asset.usefulLifeMonths ?? 60),
                                       salvageBase: String(asset.salvageValueBase ?? 0),
                                     });

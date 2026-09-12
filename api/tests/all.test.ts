@@ -24,6 +24,7 @@ async function main() {
 
   const accounts = [
     { id: "a1000", code: "1000", name: "Cash", type: "asset" },
+    { id: "a1500", code: "1500", name: "Inventory", type: "asset" },
     { id: "a1200", code: "1200", name: "Accounts Receivable", type: "asset" },
     { id: "a1600", code: "1600", name: "Fixed Assets", type: "asset" },
     { id: "a1610", code: "1610", name: "Accumulated Depreciation", type: "asset" },
@@ -106,6 +107,20 @@ async function main() {
   });
   assert(s3.draft == null, "sale should return null draft when income account missing");
   assert(Array.isArray(s3.missing) && s3.missing.length > 0, "missing should include income account hint");
+
+  const s6 = buildHeuristicSuggestion({
+    text: "公司，未支付，买了现有存货 ST0001 knife，15 MYR",
+    lang: "zh",
+    baseCurrency: "MYR",
+    forcedEntryDate: "2026-09-12",
+    extraMemo: "",
+    accounts,
+    accountIdByCode,
+    accountNameByCode,
+  });
+  assert(s6.draft?.lines?.length === 2, "inventory purchase should have 2 lines");
+  assert(String(s6.preview.lines[0].accountCode) === "1500", "inventory purchase should debit 1500");
+  assert(String(s6.preview.lines[1].accountCode) === "2000", "unpaid inventory purchase should credit 2000");
 }
 
 main()

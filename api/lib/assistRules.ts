@@ -78,16 +78,74 @@ export function buildHeuristicSuggestion(input: {
 
   const hasVendor = /vendor|supplier|\u4f9b\u5e94\u5546/.test(lower);
   const hasCustomer = /customer|\u5ba2\u6237/.test(lower);
+  const hasInventory = /\u73b0\u6709\u5b58\u8d27|\u5b58\u8d27|\binventory\b|\bfifo\b/.test(lower);
   const hasDirector = /director|\u8463\u4e8b/.test(lower);
   const hasCompany = /company|\u516c\u53f8/.test(lower);
 
   const isCustomerFlow = hasCustomer && !hasVendor && (payUnpaid || (!payByCash && !payByBank));
   const isVendorFlow = hasVendor && !hasCustomer && (payUnpaid || (!payByCash && !payByBank));
 
+  const isPurchase = /buy|bought|purchase|acquir|\u4e70|\u8d2d\u4e70|\u8d2d\u5165|\u91c7\u8d2d/.test(lower);
+
   let debitCode: string | null = null;
   let creditCode: string | null = null;
 
   const isFixedAssetDisposal = isSale && (isVehicle || /\u56fa\u5b9a\u8d44\u4ea7|ppe|\u5904\u7f6e/.test(lower));
+
+  if (!isSale && isPurchase && hasInventory) {
+    const has1500 = input.accounts.some((a) => String(a.code || "") === "1500");
+    debitCode = has1500
+      ? "1500"
+      : pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u5b58\u8d27", "inventory"] }) ||
+        input.accounts.find((a) => String(a.type) === "asset")?.code ||
+        null;
+
+    if (payByCash) {
+      creditCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u73b0\u91d1", "cash"] });
+    } else if (payByBank) {
+      creditCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u94f6\u884c", "bank"] });
+    } else {
+      const has2000 = input.accounts.some((a) => String(a.code || "") === "2000");
+      creditCode = has2000
+        ? "2000"
+        : pickBestAccountCode(input.accounts, { type: "liability", keywords: ["\u5e94\u4ed8", "\u4f9b\u5e94\u5546", "payable", "ap"] }) ||
+          input.accounts.find((a) => String(a.type) === "liability")?.code ||
+          null;
+    }
+    if (!creditCode) creditCode = input.accounts.find((a) => String(a.type) === "liability")?.code || input.accounts[0]?.code || null;
+
+    if (!amount) {
+      missing.push(t("缺少金额（例如：15 MYR）", "Missing amount (e.g., 15 MYR)"));
+      return { draft: null, preview: null, warnings, missing };
+    }
+
+    const lines = [
+      { accountCode: debitCode || "", description: t("存货", "Inventory"), debitTxn: amount || 0, creditTxn: 0 },
+      { accountCode: creditCode || "", description: payUnpaid ? t("应付", "Payable") : t("付款", "Payment"), debitTxn: 0, creditTxn: amount || 0 },
+    ].map((l) => {
+      const code = String(l.accountCode || "");
+      const accountId = code ? input.accountIdByCode.get(code) || "" : "";
+      return {
+        accountCode: code,
+        accountId,
+        accountName: code ? input.accountNameByCode.get(code) || "" : "",
+        description: l.description,
+        debitTxn: l.debitTxn,
+        creditTxn: l.creditTxn,
+      };
+    });
+
+    const entryDate = input.forcedEntryDate || "";
+    const draft = {
+      entryDate,
+      currency: ccy,
+      fxRate: 1,
+      memo: input.extraMemo || "",
+      lines: lines.map((l) => ({ accountId: l.accountId, description: l.description, costCenterId: null, debitTxn: l.debitTxn, creditTxn: l.creditTxn })),
+    };
+    const preview = { entryDate, currency: ccy, fxRate: 1, memo: input.extraMemo || "", lines };
+    return { draft, preview, warnings, missing };
+  }
 
   if (isSale) {
     if (payByCash) {
