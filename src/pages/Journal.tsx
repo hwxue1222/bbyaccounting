@@ -1517,7 +1517,7 @@ export default function Journal() {
         </div>
 
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <div className="w-44">
+          <div className="w-full sm:w-44">
             <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -1526,7 +1526,7 @@ export default function Journal() {
               disabled={readOnly}
             />
           </div>
-          <div className="w-44">
+          <div className="w-full sm:w-44">
             <label className="text-xs text-zinc-600">{tr("分录号", "Voucher No")}</label>
             <input
               className={
@@ -1542,7 +1542,7 @@ export default function Journal() {
               disabled={readOnly}
             />
           </div>
-          <div className="w-28">
+          <div className="w-full sm:w-28">
             <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
             <select
               className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
@@ -1557,7 +1557,7 @@ export default function Journal() {
               ))}
             </select>
           </div>
-          <div className="w-40">
+          <div className="w-full sm:w-40">
             <label className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -1583,7 +1583,7 @@ export default function Journal() {
           >
             {tr("用历史", "Use history")}
           </button>
-          <div className="min-w-[260px] flex-1">
+          <div className="w-full min-w-0 flex-1 sm:min-w-[260px]">
             <label className="text-xs text-zinc-600">{tr("备注", "Memo")}</label>
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -1613,7 +1613,7 @@ export default function Journal() {
 
           {recurringEnabled ? (
             <>
-              <div className="w-56">
+              <div className="w-full sm:w-56">
                 <label className="text-xs text-zinc-600">{tr("开始日期", "Start date")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -1627,7 +1627,7 @@ export default function Journal() {
                   disabled={readOnly}
                 />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <label className="text-xs text-zinc-600">{tr("每隔（月）", "Every (months)")}</label>
                 <select
                   className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
@@ -1642,7 +1642,7 @@ export default function Journal() {
                   ))}
                 </select>
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <label className="text-xs text-zinc-600">{tr("次数", "Count")}</label>
                 <input
                   className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"

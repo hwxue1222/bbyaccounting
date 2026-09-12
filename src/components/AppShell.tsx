@@ -1,27 +1,28 @@
 import type React from "react";
 import { useEffect, useRef } from "react";
-import { NavLink } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Building2, FileText, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTr } from "@/lib/tr";
 
-function SideLink({ to, label, icon }: { to: string; label: string; icon: React.ReactNode }) {
+function SideLink({ to, label, icon, activePath }: { to: string; label: string; icon: React.ReactNode; activePath: string }) {
+  const isActive = activePath === to;
   return (
-    <NavLink
-      to={to}
-      reloadDocument
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
-          isActive ? "bg-blue-50 text-blue-700" : "text-zinc-700 hover:bg-zinc-100",
-        )
-      }
+    <a
+      href={to}
+      onClick={() => {
+        window.location.assign(to);
+      }}
+      className={cn(
+        "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
+        isActive ? "bg-blue-50 text-blue-700" : "text-zinc-700 hover:bg-zinc-100",
+      )}
     >
       <div className="h-4 w-4">{icon}</div>
       <div className="truncate">{label}</div>
-    </NavLink>
+    </a>
   );
 }
 
@@ -30,6 +31,7 @@ export default function AppShell({ title, children }: { title: string; children:
   const active = orgs.find((o) => o.orgId === activeOrgId) || null;
   const { lang, setLang } = useUiStore();
   const tr = useTr();
+  const location = useLocation();
   const inflight = useUiStore((s) => s.inflight);
   const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
   const inflightRef = useRef<HTMLDivElement | null>(null);
@@ -108,14 +110,14 @@ export default function AppShell({ title, children }: { title: string; children:
           </div>
 
           <nav className="flex-1 space-y-1 p-3">
-            <SideLink to="/settings" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} />
-            <SideLink to="/journal" label={tr("分录", "Journals")} icon={<FileText className="h-4 w-4" />} />
-            <SideLink to="/inventory" label={tr("库存 FIFO", "Inventory FIFO")} icon={<Package className="h-4 w-4" />} />
-            <SideLink to="/fixed-assets" label={tr("固定资产", "Fixed Assets")} icon={<Warehouse className="h-4 w-4" />} />
-            <SideLink to="/vendors" label={tr("供应商", "Vendors")} icon={<Handshake className="h-4 w-4" />} />
-            <SideLink to="/customers" label={tr("客户", "Customers")} icon={<UserRound className="h-4 w-4" />} />
-            <SideLink to="/reports" label={tr("报表", "Reports")} icon={<FileText className="h-4 w-4" />} />
-            <SideLink to="/users" label={tr("用户", "Users")} icon={<Users className="h-4 w-4" />} />
+            <SideLink to="/settings" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/journal" label={tr("分录", "Journals")} icon={<FileText className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/inventory" label={tr("库存 FIFO", "Inventory FIFO")} icon={<Package className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/fixed-assets" label={tr("固定资产", "Fixed Assets")} icon={<Warehouse className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/vendors" label={tr("供应商", "Vendors")} icon={<Handshake className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/customers" label={tr("客户", "Customers")} icon={<UserRound className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/reports" label={tr("报表", "Reports")} icon={<FileText className="h-4 w-4" />} activePath={location.pathname} />
+            <SideLink to="/users" label={tr("用户", "Users")} icon={<Users className="h-4 w-4" />} activePath={location.pathname} />
           </nav>
 
           <div className="border-t border-zinc-200 p-3">
