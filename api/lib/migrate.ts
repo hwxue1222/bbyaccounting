@@ -2,9 +2,15 @@ import crypto from "crypto";
 import { getSql } from "./db.js";
 
 let migrated = false;
+let migrating: Promise<void> | null = null;
 
 export async function ensureMigrated(): Promise<void> {
   if (migrated) return;
+  if (migrating) {
+    await migrating;
+    return;
+  }
+  migrating = (async () => {
   const sql = getSql();
 
   try {
@@ -410,7 +416,11 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
 
-  migrated = true;
+    migrated = true;
+  })().finally(() => {
+    migrating = null;
+  });
+  await migrating;
 }
 
 export function sha256(input: string): string {
