@@ -215,6 +215,32 @@ export default function Journal() {
     return customers.slice().sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`));
   }, [customers]);
 
+  const quickNeedsNewFixedAsset = useMemo(() => {
+    const s = assistQuickAction.trim().toLowerCase();
+    if (!s) return false;
+    const isSell = /卖|出售|处置|sell|disposal/.test(s);
+    if (isSell) return false;
+    const hasBuy = /买|购买|购入|purchase|bought|acquir/.test(s);
+    const hasFa = /固定资产|车辆|汽车|\bcar\b|vehicle|machinery|equipment|computer|furniture|renovation|intangible|设备|机器|电脑|家具|装修|无形/.test(s);
+    return hasBuy && hasFa;
+  }, [assistQuickAction]);
+
+  const quickMissingNewFixedAsset = quickNeedsNewFixedAsset && assistQuickNewFixedAsset !== "yes";
+
+  function triggerQuickNewFixedAsset() {
+    setAssistQuickNewFixedAsset("yes");
+    setAssistQuickNewFaForm({
+      category: "",
+      assetNo: "",
+      name: "",
+      memo: "",
+      acquisitionDate: draftDate,
+      usefulLifeMonths: "60",
+      salvageBase: "0",
+    });
+    setAssistQuickNewFaOpen(true);
+  }
+
   const assistNeedsFaDisposalInfo = useMemo(() => {
     const missing = Array.isArray((assistSuggestion as any)?.missing) ? ((assistSuggestion as any).missing as any[]) : [];
     return missing.some((x) => {
@@ -1389,22 +1415,16 @@ export default function Journal() {
                 <div className="md:col-span-2">
                   <label className="text-xs text-zinc-600">{tr("是否新增固定资产", "New fixed asset")}</label>
                   <select
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    className={
+                      "mt-1 w-full rounded-md border bg-white px-3 py-2 text-sm " +
+                      (quickMissingNewFixedAsset ? "border-red-300" : "border-zinc-200")
+                    }
                     value={assistQuickNewFixedAsset}
                     onChange={(e) => {
                       const v = e.target.value;
                       setAssistQuickNewFixedAsset(v as any);
                       if (v === "yes") {
-                        setAssistQuickNewFaForm({
-                          category: "",
-                          assetNo: "",
-                          name: "",
-                          memo: "",
-                          acquisitionDate: draftDate,
-                          usefulLifeMonths: "60",
-                          salvageBase: "0",
-                        });
-                        setAssistQuickNewFaOpen(true);
+                        triggerQuickNewFixedAsset();
                       }
                     }}
                     disabled={readOnly || busy}
@@ -1550,6 +1570,10 @@ export default function Journal() {
                       if (e.key !== "Enter" || e.shiftKey) return;
                       e.preventDefault();
                       if (!canGenerate) return;
+                      if (quickMissingNewFixedAsset) {
+                        triggerQuickNewFixedAsset();
+                        return;
+                      }
                       void startAssistChat(quickText);
                     }}
                   />
@@ -1574,6 +1598,10 @@ export default function Journal() {
                   disabled={!canGenerate}
                   onClick={() => {
                     if (!canGenerate) return;
+                    if (quickMissingNewFixedAsset) {
+                      triggerQuickNewFixedAsset();
+                      return;
+                    }
                     void startAssistChat(quickText);
                   }}
                   type="button"
