@@ -17,16 +17,18 @@ type Account = {
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
 type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: number };
+type BankAccount = { id: string; bankName: string; accountNo: string; accountId: string; isActive: boolean };
 
 export default function Settings() {
   const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg } = useAuthStore();
   const tr = useTr();
   const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
-  const [rightTab, setRightTab] = useState<"accounts" | "costCenters" | "currencies" | "fxRates">("accounts");
+  const [rightTab, setRightTab] = useState<"accounts" | "bankAccounts" | "costCenters" | "currencies" | "fxRates">("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [fxRates, setFxRates] = useState<FxRate[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("viewer");
@@ -61,6 +63,16 @@ export default function Settings() {
   const [fxCurrency, setFxCurrency] = useState("SGD");
   const [fxValue, setFxValue] = useState(1);
 
+  const [newBankName, setNewBankName] = useState("");
+  const [newBankAccountNo, setNewBankAccountNo] = useState("");
+  const [newBankCoaId, setNewBankCoaId] = useState("");
+  const [bankBusy, setBankBusy] = useState(false);
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [editBankName, setEditBankName] = useState("");
+  const [editBankAccountNo, setEditBankAccountNo] = useState("");
+  const [editBankCoaId, setEditBankCoaId] = useState("");
+  const [editBankActive, setEditBankActive] = useState(true);
+
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
 
   const [companyName, setCompanyName] = useState("");
@@ -78,16 +90,18 @@ export default function Settings() {
   }, [active?.baseCurrency]);
 
   async function refresh() {
-    const [{ accounts }, { costCenters }, { currencies }, { fxRates }] = await Promise.all([
+    const [{ accounts }, { costCenters }, { currencies }, { fxRates }, { bankAccounts }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
       api<{ currencies: any[] }>("/api/settings/currencies"),
       api<{ fxRates: any[] }>("/api/settings/fx-rates?limit=50"),
+      api<{ bankAccounts: any[] }>("/api/settings/bank-accounts"),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setFxRates(fxRates as any);
+    setBankAccounts(bankAccounts as any);
   }
 
   useEffect(() => {
@@ -244,7 +258,7 @@ export default function Settings() {
 
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
-            <div className="grid grid-cols-4 gap-1">
+            <div className="grid grid-cols-5 gap-1">
               <button
                 className={
                   rightTab === "accounts"
@@ -255,6 +269,17 @@ export default function Settings() {
                 onClick={() => setRightTab("accounts")}
               >
                 科目
+              </button>
+              <button
+                className={
+                  rightTab === "bankAccounts"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setRightTab("bankAccounts")}
+              >
+                银行账号
               </button>
               <button
                 className={
@@ -425,6 +450,226 @@ export default function Settings() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (rightTab === "bankAccounts" ? "" : "hidden")}>
+            <div className="text-sm font-semibold">银行账号</div>
+            <div className="mt-1 text-sm text-zinc-500">用于付款方式选择（银行转账）。</div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-5">
+              <div>
+                <label className="text-xs text-zinc-600">银行</label>
+                <input className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-2 text-sm" value={newBankName} onChange={(e) => setNewBankName(e.target.value)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">账号</label>
+                <input className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-2 text-sm" value={newBankAccountNo} onChange={(e) => setNewBankAccountNo(e.target.value)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">对应科目（Bank）</label>
+                <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={newBankCoaId} onChange={(e) => setNewBankCoaId(e.target.value)}>
+                  <option value="" disabled>
+                    请选择
+                  </option>
+                  {(() => {
+                    const active = accounts.filter((a) => a.isActive ?? true);
+                    const bankLike = active.filter((a) => a.type === "asset" && /bank|银行/i.test(`${a.code} ${a.name}`));
+                    const list = (bankLike.length ? bankLike : active).slice().sort((a, b) => `${a.code} ${a.name}`.localeCompare(`${b.code} ${b.name}`));
+                    return list.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} {a.name}
+                      </option>
+                    ));
+                  })()}
+                </select>
+              </div>
+              <div className="md:col-span-5">
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={bankBusy || !newBankName.trim() || !newBankAccountNo.trim() || !newBankCoaId}
+                  onClick={async () => {
+                    setErr(null);
+                    setBankBusy(true);
+                    try {
+                      await api<{ bankAccount: BankAccount }>("/api/settings/bank-accounts", {
+                        method: "POST",
+                        json: { bankName: newBankName.trim(), accountNo: newBankAccountNo.trim(), accountId: newBankCoaId },
+                      });
+                      setNewBankName("");
+                      setNewBankAccountNo("");
+                      setNewBankCoaId("");
+                      const r = await api<{ bankAccounts: BankAccount[] }>("/api/settings/bank-accounts");
+                      setBankAccounts(r.bankAccounts);
+                    } catch (e: any) {
+                      setErr(e.message);
+                    } finally {
+                      setBankBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  新增银行账号
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-xs text-zinc-500">
+                    <th className="py-2 pr-3">银行</th>
+                    <th className="py-2 pr-3">账号</th>
+                    <th className="py-2 pr-3">对应科目</th>
+                    <th className="py-2 pr-3">状态</th>
+                    <th className="py-2 pr-0"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bankAccounts
+                    .filter((b) => b.isActive)
+                    .slice()
+                    .sort((a, b) => `${a.bankName} ${a.accountNo}`.localeCompare(`${b.bankName} ${b.accountNo}`))
+                    .map((b) => {
+                      const isEditing = editingBankId === b.id;
+                      const accountLabel = (() => {
+                        const a = accounts.find((x) => x.id === b.accountId);
+                        if (!a) return b.accountId;
+                        return `${a.code} ${a.name}`;
+                      })();
+                      return (
+                        <tr key={b.id} className="border-b border-zinc-100">
+                          <td className="py-2 pr-3 align-top">
+                            {isEditing ? (
+                              <input className="w-full rounded-md border border-zinc-200 px-2 py-1.5 text-sm" value={editBankName} onChange={(e) => setEditBankName(e.target.value)} />
+                            ) : (
+                              b.bankName
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 align-top">
+                            {isEditing ? (
+                              <input className="w-full rounded-md border border-zinc-200 px-2 py-1.5 text-sm" value={editBankAccountNo} onChange={(e) => setEditBankAccountNo(e.target.value)} />
+                            ) : (
+                              b.accountNo
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 align-top">
+                            {isEditing ? (
+                              <select className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm" value={editBankCoaId} onChange={(e) => setEditBankCoaId(e.target.value)}>
+                                {accounts
+                                  .filter((a) => a.isActive ?? true)
+                                  .slice()
+                                  .sort((a, b) => `${a.code} ${a.name}`.localeCompare(`${b.code} ${b.name}`))
+                                  .map((a) => (
+                                    <option key={a.id} value={a.id}>
+                                      {a.code} {a.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            ) : (
+                              accountLabel
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 align-top">
+                            {isEditing ? (
+                              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                                <input type="checkbox" checked={editBankActive} onChange={(e) => setEditBankActive(e.target.checked)} />
+                                启用
+                              </label>
+                            ) : (
+                              <span className="text-zinc-600">启用</span>
+                            )}
+                          </td>
+                          <td className="py-2 pr-0 align-top">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+                                    onClick={() => {
+                                      setEditingBankId(null);
+                                    }}
+                                    type="button"
+                                  >
+                                    取消
+                                  </button>
+                                  <button
+                                    className="rounded-md bg-blue-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                                    disabled={bankBusy || !editBankName.trim() || !editBankAccountNo.trim() || !editBankCoaId}
+                                    onClick={async () => {
+                                      setErr(null);
+                                      setBankBusy(true);
+                                      try {
+                                        await api<{ bankAccount: BankAccount }>(`/api/settings/bank-accounts/${b.id}`, {
+                                          method: "PATCH",
+                                          json: {
+                                            bankName: editBankName.trim(),
+                                            accountNo: editBankAccountNo.trim(),
+                                            accountId: editBankCoaId,
+                                            isActive: editBankActive,
+                                          },
+                                        });
+                                        setEditingBankId(null);
+                                        const r = await api<{ bankAccounts: BankAccount[] }>("/api/settings/bank-accounts");
+                                        setBankAccounts(r.bankAccounts);
+                                      } catch (e: any) {
+                                        setErr(e.message);
+                                      } finally {
+                                        setBankBusy(false);
+                                      }
+                                    }}
+                                    type="button"
+                                  >
+                                    保存
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+                                    onClick={() => {
+                                      setEditingBankId(b.id);
+                                      setEditBankName(b.bankName);
+                                      setEditBankAccountNo(b.accountNo);
+                                      setEditBankCoaId(b.accountId);
+                                      setEditBankActive(true);
+                                    }}
+                                    type="button"
+                                  >
+                                    修改
+                                  </button>
+                                  <button
+                                    className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                    disabled={bankBusy}
+                                    onClick={async () => {
+                                      if (!window.confirm("确认删除该银行账号？")) return;
+                                      setErr(null);
+                                      setBankBusy(true);
+                                      try {
+                                        await api(`/api/settings/bank-accounts/${b.id}`, { method: "PATCH", json: { isActive: false } });
+                                        const r = await api<{ bankAccounts: BankAccount[] }>("/api/settings/bank-accounts");
+                                        setBankAccounts(r.bankAccounts);
+                                      } catch (e: any) {
+                                        setErr(e.message);
+                                      } finally {
+                                        setBankBusy(false);
+                                      }
+                                    }}
+                                    type="button"
+                                  >
+                                    删除
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+
+              {!bankAccounts.filter((b) => b.isActive).length ? <div className="mt-3 text-sm text-zinc-500">暂无银行账号</div> : null}
             </div>
           </div>
 

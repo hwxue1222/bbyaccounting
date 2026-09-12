@@ -468,4 +468,148 @@ router.post("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) 
   res.status(200).json({ success: true, data: { fxRate: row } });
 });
 
+router.get("/bank-accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      id,
+      bank_name as "bankName",
+      account_no as "accountNo",
+      account_id as "accountId",
+      is_active as "isActive"
+    FROM bank_accounts
+    WHERE org_id = ${orgId}
+    ORDER BY bank_name ASC, account_no ASC
+  `;
+  res.status(200).json({ success: true, data: { bankAccounts: rows } });
+});
+
+router.post("/bank-accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+
+  const bodySchema = z.object({
+    bankName: z.string().min(1),
+    accountNo: z.string().min(1),
+    accountId: z.string().uuid(),
+  });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+  const bankName = parsed.data.bankName.trim();
+  const accountNo = parsed.data.accountNo.trim();
+  const accountId = parsed.data.accountId;
+
+  const exists = (
+    await sql`
+      SELECT 1
+      FROM accounts
+      WHERE id = ${accountId} AND org_id = ${orgId}
+      LIMIT 1
+    `
+  )[0] as any;
+  if (!exists) {
+    res.status(400).json({ success: false, error: "Invalid account" });
+    return;
+  }
+
+  try {
+    const row = (
+      await sql`
+        INSERT INTO bank_accounts (org_id, bank_name, account_no, account_id)
+        VALUES (${orgId}, ${bankName}, ${accountNo}, ${accountId})
+        RETURNING id, bank_name as "bankName", account_no as "accountNo", account_id as "accountId", is_active as "isActive"
+      `
+    )[0];
+    res.status(200).json({ success: true, data: { bankAccount: row } });
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    if (msg.includes("duplicate key")) {
+      res.status(409).json({ success: false, error: "Bank account already exists" });
+      return;
+    }
+    throw e;
+  }
+});
+
+router.patch("/bank-accounts/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+
+  const bodySchema = z.object({
+    bankName: z.string().min(1).optional(),
+    accountNo: z.string().min(1).optional(),
+    accountId: z.string().uuid().optional(),
+    isActive: z.boolean().optional(),
+  });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    res.status(400).json({ success: false, error: "No changes" });
+    return;
+  }
+
+  const sql = getSql();
+  const id = req.params.id;
+
+  const bankName = parsed.data.bankName?.trim();
+  const accountNo = parsed.data.accountNo?.trim();
+  const accountId = parsed.data.accountId;
+  const isActive = parsed.data.isActive;
+
+  if (accountId) {
+    const exists = (
+      await sql`
+        SELECT 1
+        FROM accounts
+        WHERE id = ${accountId} AND org_id = ${orgId}
+        LIMIT 1
+      `
+    )[0] as any;
+    if (!exists) {
+      res.status(400).json({ success: false, error: "Invalid account" });
+      return;
+    }
+  }
+
+  try {
+    const row = (
+      await sql`
+        UPDATE bank_accounts
+        SET
+          bank_name = COALESCE(${bankName ?? null}, bank_name),
+          account_no = COALESCE(${accountNo ?? null}, account_no),
+          account_id = COALESCE(${accountId ?? null}, account_id),
+          is_active = COALESCE(${isActive ?? null}, is_active)
+        WHERE id = ${id} AND org_id = ${orgId}
+        RETURNING id, bank_name as "bankName", account_no as "accountNo", account_id as "accountId", is_active as "isActive"
+      `
+    )[0];
+    if (!row) {
+      res.status(404).json({ success: false, error: "Not found" });
+      return;
+    }
+    res.status(200).json({ success: true, data: { bankAccount: row } });
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    if (msg.includes("duplicate key")) {
+      res.status(409).json({ success: false, error: "Bank account already exists" });
+      return;
+    }
+    throw e;
+  }
+});
+
 export default router;

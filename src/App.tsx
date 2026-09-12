@@ -41,6 +41,14 @@ export default function App() {
           path="/"
           element={
             <RequireAuth>
+              <Settings />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <RequireAuth>
               <Dashboard />
             </RequireAuth>
           }
@@ -97,7 +105,7 @@ export default function App() {
           path="/settings"
           element={
             <RequireAuth>
-              <Settings />
+              <Navigate to="/" replace />
             </RequireAuth>
           }
         />

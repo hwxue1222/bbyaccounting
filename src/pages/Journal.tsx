@@ -99,6 +99,7 @@ export default function Journal() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [vendors, setVendors] = useState<Party[]>([]);
   const [customers, setCustomers] = useState<Party[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; bankName: string; accountNo: string; accountId: string; isActive: boolean }>>([]);
   const [entries, setEntries] = useState<EntryListRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EntryDetail | null>(null);
@@ -174,6 +175,8 @@ export default function Journal() {
     const uniq = Array.from(new Set([baseCurrency, ...list]));
     return uniq.sort();
   }, [currencies, baseCurrency]);
+
+  const bankAccountById = useMemo(() => new Map(bankAccounts.map((b) => [b.id, b] as const)), [bankAccounts]);
 
   const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a] as const)), [accounts]);
   const activeAccounts = useMemo(() => accounts.filter((a) => (a as any).isActive ?? true), [accounts]);
@@ -395,7 +398,7 @@ export default function Journal() {
   }
 
   async function refresh() {
-    const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }, { vendors }, { customers }] = await Promise.all([
+    const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }, { vendors }, { customers }, { bankAccounts }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
       api<{ currencies: any[] }>("/api/settings/currencies"),
@@ -403,6 +406,7 @@ export default function Journal() {
       api<{ items: any[] }>("/api/inventory/items"),
       api<{ vendors: any[] }>("/api/vendors"),
       api<{ customers: any[] }>("/api/customers"),
+      api<{ bankAccounts: any[] }>("/api/settings/bank-accounts"),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
@@ -411,6 +415,7 @@ export default function Journal() {
     setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
     setVendors(vendors as any);
     setCustomers(customers as any);
+    setBankAccounts(bankAccounts as any);
     await refreshNextVoucherNo();
   }
 
@@ -1147,7 +1152,21 @@ export default function Journal() {
     } else if (onBehalf) {
       quickTextParts.push(onBehalf);
     }
-    if (assistQuickPayMethod.trim()) quickTextParts.push(`用${assistQuickPayMethod.trim()}`);
+    if (assistQuickPayMethod.trim()) {
+      const pm = assistQuickPayMethod.trim();
+      if (pm === "unpaid") {
+        quickTextParts.push(tr("未支付", "Unpaid"));
+      } else if (pm === "cash") {
+        quickTextParts.push(tr("用现金", "Paid cash"));
+      } else if (pm.startsWith("bank:")) {
+        const id = pm.slice("bank:".length);
+        const b = bankAccountById.get(id);
+        const label = b ? `${b.bankName} ${b.accountNo}`.trim() : id;
+        quickTextParts.push(tr(`用银行账号：${label}`, `Paid via bank: ${label}`));
+      } else {
+        quickTextParts.push(tr(`付款方式：${pm}`, `Payment: ${pm}`));
+      }
+    }
     if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
 
     if (assistQuickExistingFixedAssetId === "__new__") {
@@ -1251,13 +1270,28 @@ export default function Journal() {
               </div>
               <div className="md:col-span-2">
                 <label className="text-xs text-zinc-600">{tr("付款方式", "Payment")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                   value={assistQuickPayMethod}
                   onChange={(e) => setAssistQuickPayMethod(e.target.value)}
-                  placeholder={tr("现金/转账", "Cash/transfer")}
                   disabled={readOnly || busy}
-                />
+                >
+                  <option value="" disabled>
+                    {tr("请选择", "Select")}
+                  </option>
+                  <option value="unpaid">{tr("未支付", "Unpaid")}</option>
+                  <option value="cash">{tr("现金", "Cash")}</option>
+                  {bankAccounts
+                    .filter((b) => b.isActive)
+                    .slice()
+                    .sort((a, b) => `${a.bankName} ${a.accountNo}`.localeCompare(`${b.bankName} ${b.accountNo}`))
+                    .map((b) => (
+                      <option key={b.id} value={`bank:${b.id}`}>
+                        {tr("银行：", "Bank: ")}
+                        {b.bankName} {b.accountNo}
+                      </option>
+                    ))}
+                </select>
               </div>
               <div className="md:col-span-3">
                 <label className="text-xs text-zinc-600">{tr("做什么", "What")}</label>

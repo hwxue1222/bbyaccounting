@@ -123,6 +123,21 @@ export async function ensureMigrated(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      bank_name TEXT NOT NULL,
+      account_no TEXT NOT NULL,
+      account_id UUID NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bank_accounts_org ON bank_accounts(org_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bank_accounts_account ON bank_accounts(org_id, account_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_accounts_org_account_no_unique ON bank_accounts(org_id, account_no)`;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS journal_entries (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID NOT NULL,
