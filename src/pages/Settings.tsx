@@ -90,18 +90,14 @@ export default function Settings() {
   }, [active?.baseCurrency]);
 
   async function refresh() {
-    const [{ accounts }, { costCenters }, { currencies }, { fxRates }, { bankAccounts }] = await Promise.all([
-      api<{ accounts: any[] }>("/api/settings/accounts"),
-      api<{ costCenters: any[] }>("/api/settings/cost-centers"),
-      api<{ currencies: any[] }>("/api/settings/currencies"),
-      api<{ fxRates: any[] }>("/api/settings/fx-rates?limit=50"),
-      api<{ bankAccounts: any[] }>("/api/settings/bank-accounts"),
-    ]);
-    setAccounts(accounts as any);
-    setCostCenters(costCenters as any);
-    setCurrencies(currencies as any);
-    setFxRates(fxRates as any);
-    setBankAccounts(bankAccounts as any);
+    const r = await api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[] }>(
+      "/api/settings/bootstrap?limit=50",
+    );
+    setAccounts(r.accounts as any);
+    setCostCenters(r.costCenters as any);
+    setCurrencies(r.currencies as any);
+    setFxRates(r.fxRates as any);
+    setBankAccounts(r.bankAccounts as any);
   }
 
   useEffect(() => {

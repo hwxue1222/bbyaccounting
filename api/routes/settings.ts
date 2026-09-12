@@ -15,6 +15,71 @@ async function requireOrg(req: AuthedRequest, res: Response): Promise<string | n
   return orgId;
 }
 
+router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrg(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+
+  const q = z
+    .object({ limit: z.coerce.number().int().min(1).max(500).optional() })
+    .safeParse({ limit: req.query.limit });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Invalid query" });
+    return;
+  }
+  const limit = q.data.limit ?? 50;
+
+  const [accounts, costCenters, currencies, fxRates, bankAccounts] = await Promise.all([
+    sql`
+      SELECT
+        id,
+        code,
+        name,
+        type,
+        normal_balance as "normalBalance",
+        is_active as "isActive",
+        link_inventory_fifo as "linkInventoryFifo",
+        link_fixed_assets as "linkFixedAssets"
+      FROM accounts
+      WHERE org_id = ${orgId}
+      ORDER BY code ASC
+    `,
+    sql`
+      SELECT id, code, name, is_active as "isActive"
+      FROM cost_centers
+      WHERE org_id = ${orgId}
+      ORDER BY code ASC
+    `,
+    sql`
+      SELECT id, code, is_enabled as "isEnabled"
+      FROM currencies
+      WHERE org_id = ${orgId}
+      ORDER BY code ASC
+    `,
+    sql`
+      SELECT id, rate_date as "rateDate", currency_code as "currencyCode", fx_rate as "fxRate"
+      FROM fx_rates
+      WHERE org_id = ${orgId}
+      ORDER BY rate_date DESC, currency_code ASC
+      LIMIT ${limit}
+    `,
+    sql`
+      SELECT
+        id,
+        bank_name as "bankName",
+        account_no as "accountNo",
+        account_id as "accountId",
+        is_active as "isActive"
+      FROM bank_accounts
+      WHERE org_id = ${orgId}
+      ORDER BY bank_name ASC, account_no ASC
+    `,
+  ]);
+
+  res.status(200).json({ success: true, data: { accounts, costCenters, currencies, fxRates, bankAccounts } });
+});
+
 router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrg(req, res);

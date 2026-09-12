@@ -19,11 +19,18 @@ export function pickBestAccountCode(accounts: any[], opts: { type?: string; keyw
 
 export function parseFirstAmountAndCurrency(text: string): { amount: number | null; currency: string | null } {
   const t = String(text || "");
-  const m = t.match(/(\d+(?:\.\d+)?)\s*([A-Za-z]{3})(?![A-Za-z])/);
-  if (!m) return { amount: null, currency: null };
-  const amount = Number(m[1]);
-  const currency = String(m[2] || "").toUpperCase().slice(0, 3);
-  return { amount: Number.isFinite(amount) && amount > 0 ? amount : null, currency: currency || null };
+  const re = /(\d+(?:\.\d+)?)\s*([A-Za-z]{3})(?![A-Za-z])/g;
+  let bestAmount: number | null = null;
+  let bestCurrency: string | null = null;
+  for (const m of t.matchAll(re)) {
+    const amount = Number(m[1]);
+    const currency = String(m[2] || "").toUpperCase().slice(0, 3);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (!currency) continue;
+    bestAmount = amount;
+    bestCurrency = currency;
+  }
+  return { amount: bestAmount, currency: bestCurrency };
 }
 
 export function buildHeuristicSuggestion(input: {
@@ -334,6 +341,18 @@ export function buildHeuristicSuggestion(input: {
           : pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u8f66", "\u6c7d\u8f66", "\u4ea4\u901a", "vehicle", "car", "motor"] }) ||
             pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u56fa\u5b9a\u8d44\u4ea7", "ppe", "property", "plant", "equipment"] });
       }
+    }
+
+    if (
+      !debitCode &&
+      isPurchase &&
+      !hasInventory &&
+      !isFixedAssetNew &&
+      !isVehicle &&
+      !/rent|rental|fuel|gas|petrol|salary|wage|utilities|electric|water|internet|office|suppl|repair|maintenance|insurance|commission|advertis|marketing|travel|meal|\u79df|\u79df\u91d1|\u6c34\u7535|\u5de5\u8d44|\u85aa|\u6cb9|\u6c7d\u6cb9|\u529e\u516c|\u6587\u5177|\u8017\u6750|\u7ef4\u4fee|\u4fdd\u517b|\u4fdd\u9669|\u5e7f\u544a|\u8425\u9500|\u65c5\u884c|\u5dee\u65c5|\u9910/i.test(lower)
+    ) {
+      missing.push(t("请说明用途/性质：这是存货、固定资产，还是费用？", "Please clarify purpose/type: inventory, fixed asset, or expense?"));
+      return { draft: null, preview: null, warnings, missing };
     }
 
     if (!debitCode) {

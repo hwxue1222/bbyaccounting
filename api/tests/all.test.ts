@@ -127,6 +127,21 @@ async function main() {
 
   const p1 = parseFirstAmountAndCurrency("公司，未支付，买了现有存货 ST0001 knife，18 MYR");
   assert(p1.amount === 18 && p1.currency === "MYR", "parser should ignore SKU+name and pick 18 MYR");
+
+  const p2 = parseFirstAmountAndCurrency("上一句：1 CNY\n公司，未支付，买了现有存货 ST0001 knife，18 MYR");
+  assert(p2.amount === 18 && p2.currency === "MYR", "parser should prefer latest amount/currency in conversation");
+
+  const s7 = buildHeuristicSuggestion({
+    text: "公司，未支付，买了东西，18 MYR",
+    lang: "zh",
+    baseCurrency: "MYR",
+    forcedEntryDate: "2026-09-12",
+    extraMemo: "",
+    accounts,
+    accountIdByCode,
+    accountNameByCode,
+  });
+  assert(!s7.draft && Array.isArray(s7.missing) && s7.missing.some((x) => String(x).includes("用途")), "purchase without purpose should ask for purpose/type");
 }
 
 main()
