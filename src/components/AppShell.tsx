@@ -17,6 +17,7 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
           isActive ? "bg-blue-50 text-blue-700" : "text-zinc-700 hover:bg-zinc-100",
         )
       }
+      end
     >
       <div className="h-4 w-4">{icon}</div>
       <div className="truncate">{label}</div>
@@ -27,8 +28,7 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
 export default function AppShell({ title, children }: { title: string; children: React.ReactNode }) {
   const { orgs, activeOrgId, pendingOrgId, orgSwitching, switchOrg, createOrg, user, logout } = useAuthStore();
   const active = orgs.find((o) => o.orgId === activeOrgId) || null;
-  const lang = useUiStore((s) => s.lang);
-  const setLang = useUiStore((s) => s.setLang);
+  const { lang, setLang } = useUiStore();
   const tr = useTr();
   const inflight = useUiStore((s) => s.inflight);
   const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
@@ -47,12 +47,12 @@ export default function AppShell({ title, children }: { title: string; children:
     const update = () => {
       const ms = Math.max(0, Date.now() - inflightStartedAt);
       const sec = (ms / 1000).toFixed(1);
-      el.textContent = lang === "zh" ? `刷新中 ${sec}s` : `Refreshing ${sec}s`;
+      el.textContent = tr(`刷新中 ${sec}s`, `Refreshing ${sec}s`);
     };
     update();
     const id = window.setInterval(update, 200);
     return () => window.clearInterval(id);
-  }, [inflight, inflightStartedAt, lang]);
+  }, [inflight, inflightStartedAt, tr]);
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
