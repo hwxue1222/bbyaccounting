@@ -1038,6 +1038,11 @@ export default function Journal() {
       setAssistEditInvDetails([]);
     }
 
+    if (assistNeedsFaDisposalInfo || assistDisposalAssetId) {
+      setAssistEditFaPurchase(null);
+      return;
+    }
+
     const accById = new Map(accounts.map((a) => [a.id, a] as const));
     const fixedIdx = d.lines.findIndex((l) => {
       const acc = accById.get(String((l as any).accountId || ""));
@@ -1045,8 +1050,8 @@ export default function Journal() {
       const debit = Number((l as any).debitTxn) || 0;
       return debit > 0;
     });
-    if (fixedIdx >= 0) {
-      const saved = assistQuickNewFixedAsset === "yes" ? assistQuickNewFaSaved : null;
+    if (fixedIdx >= 0 && assistQuickNewFixedAsset === "yes") {
+      const saved = assistQuickNewFaSaved || null;
       setAssistEditFaPurchase({
         lineIdx: fixedIdx,
         category: saved?.category || "",
@@ -1060,7 +1065,7 @@ export default function Journal() {
     } else {
       setAssistEditFaPurchase(null);
     }
-  }, [assistSuggestion, accounts, baseCurrency, draftDate, assistQuickNewFixedAsset, assistQuickNewFaSaved, tr]);
+  }, [assistSuggestion, accounts, baseCurrency, draftDate, assistQuickNewFixedAsset, assistQuickNewFaSaved, tr, assistNeedsFaDisposalInfo, assistDisposalAssetId]);
 
   function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
@@ -2807,7 +2812,7 @@ export default function Journal() {
                       })()}
 
                       {(() => {
-                        const faInfo = assistEditFaPurchase || assistEditFaInfo;
+                        const faInfo = assistDisposalAssetId ? assistEditFaInfo : assistEditFaPurchase || assistEditFaInfo;
                         if (!faInfo) return null;
                         const isPurchase = Boolean(assistEditFaPurchase);
                         return (
