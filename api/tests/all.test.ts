@@ -1,7 +1,7 @@
 import { round2, round6 } from "../lib/nums.js";
 import { sha256 } from "../lib/migrate.js";
 import { signSession, verifySession } from "../lib/security.js";
-import { buildHeuristicSuggestion } from "../lib/assistRules.js";
+import { buildHeuristicSuggestion, parseFirstAmountAndCurrency } from "../lib/assistRules.js";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -121,6 +121,12 @@ async function main() {
   assert(s6.draft?.lines?.length === 2, "inventory purchase should have 2 lines");
   assert(String(s6.preview.lines[0].accountCode) === "1500", "inventory purchase should debit 1500");
   assert(String(s6.preview.lines[1].accountCode) === "2000", "unpaid inventory purchase should credit 2000");
+  assert(String(s6.preview.currency) === "MYR", "inventory purchase currency should be MYR");
+  assert(Number(s6.preview.lines[0].debitTxn) === 15, "inventory purchase debit should equal amount");
+  assert(Number(s6.preview.lines[1].creditTxn) === 15, "inventory purchase credit should equal amount");
+
+  const p1 = parseFirstAmountAndCurrency("公司，未支付，买了现有存货 ST0001 knife，18 MYR");
+  assert(p1.amount === 18 && p1.currency === "MYR", "parser should ignore SKU+name and pick 18 MYR");
 }
 
 main()

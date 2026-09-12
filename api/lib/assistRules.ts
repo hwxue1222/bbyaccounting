@@ -19,7 +19,7 @@ export function pickBestAccountCode(accounts: any[], opts: { type?: string; keyw
 
 export function parseFirstAmountAndCurrency(text: string): { amount: number | null; currency: string | null } {
   const t = String(text || "");
-  const m = t.match(/(\d+(?:\.\d+)?)\s*([A-Za-z]{3})/);
+  const m = t.match(/(\d+(?:\.\d+)?)\s*([A-Za-z]{3})(?![A-Za-z])/);
   if (!m) return { amount: null, currency: null };
   const amount = Number(m[1]);
   const currency = String(m[2] || "").toUpperCase().slice(0, 3);
