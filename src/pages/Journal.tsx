@@ -991,7 +991,6 @@ export default function Journal() {
       setAssistEditInvLinkLineNo(1);
       setAssistEditInvDetails([]);
       setAssistEditFaPurchase(null);
-      setAssistEditFaInfo(null);
       return;
     }
 
