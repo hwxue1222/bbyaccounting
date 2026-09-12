@@ -117,7 +117,7 @@ export default function Journal() {
   const [assistQuickOnBehalf, setAssistQuickOnBehalf] = useState("");
   const [assistQuickPayMethod, setAssistQuickPayMethod] = useState("");
   const [assistQuickAction, setAssistQuickAction] = useState("");
-  const [assistQuickExistingFixedAssetId, setAssistQuickExistingFixedAssetId] = useState("");
+  const [assistQuickNewFixedAsset, setAssistQuickNewFixedAsset] = useState<"" | "yes">("");
   const [assistQuickExistingInventoryItemId, setAssistQuickExistingInventoryItemId] = useState("");
   const [assistQuickNewFaOpen, setAssistQuickNewFaOpen] = useState(false);
   const [assistQuickNewFaForm, setAssistQuickNewFaForm] = useState({
@@ -325,7 +325,7 @@ export default function Journal() {
     setRecurringEnabled(false);
     setRecurringEveryMonths(1);
     setRecurringCount(1);
-    setAssistQuickExistingFixedAssetId("");
+    setAssistQuickNewFixedAsset("");
     setAssistQuickExistingInventoryItemId("");
     setAssistQuickNewFaSaved(null);
     setAssistQuickNewFaOpen(false);
@@ -991,7 +991,7 @@ export default function Journal() {
       return debit > 0;
     });
     if (fixedIdx >= 0) {
-      const saved = assistQuickExistingFixedAssetId === "__new__" ? assistQuickNewFaSaved : null;
+      const saved = assistQuickNewFixedAsset === "yes" ? assistQuickNewFaSaved : null;
       setAssistEditFaPurchase({
         lineIdx: fixedIdx,
         category: saved?.category || "",
@@ -1004,7 +1004,7 @@ export default function Journal() {
     } else {
       setAssistEditFaPurchase(null);
     }
-  }, [assistSuggestion, accounts, baseCurrency, draftDate, assistQuickExistingFixedAssetId, assistQuickNewFaSaved, tr]);
+  }, [assistSuggestion, accounts, baseCurrency, draftDate, assistQuickNewFixedAsset, assistQuickNewFaSaved, tr]);
 
   function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
@@ -1169,7 +1169,7 @@ export default function Journal() {
     }
     if (assistQuickAction.trim()) quickTextParts.push(assistQuickAction.trim());
 
-    if (assistQuickExistingFixedAssetId === "__new__") {
+    if (assistQuickNewFixedAsset === "yes") {
       if (assistQuickNewFaSaved?.name.trim()) {
         const name = assistQuickNewFaSaved.name.trim();
         const cat = assistQuickNewFaSaved.category.trim();
@@ -1180,12 +1180,6 @@ export default function Journal() {
         quickTextParts.push(tr(`新增固定资产：${name}${extra ? `（${extra}）` : ""}`, `New fixed asset: ${name}${extra ? ` (${extra})` : ""}`));
       } else {
         quickTextParts.push(tr("新增固定资产", "New fixed asset"));
-      }
-    } else if (assistQuickExistingFixedAssetId) {
-      const fa = fixedAssets.find((x) => x.id === assistQuickExistingFixedAssetId);
-      if (fa) {
-        const label = `${fa.assetNo ? `${fa.assetNo} ` : ""}${fa.name}`.trim();
-        quickTextParts.push(tr(`现有固定资产：${label}`, `Existing fixed asset: ${label}`));
       }
     }
 
@@ -1304,14 +1298,14 @@ export default function Journal() {
                 />
               </div>
               <div className="md:col-span-2">
-                <label className="text-xs text-zinc-600">{tr("是否现有固定资产", "Existing FA")}</label>
+                <label className="text-xs text-zinc-600">{tr("是否新增固定资产", "New fixed asset")}</label>
                 <select
                   className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  value={assistQuickExistingFixedAssetId}
+                  value={assistQuickNewFixedAsset}
                   onChange={(e) => {
                     const v = e.target.value;
-                    setAssistQuickExistingFixedAssetId(v);
-                    if (v === "__new__") {
+                    setAssistQuickNewFixedAsset(v as any);
+                    if (v === "yes") {
                       setAssistQuickNewFaForm({
                         category: "",
                         assetNo: "",
@@ -1323,26 +1317,12 @@ export default function Journal() {
                       setAssistQuickNewFaOpen(true);
                     }
                   }}
-                  onFocus={() => {
-                    if (!fixedAssets.length) {
-                      refreshFixedAssets().catch((e) => setErr(e.message));
-                    }
-                  }}
                   disabled={readOnly || busy}
                 >
                   <option value="" disabled>
                     {tr("请选择", "Select")}
                   </option>
-                  <option value="__new__">{tr("新增", "New")}</option>
-                  {fixedAssets
-                    .filter((x) => String(x.status).toLowerCase() === "active")
-                    .slice()
-                    .sort((a, b) => `${a.assetNo || ""} ${a.name}`.localeCompare(`${b.assetNo || ""} ${b.name}`))
-                    .map((x) => (
-                      <option key={x.id} value={x.id}>
-                        {x.assetNo ? `${x.assetNo} ` : ""}{x.name}
-                      </option>
-                    ))}
+                  <option value="yes">{tr("新增", "New")}</option>
                 </select>
               </div>
               <div className="md:col-span-2">
@@ -2747,7 +2727,7 @@ export default function Journal() {
             onMouseDown={() => {
               setAssistQuickNewFaOpen(false);
               if (!assistQuickNewFaSaved) {
-                setAssistQuickExistingFixedAssetId("");
+                setAssistQuickNewFixedAsset("");
               }
             }}
           >
@@ -2764,7 +2744,7 @@ export default function Journal() {
                   onClick={() => {
                     setAssistQuickNewFaOpen(false);
                     if (!assistQuickNewFaSaved) {
-                      setAssistQuickExistingFixedAssetId("");
+                      setAssistQuickNewFixedAsset("");
                     }
                   }}
                   type="button"
@@ -2844,7 +2824,7 @@ export default function Journal() {
                   onClick={() => {
                     setAssistQuickNewFaOpen(false);
                     if (!assistQuickNewFaSaved) {
-                      setAssistQuickExistingFixedAssetId("");
+                      setAssistQuickNewFixedAsset("");
                     }
                   }}
                   type="button"
