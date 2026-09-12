@@ -81,8 +81,11 @@ export function buildHeuristicSuggestion(input: {
     creditCode =
       pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u6536\u5165", "\u8425\u4e1a\u6536\u5165", "\u9500\u552e", "revenue", "sales", "income"] }) ||
       input.accounts.find((a) => String(a.type) === "income")?.code ||
-      input.accounts[0]?.code ||
       null;
+    if (!creditCode) {
+      missing.push(t("缺少收入科目：请在设置新增收入科目（例如 4000 销售收入/处置收入）。", "Missing income account: please add one in Settings (e.g., 4000 Sales/Disposal income)."));
+      return { draft: null, preview: null, warnings, missing };
+    }
 
     if (isVehicle || isFixedAssetNew) {
       warnings.push(t("固定资产处置通常需要成本/累计折旧/处置收益等更多信息，这里先按收款/应收 + 收入生成草稿。", "Fixed asset disposal usually needs cost/accum dep/gain details; drafting as receivable/cash + revenue."));
@@ -99,8 +102,11 @@ export function buildHeuristicSuggestion(input: {
       creditCode =
         pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u6536\u5165", "\u8425\u4e1a\u6536\u5165", "\u9500\u552e", "revenue", "sales", "income"] }) ||
         input.accounts.find((a) => String(a.type) === "income")?.code ||
-        input.accounts[0]?.code ||
         null;
+      if (!creditCode) {
+        missing.push(t("缺少收入科目：请在设置新增收入科目（例如 4000 销售收入）。", "Missing income account: please add one in Settings (e.g., 4000 Sales)."));
+        return { draft: null, preview: null, warnings, missing };
+      }
     }
 
     if (!debitCode) {
@@ -233,4 +239,3 @@ export function buildHeuristicSuggestion(input: {
     missing,
   };
 }
-

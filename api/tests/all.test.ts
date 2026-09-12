@@ -58,6 +58,22 @@ async function main() {
   });
   assert(String(s2.preview.lines[0].accountCode) === "1000", "cash sale should debit cash 1000");
   assert(String(s2.preview.lines[1].accountCode) === "4000", "cash sale should credit income");
+
+  const accountsNoIncome = accounts.filter((a) => a.type !== "income");
+  const accountIdByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.id] as const));
+  const accountNameByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.name] as const));
+  const s3 = buildHeuristicSuggestion({
+    text: "公司，未支付，卖了一辆汽车，50000 MYR",
+    lang: "zh",
+    baseCurrency: "MYR",
+    forcedEntryDate: "2026-09-12",
+    extraMemo: "",
+    accounts: accountsNoIncome,
+    accountIdByCode: accountIdByCodeNoIncome,
+    accountNameByCode: accountNameByCodeNoIncome,
+  });
+  assert(s3.draft == null, "sale should return null draft when income account missing");
+  assert(Array.isArray(s3.missing) && s3.missing.length > 0, "missing should include income account hint");
 }
 
 main()
@@ -68,4 +84,3 @@ main()
     process.stderr.write(String(e?.message || e) + "\n");
     process.exit(1);
   });
-
