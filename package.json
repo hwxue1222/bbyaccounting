@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",
-    "test": "tsx api/tests/basic.test.ts",
+    "test": "tsx api/tests/all.test.ts",
     "server:dev": "PORT=3002 nodemon",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\""
   },
