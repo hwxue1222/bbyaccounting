@@ -1,7 +1,7 @@
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Building2, FileText, LayoutDashboard, Package, Settings, Warehouse, LogOut, Users } from "lucide-react";
+import { Building2, FileText, LayoutDashboard, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -104,6 +104,8 @@ export default function AppShell({ title, children }: { title: string; children:
             <SideLink to="/journal" label={tr("分录", "Journals")} icon={<FileText className="h-4 w-4" />} />
             <SideLink to="/inventory" label={tr("库存 FIFO", "Inventory FIFO")} icon={<Package className="h-4 w-4" />} />
             <SideLink to="/fixed-assets" label={tr("固定资产", "Fixed Assets")} icon={<Warehouse className="h-4 w-4" />} />
+            <SideLink to="/vendors" label={tr("供应商", "Vendors")} icon={<Handshake className="h-4 w-4" />} />
+            <SideLink to="/customers" label={tr("客户", "Customers")} icon={<UserRound className="h-4 w-4" />} />
             <SideLink to="/reports" label={tr("报表", "Reports")} icon={<FileText className="h-4 w-4" />} />
             <SideLink to="/users" label={tr("用户", "Users")} icon={<Users className="h-4 w-4" />} />
             <SideLink to="/settings" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} />

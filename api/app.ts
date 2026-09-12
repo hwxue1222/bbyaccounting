@@ -22,6 +22,8 @@ import reportRoutes from './routes/reports.js'
 import usersRoutes from './routes/users.js'
 import assistRoutes from './routes/assist.js'
 import debugRoutes from './routes/debug.js'
+import vendorsRoutes from './routes/vendors.js'
+import customersRoutes from './routes/customers.js'
 
 // load env
 dotenv.config()
@@ -211,6 +213,8 @@ app.use('/api/journals', journalRoutes)
 app.use('/api/inventory', inventoryRoutes)
 app.use('/api/fixed-assets', fixedAssetsRoutes)
 app.use('/api/reports', reportRoutes)
+app.use('/api/vendors', vendorsRoutes)
+app.use('/api/customers', customersRoutes)
 app.use('/api/users', usersRoutes)
 app.use('/api/assist', assistRoutes)
 app.use('/api/debug', debugRoutes)

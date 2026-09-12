@@ -9,6 +9,7 @@ type Account = { id: string; code: string; name: string; linkInventoryFifo?: boo
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
 type InventoryItem = { id: string; sku: string | null; name: string; uom: string };
+type Party = { id: string; code: string | null; name: string; isActive?: boolean };
 
 type EntryListRow = {
   id: string;
@@ -23,10 +24,22 @@ type EntryListRow = {
   totalDebitTxn: string;
   totalDebitBase: string;
   inventoryImpact?: boolean;
+  vendorId?: string | null;
+  customerId?: string | null;
 };
 
 type EntryDetail = {
-  entry: { id: string; entryDate: string; status: string; voucherNo?: string | null; currency: string; fxRate: number; memo: string | null };
+  entry: {
+    id: string;
+    entryDate: string;
+    status: string;
+    voucherNo?: string | null;
+    currency: string;
+    fxRate: number;
+    memo: string | null;
+    vendorId?: string | null;
+    customerId?: string | null;
+  };
   lines: Array<{
     id: string;
     lineNo: number;
@@ -74,27 +87,6 @@ type AssistJournalSuggestion = {
   missing: string[];
 };
 
-type AssistManualJson = {
-  entryDate?: string;
-  currency?: string;
-  fxRate?: number;
-  memo?: string;
-  lines: Array<{
-    accountCode: string;
-    description?: string;
-    costCenterCode?: string;
-    debitTxn: number;
-    creditTxn: number;
-  }>;
-  inventory?: {
-    linkLineNo?: number;
-    details?: Array<
-      | { moveType: "receipt"; itemKey: string; qty: number; unitCostTxn: number }
-      | { moveType: "shipment"; itemKey: string; qty: number }
-    >;
-  };
-};
-
 export default function Journal() {
   const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
@@ -105,6 +97,8 @@ export default function Journal() {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [vendors, setVendors] = useState<Party[]>([]);
+  const [customers, setCustomers] = useState<Party[]>([]);
   const [entries, setEntries] = useState<EntryListRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<EntryDetail | null>(null);
@@ -113,8 +107,7 @@ export default function Journal() {
 
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistMode, setAssistMode] = useState<"manual" | "auto">("manual");
-  const [assistText, setAssistText] = useState("");
-  const [assistManualJson, setAssistManualJson] = useState("");
+  const [assistText, _setAssistText] = useState("");
   const [assistExtra, setAssistExtra] = useState("");
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
@@ -139,6 +132,14 @@ export default function Journal() {
   const [assistQuickNewInvBusy, setAssistQuickNewInvBusy] = useState(false);
   const [assistQuickNewInvErr, setAssistQuickNewInvErr] = useState<string | null>(null);
   const [assistQuickNewInvForm, setAssistQuickNewInvForm] = useState({ sku: "", name: "", uom: "EA" });
+  const [assistQuickNewVendorOpen, setAssistQuickNewVendorOpen] = useState(false);
+  const [assistQuickNewVendorBusy, setAssistQuickNewVendorBusy] = useState(false);
+  const [assistQuickNewVendorErr, setAssistQuickNewVendorErr] = useState<string | null>(null);
+  const [assistQuickNewVendorForm, setAssistQuickNewVendorForm] = useState({ code: "", name: "" });
+  const [assistQuickNewCustomerOpen, setAssistQuickNewCustomerOpen] = useState(false);
+  const [assistQuickNewCustomerBusy, setAssistQuickNewCustomerBusy] = useState(false);
+  const [assistQuickNewCustomerErr, setAssistQuickNewCustomerErr] = useState<string | null>(null);
+  const [assistQuickNewCustomerForm, setAssistQuickNewCustomerForm] = useState({ code: "", name: "" });
   const [assistQuickCurrency, setAssistQuickCurrency] = useState("");
   const [assistQuickAmount, setAssistQuickAmount] = useState("");
   const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
@@ -174,16 +175,6 @@ export default function Journal() {
     return uniq.sort();
   }, [currencies, baseCurrency]);
 
-  const invItemLabelById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const it of inventoryItems) {
-      const sku = it.sku ? String(it.sku) : "";
-      const label = `${sku ? sku + " " : ""}${it.name}`.trim();
-      m.set(String(it.id), label);
-    }
-    return m;
-  }, [inventoryItems]);
-
   const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a] as const)), [accounts]);
   const activeAccounts = useMemo(() => accounts.filter((a) => (a as any).isActive ?? true), [accounts]);
 
@@ -192,6 +183,8 @@ export default function Journal() {
   const [draftMemo, setDraftMemo] = useState("");
   const [draftVoucherNo, setDraftVoucherNo] = useState("");
   const [voucherTouched, setVoucherTouched] = useState(false);
+  const [draftVendorId, setDraftVendorId] = useState("");
+  const [draftCustomerId, setDraftCustomerId] = useState("");
 
   const [invModalOpen, setInvModalOpen] = useState(false);
   const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
@@ -334,6 +327,8 @@ export default function Journal() {
     setAssistQuickNewFaSaved(null);
     setAssistQuickNewFaOpen(false);
     setAssistQuickNewInvOpen(false);
+    setDraftVendorId("");
+    setDraftCustomerId("");
     void refreshNextVoucherNo(true);
   }
 
@@ -400,19 +395,33 @@ export default function Journal() {
   }
 
   async function refresh() {
-    const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }] = await Promise.all([
+    const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }, { vendors }, { customers }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
       api<{ currencies: any[] }>("/api/settings/currencies"),
       api<{ entries: any[] }>("/api/journals"),
       api<{ items: any[] }>("/api/inventory/items"),
+      api<{ vendors: any[] }>("/api/vendors"),
+      api<{ customers: any[] }>("/api/customers"),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setEntries(entries as any);
     setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
+    setVendors(vendors as any);
+    setCustomers(customers as any);
     await refreshNextVoucherNo();
+  }
+
+  async function refreshVendorsOnly() {
+    const r = await api<{ vendors: any[] }>("/api/vendors");
+    setVendors(r.vendors as any);
+  }
+
+  async function refreshCustomersOnly() {
+    const r = await api<{ customers: any[] }>("/api/customers");
+    setCustomers(r.customers as any);
   }
 
   async function refreshInventoryItemsOnly() {
@@ -446,6 +455,8 @@ export default function Journal() {
       setDraftMemo(d.entry.memo || "");
       setDraftVoucherNo(d.entry.voucherNo || "");
       setVoucherTouched(true);
+      setDraftVendorId((d.entry as any).vendorId ? String((d.entry as any).vendorId) : "");
+      setDraftCustomerId((d.entry as any).customerId ? String((d.entry as any).customerId) : "");
       setFaPurchaseByLineIdx({});
       setFaPurchaseLineIdx(null);
 
@@ -616,233 +627,6 @@ export default function Journal() {
     return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
-  function normalizeCode(input: unknown): string {
-    const s = typeof input === "string" ? input.trim() : "";
-    const m = s.match(/\d{3,6}/);
-    return m ? m[0] : s;
-  }
-
-  function buildAssistPrompt(): string {
-    const accountList = accounts.map((a) => `${a.code} ${a.name}`).join("\n");
-    const costCenterList = costCenters.map((c) => `${c.code} ${c.name}`).join("\n");
-    const itemList = inventoryItems.map((it) => `${it.sku ? it.sku + " " : ""}${it.name} [${it.uom}]`).join("\n");
-
-    const schema = {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        entryDate: { type: "string" },
-        currency: { type: "string" },
-        fxRate: { type: "number" },
-        memo: { type: "string" },
-        lines: {
-          type: "array",
-          minItems: 2,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              accountCode: { type: "string" },
-              description: { type: "string" },
-              costCenterCode: { type: "string" },
-              debitTxn: { type: "number" },
-              creditTxn: { type: "number" },
-            },
-            required: ["accountCode", "debitTxn", "creditTxn"],
-          },
-        },
-        inventory: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            linkLineNo: { type: "integer" },
-            details: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  moveType: { type: "string", enum: ["receipt", "shipment"] },
-                  itemKey: { type: "string" },
-                  qty: { type: "number" },
-                  unitCostTxn: { type: "number" },
-                },
-                required: ["moveType", "itemKey", "qty"],
-              },
-            },
-          },
-        },
-      },
-      required: ["currency", "fxRate", "memo", "lines"],
-    } as const;
-
-    const rules =
-      tr(
-        "你是会计分录助手。根据用户输入生成分录建议。\n" +
-          "默认采用国际财务报告准则 IFRS/IAS（权责发生制、配比原则、实质重于形式、谨慎性）。\n" +
-          "对固定资产（如车辆/设备）：若为企业用途且预计使用期超过一年，优先资本化计入固定资产并提示折旧；否则计入费用。\n" +
-          "严格只输出 JSON，不要输出任何解释文字。\n" +
-          "金额必须借贷平衡；debitTxn/creditTxn 为交易币金额；同一行不允许借贷同时为正。\n" +
-          "只允许使用提供的科目代码与成本中心代码。\n" +
-          "如需库存：inventory.details.itemKey 必须匹配提供的库存商品（优先 SKU，否则用商品名称）。\n" +
-          `entryDate 如用户未给出，使用 ${draftDate}。currency 如未给出，使用 ${baseCurrency}。fxRate 同币种为 1。`,
-        "You are an accounting journal assistant. Generate a journal suggestion based on the user input.\n" +
-          "Default to IFRS/IAS (accrual basis, matching, substance over form, prudence).\n" +
-          "For fixed assets (e.g., vehicles/equipment): if used for business and expected useful life > 1 year, capitalize as PPE and mention depreciation; otherwise expense it.\n" +
-          "Output JSON only, without any extra text.\n" +
-          "Debits and credits must balance. debitTxn/creditTxn are transaction-currency amounts; do not put positive debit and credit on the same line.\n" +
-          "Use only the provided account codes and cost center codes.\n" +
-          "If inventory is needed: inventory.details.itemKey must match an existing item (prefer SKU, otherwise item name).\n" +
-          `If entryDate is not provided, use ${draftDate}. If currency is not provided, use ${baseCurrency}. fxRate is 1 when currency equals base currency.`,
-      );
-
-    return (
-      rules +
-      tr("\n\n用户输入：", "\n\nUser input: ") +
-      assistText.trim() +
-      tr("\n\n可用科目：\n", "\n\nAvailable accounts:\n") +
-      accountList +
-      tr("\n\n可用成本中心：\n", "\n\nAvailable cost centers:\n") +
-      (costCenterList || tr("(无)", "(None)")) +
-      tr("\n\n可用库存商品：\n", "\n\nAvailable inventory items:\n") +
-      (itemList || tr("(无)", "(None)")) +
-      tr("\n\n输出 JSON schema：\n", "\n\nOutput JSON schema:\n") +
-      JSON.stringify(schema, null, 2)
-    );
-  }
-
-  function suggestionFromManualJson(obj: AssistManualJson): AssistJournalSuggestion {
-    const warnings: string[] = [];
-    const missing: string[] = [];
-
-    const currency = typeof obj.currency === "string" && obj.currency.trim() ? obj.currency.trim().toUpperCase().slice(0, 3) : baseCurrency;
-    const fxRate = Number(obj.fxRate) || 1;
-    const memo = typeof obj.memo === "string" ? obj.memo.trim() : "";
-    const entryDate = typeof obj.entryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(obj.entryDate) ? obj.entryDate : draftDate;
-
-    if (!Array.isArray(obj.lines) || obj.lines.length < 2) {
-      throw new Error(tr("JSON 缺少 lines（至少 2 行）", "JSON is missing lines (at least 2 lines)."));
-    }
-
-    const accountIdByCode = new Map(accounts.map((a) => [normalizeCode(a.code), a.id]));
-    const accountNameByCode = new Map(accounts.map((a) => [normalizeCode(a.code), a.name]));
-    const ccIdByCode = new Map(costCenters.map((c) => [String(c.code).trim(), c.id]));
-
-    const itemIdByKey = new Map<string, string>();
-    for (const it of inventoryItems) {
-      if (it.sku) itemIdByKey.set(String(it.sku), String(it.id));
-      itemIdByKey.set(String(it.name), String(it.id));
-    }
-
-    const draftLinesOut = obj.lines.map((l) => {
-      const code = normalizeCode(l?.accountCode);
-      const accountId = accountIdByCode.get(code) || "";
-      if (!accountId) {
-        missing.push(`缺少科目 ${code}`);
-        warnings.push(`找不到科目代码 ${code}`);
-      }
-      const ccCode = typeof l?.costCenterCode === "string" && l.costCenterCode.trim() ? l.costCenterCode.trim() : "";
-      const costCenterId = ccCode ? ccIdByCode.get(ccCode) || null : null;
-      if (ccCode && !costCenterId) {
-        warnings.push(`找不到成本中心代码 ${ccCode}`);
-      }
-      const debitTxn = Math.max(0, Number((l as any)?.debitTxn) || 0);
-      const creditTxn = Math.max(0, Number((l as any)?.creditTxn) || 0);
-      if (debitTxn > 0 && creditTxn > 0) {
-        warnings.push(`科目 ${code} 同时有借贷，已保留原值`);
-      }
-      return {
-        accountCode: code,
-        accountId,
-        accountName: accountNameByCode.get(code) || "",
-        description: typeof (l as any)?.description === "string" && (l as any).description.trim() ? (l as any).description.trim() : undefined,
-        costCenterId,
-        debitTxn,
-        creditTxn,
-      };
-    });
-
-    if (draftLinesOut.some((l) => !l.accountId)) {
-      throw new Error(tr("科目匹配失败：请使用系统里存在的科目代码", "Account mapping failed: please use existing account codes."));
-    }
-
-    const debit = draftLinesOut.reduce((s, l) => s + (Number(l.debitTxn) || 0), 0);
-    const credit = draftLinesOut.reduce((s, l) => s + (Number(l.creditTxn) || 0), 0);
-    const diff = Math.round((debit - credit) * 100) / 100;
-    if (diff !== 0) {
-      throw new Error(tr(`建议分录借贷不平衡：差额 ${diff.toFixed(2)}`, `Suggested journal is not balanced: diff ${diff.toFixed(2)}`));
-    }
-
-    let inventoryDetails: AssistJournalSuggestion["draft"]["inventoryDetails"] | undefined;
-    let inventoryLinkLineNo: number | undefined;
-    const inv = obj.inventory;
-    const detailsIn: any[] = Array.isArray(inv?.details) ? (inv as any).details : [];
-    if (detailsIn.length) {
-      const det = detailsIn
-        .map((d) => {
-          const moveType = d?.moveType === "shipment" ? "shipment" : d?.moveType === "receipt" ? "receipt" : null;
-          if (!moveType) return null;
-          const qty = Number(d?.qty) || 0;
-          if (qty <= 0) return null;
-          const key = typeof d?.itemKey === "string" ? d.itemKey.trim() : "";
-          const itemId = key ? itemIdByKey.get(key) || null : null;
-          if (!itemId) {
-            missing.push(`缺少库存商品 ${key || "(空)"}`);
-            warnings.push(`找不到库存商品 ${key || "(空)"}`);
-            return null;
-          }
-          if (moveType === "receipt") {
-            const unitCostTxn = Number(d?.unitCostTxn) || 0;
-            if (unitCostTxn <= 0) return null;
-            return { moveType, itemId, qty, unitCostTxn };
-          }
-          return { moveType, itemId, qty };
-        })
-        .filter(Boolean) as any[];
-
-      if (det.length) {
-        inventoryDetails = det as any;
-        const ll = Number((inv as any)?.linkLineNo);
-        inventoryLinkLineNo = Number.isFinite(ll) && ll > 0 ? Math.trunc(ll) : 1;
-      }
-    }
-
-    return {
-      draft: {
-        entryDate,
-        currency,
-        fxRate,
-        memo,
-        inventoryLinkLineNo,
-        inventoryDetails,
-        lines: draftLinesOut.map((l) => ({
-          accountId: l.accountId,
-          description: l.description,
-          costCenterId: l.costCenterId,
-          debitTxn: l.debitTxn,
-          creditTxn: l.creditTxn,
-        })),
-      },
-      preview: {
-        entryDate,
-        currency,
-        fxRate,
-        memo,
-        inventoryLinkLineNo,
-        inventoryDetails,
-        lines: draftLinesOut.map((l) => ({
-          accountCode: l.accountCode,
-          accountName: l.accountName,
-          description: l.description,
-          debitTxn: l.debitTxn,
-          creditTxn: l.creditTxn,
-        })),
-      },
-      warnings,
-      missing,
-    };
-  }
-
   async function runAssistSuggest(overrideText?: string) {
     const text = (overrideText ?? assistText).trim();
     if (!text) {
@@ -875,7 +659,6 @@ export default function Journal() {
     setAssistMode("auto");
     setAssistErr(null);
     setAssistSuggestion(null);
-    setAssistManualJson("");
     setAssistExtra("");
     setAssistChatMessages([{ role: "assistant", text: welcome }]);
     setAssistOpen(true);
@@ -942,35 +725,6 @@ export default function Journal() {
       setAssistChatMessages((m) => [...m, { role: "assistant", text: msg }]);
     } finally {
       setAssistBusy(false);
-    }
-  }
-
-  async function copyToClipboard(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setAssistErr(null);
-    } catch {
-      setAssistErr(tr("复制失败：请手动全选复制。", "Copy failed. Please select all and copy manually."));
-    }
-  }
-
-  function previewManualJson() {
-    const raw = assistManualJson.trim();
-    if (!raw) {
-      setAssistErr(tr("请粘贴 AI 返回的 JSON。", "Please paste the JSON returned by the AI."));
-      return;
-    }
-    setAssistErr(null);
-    try {
-      const start = raw.indexOf("{");
-      const end = raw.lastIndexOf("}");
-      const jsonText = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
-      const obj = JSON.parse(jsonText) as AssistManualJson;
-      const suggestion = suggestionFromManualJson(obj);
-      setAssistSuggestion(suggestion);
-    } catch (e: any) {
-      setAssistSuggestion(null);
-      setAssistErr(e?.message || tr("JSON 解析失败", "Failed to parse JSON"));
     }
   }
 
@@ -1426,6 +1180,36 @@ export default function Journal() {
       }
     }
 
+    if (draftVendorId === "__new__") {
+      if (assistQuickNewVendorForm.name.trim()) {
+        const label = `${assistQuickNewVendorForm.code.trim() ? assistQuickNewVendorForm.code.trim().toUpperCase() + " " : ""}${assistQuickNewVendorForm.name.trim()}`.trim();
+        quickTextParts.push(tr(`新增供应商：${label}`, `New vendor: ${label}`));
+      } else {
+        quickTextParts.push(tr("新增供应商", "New vendor"));
+      }
+    } else if (draftVendorId) {
+      const v = vendors.find((x) => String(x.id) === draftVendorId);
+      if (v) {
+        const label = `${v.code ? `${String(v.code).toUpperCase()} ` : ""}${v.name}`.trim();
+        quickTextParts.push(tr(`供应商：${label}`, `Vendor: ${label}`));
+      }
+    }
+
+    if (draftCustomerId === "__new__") {
+      if (assistQuickNewCustomerForm.name.trim()) {
+        const label = `${assistQuickNewCustomerForm.code.trim() ? assistQuickNewCustomerForm.code.trim().toUpperCase() + " " : ""}${assistQuickNewCustomerForm.name.trim()}`.trim();
+        quickTextParts.push(tr(`新增客户：${label}`, `New customer: ${label}`));
+      } else {
+        quickTextParts.push(tr("新增客户", "New customer"));
+      }
+    } else if (draftCustomerId) {
+      const c = customers.find((x) => String(x.id) === draftCustomerId);
+      if (c) {
+        const label = `${c.code ? `${String(c.code).toUpperCase()} ` : ""}${c.name}`.trim();
+        quickTextParts.push(tr(`客户：${label}`, `Customer: ${label}`));
+      }
+    }
+
     const amt = assistQuickAmount.trim();
     if (amt) quickTextParts.push(`${amt} ${currencyForQuick}`.trim());
     if (assistQuickPurpose.trim()) quickTextParts.push(`用途：${assistQuickPurpose.trim()}`);
@@ -1553,6 +1337,80 @@ export default function Journal() {
                     .map((it: any) => (
                       <option key={String(it.id)} value={String(it.id)}>
                         {it.sku ? `${it.sku} ` : ""}{it.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={draftVendorId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraftVendorId(v);
+                    if (v === "__new__") {
+                      setAssistQuickNewVendorErr(null);
+                      setAssistQuickNewVendorForm({ code: "", name: "" });
+                      setAssistQuickNewVendorOpen(true);
+                    }
+                  }}
+                  onFocus={() => {
+                    if (!vendors.length) {
+                      refreshVendorsOnly().catch((e) => setErr(e.message));
+                    }
+                  }}
+                  disabled={readOnly || busy}
+                >
+                  <option value="" disabled>
+                    {tr("请选择", "Select")}
+                  </option>
+                  <option value="__new__">{tr("新增", "New")}</option>
+                  {vendors
+                    .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftVendorId)
+                    .slice()
+                    .sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`))
+                    .map((x) => (
+                      <option key={String(x.id)} value={String(x.id)}>
+                        {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
+                        {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-600">{tr("是否涉及现有客户", "Existing customer")}</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={draftCustomerId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraftCustomerId(v);
+                    if (v === "__new__") {
+                      setAssistQuickNewCustomerErr(null);
+                      setAssistQuickNewCustomerForm({ code: "", name: "" });
+                      setAssistQuickNewCustomerOpen(true);
+                    }
+                  }}
+                  onFocus={() => {
+                    if (!customers.length) {
+                      refreshCustomersOnly().catch((e) => setErr(e.message));
+                    }
+                  }}
+                  disabled={readOnly || busy}
+                >
+                  <option value="" disabled>
+                    {tr("请选择", "Select")}
+                  </option>
+                  <option value="__new__">{tr("新增", "New")}</option>
+                  {customers
+                    .filter((x: any) => ((x as any).isActive ?? true) || String(x.id) === draftCustomerId)
+                    .slice()
+                    .sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`))
+                    .map((x) => (
+                      <option key={String(x.id)} value={String(x.id)}>
+                        {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
+                        {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
                       </option>
                     ))}
                 </select>
@@ -2220,6 +2078,8 @@ export default function Journal() {
                     voucherNo: draftVoucherNo.trim() || undefined,
                     currency: draftCurrency,
                     fxRate: draftFx,
+                    vendorId: draftVendorId && draftVendorId !== "__new__" ? draftVendorId : null,
+                    customerId: draftCustomerId && draftCustomerId !== "__new__" ? draftCustomerId : null,
                     memo: draftMemo,
                     inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
                     inventoryDetails,
@@ -3073,6 +2933,194 @@ export default function Journal() {
                       setAssistQuickNewInvErr(e.message);
                     } finally {
                       setAssistQuickNewInvBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  {tr("保存", "Save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {assistQuickNewVendorOpen ? (
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
+            onMouseDown={() => {
+              if (assistQuickNewVendorBusy) return;
+              setAssistQuickNewVendorOpen(false);
+              if (draftVendorId === "__new__") setDraftVendorId("");
+            }}
+          >
+            <div
+              className="mx-auto w-full max-w-xl rounded-xl bg-white shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 p-4">
+                <div className="text-sm font-semibold">{tr("新增供应商", "New vendor")}</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistQuickNewVendorBusy}
+                  onClick={() => {
+                    setAssistQuickNewVendorOpen(false);
+                    if (draftVendorId === "__new__") setDraftVendorId("");
+                  }}
+                  type="button"
+                >
+                  {tr("关闭", "Close")}
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("编号（可选）", "Code (optional)")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewVendorForm.code}
+                      onChange={(e) => setAssistQuickNewVendorForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))}
+                      disabled={assistQuickNewVendorBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewVendorForm.name}
+                      onChange={(e) => setAssistQuickNewVendorForm((p) => ({ ...p, name: e.target.value }))}
+                      disabled={assistQuickNewVendorBusy}
+                    />
+                  </div>
+                </div>
+                {assistQuickNewVendorErr ? <div className="mt-3 text-sm text-red-700">{assistQuickNewVendorErr}</div> : null}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistQuickNewVendorBusy}
+                  onClick={() => {
+                    setAssistQuickNewVendorOpen(false);
+                    if (draftVendorId === "__new__") setDraftVendorId("");
+                  }}
+                  type="button"
+                >
+                  {tr("取消", "Cancel")}
+                </button>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={assistQuickNewVendorBusy || !assistQuickNewVendorForm.name.trim()}
+                  onClick={async () => {
+                    setAssistQuickNewVendorBusy(true);
+                    setAssistQuickNewVendorErr(null);
+                    try {
+                      const r = await api<{ vendor: any }>("/api/vendors", {
+                        method: "POST",
+                        json: { code: assistQuickNewVendorForm.code.trim() || undefined, name: assistQuickNewVendorForm.name.trim() },
+                      });
+                      const newId = r.vendor?.id ? String(r.vendor.id) : "";
+                      await refreshVendorsOnly();
+                      setAssistQuickNewVendorOpen(false);
+                      setDraftVendorId(newId);
+                    } catch (e: any) {
+                      setAssistQuickNewVendorErr(e.message);
+                    } finally {
+                      setAssistQuickNewVendorBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  {tr("保存", "Save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {assistQuickNewCustomerOpen ? (
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
+            onMouseDown={() => {
+              if (assistQuickNewCustomerBusy) return;
+              setAssistQuickNewCustomerOpen(false);
+              if (draftCustomerId === "__new__") setDraftCustomerId("");
+            }}
+          >
+            <div
+              className="mx-auto w-full max-w-xl rounded-xl bg-white shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 p-4">
+                <div className="text-sm font-semibold">{tr("新增客户", "New customer")}</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistQuickNewCustomerBusy}
+                  onClick={() => {
+                    setAssistQuickNewCustomerOpen(false);
+                    if (draftCustomerId === "__new__") setDraftCustomerId("");
+                  }}
+                  type="button"
+                >
+                  {tr("关闭", "Close")}
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("编号（可选）", "Code (optional)")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewCustomerForm.code}
+                      onChange={(e) => setAssistQuickNewCustomerForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))}
+                      disabled={assistQuickNewCustomerBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      value={assistQuickNewCustomerForm.name}
+                      onChange={(e) => setAssistQuickNewCustomerForm((p) => ({ ...p, name: e.target.value }))}
+                      disabled={assistQuickNewCustomerBusy}
+                    />
+                  </div>
+                </div>
+                {assistQuickNewCustomerErr ? <div className="mt-3 text-sm text-red-700">{assistQuickNewCustomerErr}</div> : null}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={assistQuickNewCustomerBusy}
+                  onClick={() => {
+                    setAssistQuickNewCustomerOpen(false);
+                    if (draftCustomerId === "__new__") setDraftCustomerId("");
+                  }}
+                  type="button"
+                >
+                  {tr("取消", "Cancel")}
+                </button>
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
+                  disabled={assistQuickNewCustomerBusy || !assistQuickNewCustomerForm.name.trim()}
+                  onClick={async () => {
+                    setAssistQuickNewCustomerBusy(true);
+                    setAssistQuickNewCustomerErr(null);
+                    try {
+                      const r = await api<{ customer: any }>("/api/customers", {
+                        method: "POST",
+                        json: { code: assistQuickNewCustomerForm.code.trim() || undefined, name: assistQuickNewCustomerForm.name.trim() },
+                      });
+                      const newId = r.customer?.id ? String(r.customer.id) : "";
+                      await refreshCustomersOnly();
+                      setAssistQuickNewCustomerOpen(false);
+                      setDraftCustomerId(newId);
+                    } catch (e: any) {
+                      setAssistQuickNewCustomerErr(e.message);
+                    } finally {
+                      setAssistQuickNewCustomerBusy(false);
                     }
                   }}
                   type="button"

@@ -1123,4 +1123,96 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { sections } });
 });
 
+router.get("/ap-aging", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const q = z.object({ asOf: z.string().min(10) }).safeParse({ asOf: req.query.asOf });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Missing asOf" });
+    return;
+  }
+
+  const sql = getSql();
+  const asOf = q.data.asOf;
+
+  const rows = await sql`
+    WITH base AS (
+      SELECT
+        d.vendor_id as "vendorId",
+        COALESCE(v.code, '') as "vendorCode",
+        COALESCE(v.name, '') as "vendorName",
+        GREATEST(0, (${asOf}::date - d.due_date))::int as "days",
+        (GREATEST(0, (d.total_txn - d.paid_txn)) * d.fx_rate)::numeric as "openBase"
+      FROM ap_documents d
+      JOIN vendors v ON v.id = d.vendor_id AND v.org_id = d.org_id
+      WHERE d.org_id = ${orgId}
+        AND d.status = 'open'
+        AND d.issue_date <= ${asOf}
+        AND (d.total_txn - d.paid_txn) > 0
+    )
+    SELECT
+      "vendorId",
+      "vendorCode",
+      "vendorName",
+      COALESCE(SUM(CASE WHEN "days" <= 30 THEN "openBase" ELSE 0 END), 0) as "b0_30",
+      COALESCE(SUM(CASE WHEN "days" >= 31 AND "days" <= 60 THEN "openBase" ELSE 0 END), 0) as "b31_60",
+      COALESCE(SUM(CASE WHEN "days" >= 61 AND "days" <= 90 THEN "openBase" ELSE 0 END), 0) as "b61_90",
+      COALESCE(SUM(CASE WHEN "days" >= 91 THEN "openBase" ELSE 0 END), 0) as "b90p",
+      COALESCE(SUM("openBase"), 0) as "total"
+    FROM base
+    GROUP BY "vendorId", "vendorCode", "vendorName"
+    ORDER BY "vendorName" ASC
+  `;
+
+  res.status(200).json({ success: true, data: { asOf, rows } });
+});
+
+router.get("/ar-aging", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+
+  const q = z.object({ asOf: z.string().min(10) }).safeParse({ asOf: req.query.asOf });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Missing asOf" });
+    return;
+  }
+
+  const sql = getSql();
+  const asOf = q.data.asOf;
+
+  const rows = await sql`
+    WITH base AS (
+      SELECT
+        d.customer_id as "customerId",
+        COALESCE(c.code, '') as "customerCode",
+        COALESCE(c.name, '') as "customerName",
+        GREATEST(0, (${asOf}::date - d.due_date))::int as "days",
+        (GREATEST(0, (d.total_txn - d.paid_txn)) * d.fx_rate)::numeric as "openBase"
+      FROM ar_documents d
+      JOIN customers c ON c.id = d.customer_id AND c.org_id = d.org_id
+      WHERE d.org_id = ${orgId}
+        AND d.status = 'open'
+        AND d.issue_date <= ${asOf}
+        AND (d.total_txn - d.paid_txn) > 0
+    )
+    SELECT
+      "customerId",
+      "customerCode",
+      "customerName",
+      COALESCE(SUM(CASE WHEN "days" <= 30 THEN "openBase" ELSE 0 END), 0) as "b0_30",
+      COALESCE(SUM(CASE WHEN "days" >= 31 AND "days" <= 60 THEN "openBase" ELSE 0 END), 0) as "b31_60",
+      COALESCE(SUM(CASE WHEN "days" >= 61 AND "days" <= 90 THEN "openBase" ELSE 0 END), 0) as "b61_90",
+      COALESCE(SUM(CASE WHEN "days" >= 91 THEN "openBase" ELSE 0 END), 0) as "b90p",
+      COALESCE(SUM("openBase"), 0) as "total"
+    FROM base
+    GROUP BY "customerId", "customerCode", "customerName"
+    ORDER BY "customerName" ASC
+  `;
+
+  res.status(200).json({ success: true, data: { asOf, rows } });
+});
+
 export default router;

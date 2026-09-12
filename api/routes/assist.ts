@@ -15,42 +15,8 @@ function requireOrgId(req: AuthedRequest, res: Response): string | null {
   return orgId;
 }
 
-function normalizeCode(input: unknown): string {
-  const s = typeof input === "string" ? input.trim() : "";
-  const m = s.match(/\d{3,6}/);
-  return m ? m[0] : s;
-}
-
 function detectLang(text: string): "zh" | "en" {
   return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
-}
-
-function toOneLineString(x: unknown): string {
-  if (typeof x === "string") return x.trim();
-  if (typeof x === "number" || typeof x === "boolean") return String(x);
-  if (!x) return "";
-  if (typeof x === "object") {
-    const anyX = x as any;
-    const msg = anyX?.message || anyX?.text || anyX?.name;
-    if (typeof msg === "string" && msg.trim()) return msg.trim();
-    try {
-      return JSON.stringify(x);
-    } catch {
-      return String(x);
-    }
-  }
-  return String(x);
-}
-
-function normalizeStringArray(input: unknown): string[] {
-  if (!Array.isArray(input)) return [];
-  return input.map((x) => toOneLineString(x)).filter((s) => !!s);
-}
-
-function stripCodeFences(s: string): string {
-  const t = s.trim();
-  const m = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return m ? m[1].trim() : t;
 }
 
 function pickBestAccountCode(accounts: any[], opts: { type?: string; keywords: string[] }): string | null {
@@ -202,7 +168,6 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   }
 
   const lang = detectLang(parsed.data.text);
-  const t = (zh: string, en: string) => (lang === "zh" ? zh : en);
 
   const sql = getSql();
   const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`;
@@ -214,26 +179,6 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
     WHERE org_id = ${orgId} AND is_active = true
     ORDER BY code ASC
   `) as any[];
-
-  const costCenters = (await sql`
-    SELECT id, code, name
-    FROM cost_centers
-    WHERE org_id = ${orgId}
-    ORDER BY code ASC
-  `) as any[];
-
-  const items = (await sql`
-    SELECT id, sku, name, uom
-    FROM inventory_items
-    WHERE org_id = ${orgId} AND is_active = true
-    ORDER BY sku ASC NULLS LAST, name ASC
-  `) as any[];
-
-  const accountList = accounts.map((a) => `${a.code} ${a.name} (${a.type})`).join("\n");
-  const costCenterList = costCenters.map((c) => `${c.code} ${c.name}`).join("\n");
-  const itemList = items.map((it) => `${it.sku ? it.sku + " " : ""}${it.name} [${it.uom}]`).join("\n");
-  const accountCodes = accounts.map((a) => String(a.code));
-  const costCenterCodes = costCenters.map((c) => String(c.code));
 
   const accountIdByCode = new Map(accounts.map((a) => [String(a.code), String(a.id)]));
   const accountNameByCode = new Map(accounts.map((a) => [String(a.code), String(a.name)]));

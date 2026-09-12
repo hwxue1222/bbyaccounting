@@ -405,6 +405,8 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       e.currency_code as "currency",
       e.fx_rate as "fxRate",
       e.memo,
+      e.vendor_id as "vendorId",
+      e.customer_id as "customerId",
       e.inventory_impact as "inventoryImpact",
       e.created_at as "createdAt",
       (SELECT COALESCE(SUM(debit_txn),0) FROM journal_lines l WHERE l.entry_id = e.id) as "totalDebitTxn",
@@ -455,7 +457,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sql = getSql();
   const id = req.params.id;
   const entries = await sql`
-    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact"
+    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
     FROM journal_entries
     WHERE id = ${id} AND org_id = ${orgId}
     LIMIT 1
@@ -561,6 +563,8 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     entryDate: z.string().min(10),
     currency: z.string().min(3).max(3),
     fxRate: z.number().positive().default(1),
+    vendorId: z.string().uuid().nullable().optional(),
+    customerId: z.string().uuid().nullable().optional(),
     voucherNo: z.string().trim().min(1).max(32).optional(),
     memo: z.string().optional(),
     inventoryDetails: inventoryDetailsSchema,
@@ -579,6 +583,8 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const sql = getSql();
   const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const vendorId = parsed.data.vendorId ?? null;
+  const customerId = parsed.data.customerId ?? null;
   const inventoryDetails = parsed.data.inventoryDetails;
   const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
   const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
@@ -772,6 +778,8 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             currency_code = ${currency.toUpperCase()},
             fx_rate = ${fxRate},
             memo = ${memo || null},
+            vendor_id = ${vendorId},
+            customer_id = ${customerId},
             inventory_impact = ${effectiveInventoryImpact},
             posted_at = now()
         WHERE org_id = ${orgId} AND id = ${id}
@@ -1074,6 +1082,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     entryDate: z.string().min(10),
     currency: z.string().min(3).max(3),
     fxRate: z.number().positive().default(1),
+    vendorId: z.string().uuid().nullable().optional(),
+    customerId: z.string().uuid().nullable().optional(),
     voucherNo: z.string().trim().min(1).max(32).optional(),
     memo: z.string().optional(),
     inventoryDetails: inventoryDetailsSchema,
@@ -1094,6 +1104,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const sql = getSql();
   const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const vendorId = parsed.data.vendorId ?? null;
+  const customerId = parsed.data.customerId ?? null;
   const inventoryDetails = parsed.data.inventoryDetails;
   const inventoryLinkLineNo = parsed.data.inventoryLinkLineNo;
   const shipmentInventoryAccountId = parsed.data.shipmentInventoryAccountId;
@@ -1313,8 +1325,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         try {
           entry = (
             await trx`
-              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
+              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
               RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
@@ -1332,8 +1344,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         try {
           entry = (
             await trx`
-              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now())
+              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
+              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
               RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
@@ -1371,8 +1383,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             try {
               nextEntry = (
                 await trx`
-                  INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-                  VALUES (${orgId}, ${nextDate}, 'posted', ${vn}, ${rootEntryId}, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, false, now())
+                  INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
+                  VALUES (${orgId}, ${nextDate}, 'posted', ${vn}, ${rootEntryId}, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, false, now(), ${vendorId}, ${customerId})
                   RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
                 `
               )[0] as any;

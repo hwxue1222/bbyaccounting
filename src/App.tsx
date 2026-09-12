@@ -11,6 +11,8 @@ import FixedAssets from "@/pages/FixedAssets";
 import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
 import Users from "@/pages/Users";
+import Vendors from "@/pages/Vendors";
+import Customers from "@/pages/Customers";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { status, bootstrap } = useAuthStore();
@@ -64,6 +66,22 @@ export default function App() {
           element={
             <RequireAuth>
               <FixedAssets />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/vendors"
+          element={
+            <RequireAuth>
+              <Vendors />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/customers"
+          element={
+            <RequireAuth>
+              <Customers />
             </RequireAuth>
           }
         />

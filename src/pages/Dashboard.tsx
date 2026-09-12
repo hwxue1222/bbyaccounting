@@ -1,9 +1,8 @@
 import { Link, useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
-import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 function Card({ title, desc, to }: { title: string; desc: string; to: string }) {
   return (
@@ -20,11 +19,6 @@ function Card({ title, desc, to }: { title: string; desc: string; to: string }) 
 export default function Dashboard() {
   const tr = useTr();
   const navigate = useNavigate();
-  const { orgs, activeOrgId } = useAuthStore();
-  const baseCurrency = useMemo(() => {
-    const active = orgs.find((o) => o.orgId === activeOrgId);
-    return (active?.baseCurrency || "SGD").toUpperCase();
-  }, [orgs, activeOrgId]);
 
   const [open, setOpen] = useState(false);
   const [draftInput, setDraftInput] = useState("");

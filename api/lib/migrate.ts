@@ -136,7 +136,9 @@ export async function ensureMigrated(): Promise<void> {
       memo TEXT,
       created_by UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      posted_at TIMESTAMPTZ
+      posted_at TIMESTAMPTZ,
+      vendor_id UUID,
+      customer_id UUID
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
@@ -144,8 +146,84 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS voucher_no TEXT`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS parent_entry_id UUID`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS vendor_id UUID`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS customer_id UUID`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_parent ON journal_entries(org_id, parent_entry_id)`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_org_voucher_no_unique ON journal_entries(org_id, voucher_no) WHERE voucher_no IS NOT NULL AND voucher_no <> ''`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_vendor_id ON journal_entries(org_id, vendor_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_customer_id ON journal_entries(org_id, customer_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS vendors (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      code TEXT,
+      name TEXT NOT NULL,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_vendors_org ON vendors(org_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_vendors_org_code_unique ON vendors(org_id, code) WHERE code IS NOT NULL AND code <> ''`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS customers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      code TEXT,
+      name TEXT NOT NULL,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_customers_org ON customers(org_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_org_code_unique ON customers(org_id, code) WHERE code IS NOT NULL AND code <> ''`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ap_documents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      vendor_id UUID NOT NULL,
+      doc_no TEXT,
+      issue_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      currency_code TEXT NOT NULL,
+      fx_rate NUMERIC(18,8) NOT NULL DEFAULT 1,
+      total_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+      paid_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open',
+      memo TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ap_documents_org_vendor ON ap_documents(org_id, vendor_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ap_documents_org_due ON ap_documents(org_id, due_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ap_documents_org_status ON ap_documents(org_id, status)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ap_documents_org_doc_no_unique ON ap_documents(org_id, doc_no) WHERE doc_no IS NOT NULL AND doc_no <> ''`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ar_documents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL,
+      customer_id UUID NOT NULL,
+      doc_no TEXT,
+      issue_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      currency_code TEXT NOT NULL,
+      fx_rate NUMERIC(18,8) NOT NULL DEFAULT 1,
+      total_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+      paid_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open',
+      memo TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ar_documents_org_customer ON ar_documents(org_id, customer_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ar_documents_org_due ON ar_documents(org_id, due_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ar_documents_org_status ON ar_documents(org_id, status)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ar_documents_org_doc_no_unique ON ar_documents(org_id, doc_no) WHERE doc_no IS NOT NULL AND doc_no <> ''`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS org_counters (
