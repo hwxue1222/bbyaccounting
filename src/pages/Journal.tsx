@@ -115,6 +115,9 @@ export default function Journal() {
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
   const [assistSuggestion, setAssistSuggestion] = useState<AssistJournalSuggestion | null>(null);
+  const [assistDisposalAssetId, setAssistDisposalAssetId] = useState("");
+  const [assistDisposalBusy, setAssistDisposalBusy] = useState(false);
+  const [assistDisposalErr, setAssistDisposalErr] = useState<string | null>(null);
   const [assistQuickWho, setAssistQuickWho] = useState("");
   const [assistQuickOnBehalf, setAssistQuickOnBehalf] = useState("");
   const [assistQuickPayMethod, setAssistQuickPayMethod] = useState("");
@@ -203,6 +206,14 @@ export default function Journal() {
   const customersSorted = useMemo(() => {
     return customers.slice().sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`));
   }, [customers]);
+
+  const assistNeedsFaDisposalInfo = useMemo(() => {
+    const missing = Array.isArray((assistSuggestion as any)?.missing) ? ((assistSuggestion as any).missing as any[]) : [];
+    return missing.some((x) => {
+      const s = String(x || "");
+      return s.includes("处置固定资产") || s.toLowerCase().includes("fixed asset disposal");
+    });
+  }, [assistSuggestion]);
 
   const bankAccountById = useMemo(() => new Map(bankAccounts.map((b) => [b.id, b] as const)), [bankAccounts]);
 
@@ -2346,6 +2357,68 @@ export default function Journal() {
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                       <div className="font-medium">{tr("需要补充信息/设置", "Missing info/setup")}</div>
                       <div className="mt-1">{assistSuggestion.missing.join("；")}</div>
+                      {assistNeedsFaDisposalInfo ? (
+                        <div className="mt-3 grid gap-2 md:grid-cols-12">
+                          <div className="md:col-span-6">
+                            <div className="text-xs text-amber-900/70">{tr("选择现有固定资产（自动带入原值/累计折旧）", "Select fixed asset (auto-fill cost/accum dep)")}</div>
+                            <select
+                              className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                              value={assistDisposalAssetId}
+                              onChange={async (e) => {
+                                const id = e.target.value;
+                                setAssistDisposalAssetId(id);
+                                setAssistDisposalErr(null);
+                                if (!id) return;
+                                setAssistDisposalBusy(true);
+                                try {
+                                  const snap = await api<{ costBase: number; accumDepBase: number }>(
+                                    `/api/fixed-assets/${encodeURIComponent(id)}/disposal-snapshot?date=${encodeURIComponent(draftDate)}`,
+                                    { signal: pageAbortRef.current?.signal },
+                                  );
+                                  const asset = fixedAssets.find((x) => x.id === id);
+                                  const label = asset ? `${asset.assetNo ? asset.assetNo + " " : ""}${asset.name}`.trim() : id;
+                                  const cost = Number(snap.costBase || 0);
+                                  const accum = Number(snap.accumDepBase || 0);
+                                  setAssistExtra(`${label}；原值 ${cost}；累计折旧 ${accum}`);
+                                } catch (err: any) {
+                                  setAssistDisposalErr(err?.message || "Failed to load fixed asset snapshot");
+                                } finally {
+                                  setAssistDisposalBusy(false);
+                                }
+                              }}
+                              onFocus={() => {
+                                if (!fixedAssets.length) {
+                                  refreshFixedAssets(pageAbortRef.current?.signal).catch(() => null);
+                                }
+                              }}
+                              disabled={assistBusy || assistDisposalBusy}
+                            >
+                              <option value="" disabled>
+                                {tr("请选择", "Select")}
+                              </option>
+                              {fixedAssets
+                                .filter((a) => a.status !== "disposed")
+                                .map((a) => {
+                                  const label = `${a.assetNo ? a.assetNo + " " : ""}${a.name}`.trim();
+                                  return (
+                                    <option key={a.id} value={a.id}>
+                                      {label || a.id}
+                                    </option>
+                                  );
+                                })}
+                            </select>
+                          </div>
+                          <div className="md:col-span-6">
+                            {assistDisposalErr ? <div className="text-sm text-red-700">{assistDisposalErr}</div> : null}
+                            <div className="text-xs text-amber-900/70">
+                              {tr(
+                                "选择后会自动把“原值/累计折旧”填到下面输入框，你直接点“补充并继续”。",
+                                "After selecting, cost/accum dep will be filled below; then click Continue.",
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <div className="text-xs text-amber-900/70">{tr("请补充必要信息后继续生成：", "Add missing info and continue:")}</div>
                         <input
@@ -2356,11 +2429,11 @@ export default function Journal() {
                             "例如：现金/银行转账；金额 20000 MYR；用途；是否资本化；折旧年限。",
                             "E.g., cash/bank transfer; amount 20000 MYR; purpose; capitalize?; useful life.",
                           )}
-                          disabled={assistBusy}
+                          disabled={assistBusy || assistDisposalBusy}
                         />
                         <button
                           className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
-                          disabled={assistBusy || !assistExtra.trim()}
+                          disabled={assistBusy || assistDisposalBusy || !assistExtra.trim()}
                           onClick={() => {
                             const extra = assistExtra.trim();
                             setAssistExtra("");
