@@ -1522,14 +1522,18 @@ export default function Journal() {
               </div>
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-zinc-500">
-                  {quickText.trim()
-                    ? tr(`将生成：${quickText}`, `Will generate: ${quickText}`)
-                    : tr(
-                        "示例：董事代替公司用现金购买一辆汽车，20000 MYR，用途：公司使用。",
-                        "Example: Director on behalf of company paid cash to buy a car, 20000 MYR, purpose: company use.",
-                      )}
-                </div>
+                {quickText.trim() ? (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                    {tr(`将生成：${quickText}`, `Will generate: ${quickText}`)}
+                  </div>
+                ) : (
+                  <div className="text-xs text-zinc-500">
+                    {tr(
+                      "示例：董事代替公司用现金购买一辆汽车，20000 MYR，用途：公司使用。",
+                      "Example: Director on behalf of company paid cash to buy a car, 20000 MYR, purpose: company use.",
+                    )}
+                  </div>
+                )}
                 <button
                   className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                   disabled={!canGenerate}
