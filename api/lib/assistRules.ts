@@ -50,6 +50,28 @@ export function buildHeuristicSuggestion(input: {
   const isFixedAssetNew = /fixed\s*asset|\u56fa\u5b9a\u8d44\u4ea7|\u65b0\u589e\u56fa\u5b9a\u8d44\u4ea7|ppe/.test(lower);
   const isSale = /sell|sold|sale|dispose|disposal|\u51fa\u552e|\u5356|\u9500\u552e|\u5904\u7f6e/.test(lower);
 
+  const parseLabeledNumber = (patterns: RegExp[]): number | null => {
+    for (const re of patterns) {
+      const m = input.text.match(re);
+      const v = m?.[1] != null ? Number(m[1]) : NaN;
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+    return null;
+  };
+
+  const costHint = parseLabeledNumber([
+    /(?:\b|\s)(?:cost|original\s*cost)\s*[:：]?\s*(\d+(?:\.\d+)?)/i,
+    /(?:原值|成本|购置价|购买价|车价)\s*[:：]?\s*(\d+(?:\.\d+)?)/,
+  ]);
+  const accumHint = parseLabeledNumber([
+    /(?:\b|\s)(?:accum\s*dep|accumulated\s*depreciation)\s*[:：]?\s*(\d+(?:\.\d+)?)/i,
+    /(?:累计折旧|累折|折旧累计)\s*[:：]?\s*(\d+(?:\.\d+)?)/,
+  ]);
+  const bookHint = parseLabeledNumber([
+    /(?:\b|\s)(?:nbv|book\s*value|carrying\s*value)\s*[:：]?\s*(\d+(?:\.\d+)?)/i,
+    /(?:账面价值|净值|残值\s*\(账面\))\s*[:：]?\s*(\d+(?:\.\d+)?)/,
+  ]);
+
   const payByCash = /cash|\u73b0\u91d1/.test(lower);
   const payByBank = /transfer|bank|\u94f6\u884c|\u8f6c\u8d26/.test(lower);
   const payUnpaid = /unpaid|\u672a\u652f\u4ed8/.test(lower);
@@ -65,6 +87,8 @@ export function buildHeuristicSuggestion(input: {
   let debitCode: string | null = null;
   let creditCode: string | null = null;
 
+  const isFixedAssetDisposal = isSale && (isVehicle || /\u56fa\u5b9a\u8d44\u4ea7|ppe|\u5904\u7f6e/.test(lower));
+
   if (isSale) {
     if (payByCash) {
       debitCode = pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u73b0\u91d1", "cash"] });
@@ -78,17 +102,148 @@ export function buildHeuristicSuggestion(input: {
     }
     if (!debitCode) debitCode = input.accounts.find((a) => String(a.type) === "asset")?.code || input.accounts[0]?.code || null;
 
-    creditCode =
-      pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u6536\u5165", "\u8425\u4e1a\u6536\u5165", "\u9500\u552e", "revenue", "sales", "income"] }) ||
-      input.accounts.find((a) => String(a.type) === "income")?.code ||
-      null;
-    if (!creditCode) {
-      missing.push(t("缺少收入科目：请在设置新增收入科目（例如 4000 销售收入/处置收入）。", "Missing income account: please add one in Settings (e.g., 4000 Sales/Disposal income)."));
-      return { draft: null, preview: null, warnings, missing };
+    if (!isFixedAssetDisposal) {
+      creditCode =
+        pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u6536\u5165", "\u8425\u4e1a\u6536\u5165", "\u9500\u552e", "revenue", "sales", "income"] }) ||
+        input.accounts.find((a) => String(a.type) === "income")?.code ||
+        null;
+      if (!creditCode) {
+        missing.push(t("缺少收入科目：请在设置新增收入科目（例如 4000 销售收入）。", "Missing income account: please add one in Settings (e.g., 4000 Sales)."));
+        return { draft: null, preview: null, warnings, missing };
+      }
     }
 
-    if (isVehicle || isFixedAssetNew) {
-      warnings.push(t("固定资产处置通常需要成本/累计折旧/处置收益等更多信息，这里先按收款/应收 + 收入生成草稿。", "Fixed asset disposal usually needs cost/accum dep/gain details; drafting as receivable/cash + revenue."));
+    if (isFixedAssetDisposal) {
+      let cost = costHint;
+      let accum = accumHint;
+      let book = bookHint;
+      if (cost != null && book != null && accum == null) {
+        const a = cost - book;
+        accum = Number.isFinite(a) && a >= 0 ? a : null;
+      }
+      if (cost != null && accum != null && book == null) {
+        const b = cost - accum;
+        book = Number.isFinite(b) && b >= 0 ? b : null;
+      }
+      if (book != null && accum != null && cost == null) {
+        const c = book + accum;
+        cost = Number.isFinite(c) && c > 0 ? c : null;
+      }
+
+      const has1600 = input.accounts.some((a) => String(a.code || "") === "1600");
+      const assetCode = has1600
+        ? "1600"
+        : pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u56fa\u5b9a\u8d44\u4ea7", "ppe", "vehicle", "car", "\u8f66"] }) ||
+          null;
+      const accumCode =
+        pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u7d2f\u8ba1\u6298\u65e7", "\u7d2f\u6298", "accum", "depreciation"] }) ||
+        null;
+      const gainCode =
+        pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u5904\u7f6e\u6536\u76ca", "\u5904\u7f6e\u5229\u5f97", "gain", "disposal"] }) ||
+        input.accounts.find((a) => String(a.type) === "income")?.code ||
+        null;
+      const lossCode =
+        pickBestAccountCode(input.accounts, { type: "expense", keywords: ["\u5904\u7f6e\u635f\u5931", "loss", "disposal"] }) ||
+        input.accounts.find((a) => String(a.type) === "expense")?.code ||
+        null;
+
+      const missingParts: string[] = [];
+      if (!assetCode) missingParts.push(t("固定资产科目（例如 1600）", "Fixed asset account (e.g., 1600)"));
+      if (!accumCode) missingParts.push(t("累计折旧科目（例如 1610）", "Accumulated depreciation account (e.g., 1610)"));
+      if (!gainCode) missingParts.push(t("处置收益/收入科目", "Disposal gain/income account"));
+      if (!lossCode) missingParts.push(t("处置损失科目", "Disposal loss account"));
+      if (!amount) missingParts.push(t("售价金额（例如 50000 MYR）", "Sale amount (e.g., 50000 MYR)"));
+      if (cost == null && book == null) missingParts.push(t("车辆原值(成本) 与累计折旧（或账面价值）", "Asset cost + accum dep (or book value)"));
+      if (missingParts.length) {
+        missing.push(
+          t(
+            `处置固定资产需要补充：${missingParts.join("、")}`,
+            `Fixed asset disposal needs: ${missingParts.join(", ")}`,
+          ),
+        );
+        return { draft: null, preview: null, warnings, missing };
+      }
+
+      const proceeds = amount || 0;
+      const assetCost = Number(cost || 0);
+      const assetAccum = Number(accum || 0);
+      const nbv = assetCost - assetAccum;
+      const gainLoss = proceeds - nbv;
+
+      const disposalLines = [
+        {
+          accountCode: debitCode || "",
+          description: payByCash || payByBank ? t("收款", "Receipt") : t("应收", "Receivable"),
+          debitTxn: proceeds,
+          creditTxn: 0,
+        },
+        {
+          accountCode: accumCode || "",
+          description: t("累计折旧冲回", "Reverse accum dep"),
+          debitTxn: assetAccum,
+          creditTxn: 0,
+        },
+        {
+          accountCode: assetCode || "",
+          description: t("处置固定资产", "Dispose fixed asset"),
+          debitTxn: 0,
+          creditTxn: assetCost,
+        },
+      ];
+      if (Math.abs(gainLoss) >= 0.005) {
+        if (gainLoss > 0) {
+          disposalLines.push({
+            accountCode: gainCode || "",
+            description: t("处置收益", "Disposal gain"),
+            debitTxn: 0,
+            creditTxn: Math.round(gainLoss * 100) / 100,
+          });
+        } else {
+          disposalLines.push({
+            accountCode: lossCode || "",
+            description: t("处置损失", "Disposal loss"),
+            debitTxn: Math.round(Math.abs(gainLoss) * 100) / 100,
+            creditTxn: 0,
+          });
+        }
+      }
+
+      const lines = disposalLines.map((l) => {
+        const code = String(l.accountCode || "");
+        const accountId = code ? input.accountIdByCode.get(code) || "" : "";
+        return {
+          accountCode: code,
+          accountId,
+          accountName: code ? input.accountNameByCode.get(code) || "" : "",
+          description: l.description,
+          debitTxn: Math.max(0, Number(l.debitTxn) || 0),
+          creditTxn: Math.max(0, Number(l.creditTxn) || 0),
+        };
+      });
+      if (lines.some((l) => !l.accountId)) {
+        missing.push(t("处置分录科目匹配失败，请检查科目表。", "Account mapping failed for disposal; please check chart of accounts."));
+        return { draft: null, preview: null, warnings, missing };
+      }
+
+      const memo = input.extraMemo ? `${input.extraMemo}` : "";
+      return {
+        draft: {
+          entryDate: input.forcedEntryDate,
+          currency: ccy,
+          fxRate: ccy === input.baseCurrency ? 1 : 1,
+          memo,
+          lines: lines.map((l) => ({ accountId: l.accountId, description: l.description, costCenterId: null, debitTxn: l.debitTxn, creditTxn: l.creditTxn })),
+        },
+        preview: {
+          entryDate: input.forcedEntryDate,
+          currency: ccy,
+          fxRate: ccy === input.baseCurrency ? 1 : 1,
+          memo,
+          lines: lines.map((l) => ({ accountCode: l.accountCode, accountName: l.accountName, description: l.description, debitTxn: l.debitTxn, creditTxn: l.creditTxn })),
+        },
+        warnings,
+        missing,
+      };
     }
   } else {
     if (isCustomerFlow) {

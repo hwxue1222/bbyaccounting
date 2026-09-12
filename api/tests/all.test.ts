@@ -26,14 +26,17 @@ async function main() {
     { id: "a1000", code: "1000", name: "Cash", type: "asset" },
     { id: "a1200", code: "1200", name: "Accounts Receivable", type: "asset" },
     { id: "a1600", code: "1600", name: "Fixed Assets", type: "asset" },
+    { id: "a1610", code: "1610", name: "Accumulated Depreciation", type: "asset" },
     { id: "a2000", code: "2000", name: "Accounts Payable", type: "liability" },
     { id: "a4000", code: "4000", name: "Sales", type: "income" },
+    { id: "a4800", code: "4800", name: "Gain on Disposal", type: "income" },
+    { id: "a6000", code: "6000", name: "Expense", type: "expense" },
   ];
   const accountIdByCode = new Map(accounts.map((a) => [a.code, a.id] as const));
   const accountNameByCode = new Map(accounts.map((a) => [a.code, a.name] as const));
 
   const s1 = buildHeuristicSuggestion({
-    text: "公司，未支付，卖了一辆汽车，50000 MYR",
+    text: "公司，未支付，卖了一辆汽车，售价 50000 MYR，原值 80000，累计折旧 30000",
     lang: "zh",
     baseCurrency: "MYR",
     forcedEntryDate: "2026-09-12",
@@ -42,12 +45,13 @@ async function main() {
     accountIdByCode,
     accountNameByCode,
   });
-  assert(s1.draft?.lines?.length === 2, "sale draft should have 2 lines");
-  assert(String(s1.preview.lines[0].accountCode) === "1200", "unpaid sale should debit AR 1200");
-  assert(String(s1.preview.lines[1].accountCode) === "4000", "sale should credit income");
+  assert(s1.draft?.lines?.length === 3, "disposal draft should have 3 lines when no gain/loss");
+  assert(String(s1.preview.lines[0].accountCode) === "1200", "unpaid disposal should debit AR 1200");
+  assert(String(s1.preview.lines[1].accountCode) === "1610", "disposal should debit accum dep");
+  assert(String(s1.preview.lines[2].accountCode) === "1600", "disposal should credit fixed asset cost");
 
   const s2 = buildHeuristicSuggestion({
-    text: "公司，现金，卖了一辆汽车，50000 MYR",
+    text: "公司，现金，卖了一辆汽车，售价 50000 MYR，原值 80000，累计折旧 30000",
     lang: "zh",
     baseCurrency: "MYR",
     forcedEntryDate: "2026-09-12",
@@ -56,14 +60,15 @@ async function main() {
     accountIdByCode,
     accountNameByCode,
   });
-  assert(String(s2.preview.lines[0].accountCode) === "1000", "cash sale should debit cash 1000");
-  assert(String(s2.preview.lines[1].accountCode) === "4000", "cash sale should credit income");
+  assert(String(s2.preview.lines[0].accountCode) === "1000", "cash disposal should debit cash 1000");
+  assert(String(s2.preview.lines[1].accountCode) === "1610", "disposal should debit accum dep");
+  assert(String(s2.preview.lines[2].accountCode) === "1600", "disposal should credit fixed asset cost");
 
   const accountsNoIncome = accounts.filter((a) => a.type !== "income");
   const accountIdByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.id] as const));
   const accountNameByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.name] as const));
   const s3 = buildHeuristicSuggestion({
-    text: "公司，未支付，卖了一辆汽车，50000 MYR",
+    text: "公司，未支付，卖了一辆汽车，售价 50000 MYR，原值 80000，累计折旧 30000",
     lang: "zh",
     baseCurrency: "MYR",
     forcedEntryDate: "2026-09-12",
