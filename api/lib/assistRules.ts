@@ -138,10 +138,12 @@ export function buildHeuristicSuggestion(input: {
       const accumCode =
         pickBestAccountCode(input.accounts, { type: "asset", keywords: ["\u7d2f\u8ba1\u6298\u65e7", "\u7d2f\u6298", "accum", "depreciation"] }) ||
         null;
-      const gainCode =
-        pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u5904\u7f6e\u6536\u76ca", "\u5904\u7f6e\u5229\u5f97", "gain", "disposal"] }) ||
-        input.accounts.find((a) => String(a.type) === "income")?.code ||
-        null;
+      const has7000 = input.accounts.some((a) => String(a.code || "") === "7000");
+      const gainCode = has7000
+        ? "7000"
+        : pickBestAccountCode(input.accounts, { type: "income", keywords: ["\u5904\u7f6e\u6536\u76ca", "\u5904\u7f6e\u5229\u5f97", "gain", "disposal"] }) ||
+          input.accounts.find((a) => String(a.type) === "income")?.code ||
+          null;
       const lossCode =
         pickBestAccountCode(input.accounts, { type: "expense", keywords: ["\u5904\u7f6e\u635f\u5931", "loss", "disposal"] }) ||
         input.accounts.find((a) => String(a.type) === "expense")?.code ||
@@ -150,8 +152,6 @@ export function buildHeuristicSuggestion(input: {
       const missingParts: string[] = [];
       if (!assetCode) missingParts.push(t("固定资产科目（例如 1600）", "Fixed asset account (e.g., 1600)"));
       if (!accumCode) missingParts.push(t("累计折旧科目（例如 1610）", "Accumulated depreciation account (e.g., 1610)"));
-      if (!gainCode) missingParts.push(t("处置收益/收入科目", "Disposal gain/income account"));
-      if (!lossCode) missingParts.push(t("处置损失科目", "Disposal loss account"));
       if (!amount) missingParts.push(t("售价金额（例如 50000 MYR）", "Sale amount (e.g., 50000 MYR)"));
       if (cost == null && book == null) missingParts.push(t("车辆原值(成本) 与累计折旧（或账面价值）", "Asset cost + accum dep (or book value)"));
       if (missingParts.length) {
@@ -169,6 +169,20 @@ export function buildHeuristicSuggestion(input: {
       const assetAccum = Number(accum || 0);
       const nbv = assetCost - assetAccum;
       const gainLoss = proceeds - nbv;
+
+      if (Math.abs(gainLoss) >= 0.005) {
+        if (gainLoss > 0) {
+          if (!gainCode) {
+            missing.push(t("缺少处置收益科目：请新增 7000 处置收益。", "Missing disposal gain account: please add 7000 Gain on Disposal."));
+            return { draft: null, preview: null, warnings, missing };
+          }
+        } else {
+          if (!lossCode) {
+            missing.push(t("缺少处置损失科目：请在设置新增处置损失科目。", "Missing disposal loss account: please add one in Settings."));
+            return { draft: null, preview: null, warnings, missing };
+          }
+        }
+      }
 
       const disposalLines = [
         {

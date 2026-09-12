@@ -29,7 +29,7 @@ async function main() {
     { id: "a1610", code: "1610", name: "Accumulated Depreciation", type: "asset" },
     { id: "a2000", code: "2000", name: "Accounts Payable", type: "liability" },
     { id: "a4000", code: "4000", name: "Sales", type: "income" },
-    { id: "a4800", code: "4800", name: "Gain on Disposal", type: "income" },
+    { id: "a7000", code: "7000", name: "Gain on Disposal", type: "income" },
     { id: "a6000", code: "6000", name: "Expense", type: "expense" },
   ];
   const accountIdByCode = new Map(accounts.map((a) => [a.code, a.id] as const));
@@ -64,11 +64,24 @@ async function main() {
   assert(String(s2.preview.lines[1].accountCode) === "1610", "disposal should debit accum dep");
   assert(String(s2.preview.lines[2].accountCode) === "1600", "disposal should credit fixed asset cost");
 
+  const s4 = buildHeuristicSuggestion({
+    text: "公司，未支付，卖了一辆汽车，售价 60000 MYR，原值 80000，累计折旧 30000",
+    lang: "zh",
+    baseCurrency: "MYR",
+    forcedEntryDate: "2026-09-12",
+    extraMemo: "",
+    accounts,
+    accountIdByCode,
+    accountNameByCode,
+  });
+  assert(s4.draft?.lines?.length === 4, "disposal with gain should have 4 lines");
+  assert(String(s4.preview.lines[3].accountCode) === "7000", "disposal gain should use 7000");
+
   const accountsNoIncome = accounts.filter((a) => a.type !== "income");
   const accountIdByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.id] as const));
   const accountNameByCodeNoIncome = new Map(accountsNoIncome.map((a) => [a.code, a.name] as const));
   const s3 = buildHeuristicSuggestion({
-    text: "公司，未支付，卖了一辆汽车，售价 50000 MYR，原值 80000，累计折旧 30000",
+    text: "公司，未支付，卖了一项服务，50000 MYR",
     lang: "zh",
     baseCurrency: "MYR",
     forcedEntryDate: "2026-09-12",
