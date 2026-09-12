@@ -402,25 +402,17 @@ export default function Journal() {
     return r.voucherNo;
   }
 
-  async function refresh() {
-    const [{ accounts }, { costCenters }, { currencies }, { entries }, { items }, { vendors }, { customers }, { bankAccounts }] = await Promise.all([
+  async function refreshCore() {
+    const [{ accounts }, { costCenters }, { currencies }, { entries }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ costCenters: any[] }>("/api/settings/cost-centers"),
       api<{ currencies: any[] }>("/api/settings/currencies"),
       api<{ entries: any[] }>("/api/journals"),
-      api<{ items: any[] }>("/api/inventory/items"),
-      api<{ vendors: any[] }>("/api/vendors"),
-      api<{ customers: any[] }>("/api/customers"),
-      api<{ bankAccounts: any[] }>("/api/settings/bank-accounts"),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setEntries(entries as any);
-    setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
-    setVendors(vendors as any);
-    setCustomers(customers as any);
-    setBankAccounts(bankAccounts as any);
     await refreshNextVoucherNo();
   }
 
@@ -434,6 +426,11 @@ export default function Journal() {
     setCustomers(r.customers as any);
   }
 
+  async function refreshBankAccountsOnly() {
+    const r = await api<{ bankAccounts: any[] }>("/api/settings/bank-accounts");
+    setBankAccounts(r.bankAccounts as any);
+  }
+
   async function refreshInventoryItemsOnly() {
     const r = await api<{ items: any[] }>("/api/inventory/items");
     setInventoryItems((r.items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
@@ -444,7 +441,7 @@ export default function Journal() {
     if (selectedId === id) {
       setSelectedId(null);
     }
-    await refresh();
+    await refreshCore();
   }
 
   async function startEditEntry(id: string) {
@@ -1120,7 +1117,11 @@ export default function Journal() {
     setEntries([]);
     setSelectedId(null);
     setDetail(null);
-    refresh().catch((e) => setErr(e.message));
+    refreshCore().catch((e) => setErr(e.message));
+    refreshInventoryItemsOnly().catch(() => null);
+    refreshVendorsOnly().catch(() => null);
+    refreshCustomersOnly().catch(() => null);
+    refreshBankAccountsOnly().catch(() => null);
   }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
@@ -2047,7 +2048,7 @@ export default function Journal() {
                       json: fixedAssetPurchases ? { fixedAssetPurchases } : undefined,
                     });
                     resetDraftEntry();
-                    await refresh();
+                    await refreshCore();
                     setSelectedId(id);
                     return;
                   }
@@ -2150,7 +2151,7 @@ export default function Journal() {
                     : await api<{ entry?: { id: string }; entries?: Array<{ id: string; entryDate: string; voucherNo: string | null }> }>("/api/journals/post", { method: "POST", json: reqBody });
 
                   resetDraftEntry();
-                  await refresh();
+                  await refreshCore();
                   const firstId = (resp as any)?.entry?.id || (resp as any)?.entries?.[0]?.id;
                   if (firstId) {
                     setSelectedId(firstId);
@@ -3786,7 +3787,7 @@ export default function Journal() {
             <div className="text-sm font-semibold">{tr("凭证列表", "Journals")}</div>
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-              onClick={() => refresh()}
+              onClick={() => refreshCore()}
               type="button"
             >
               {tr("刷新", "Refresh")}
@@ -3947,7 +3948,7 @@ export default function Journal() {
                           setErr(null);
                           try {
                             await api(`/api/journals/${encodeURIComponent(detail.entry.id)}/post` as any, { method: "POST" });
-                            await refresh();
+                            await refreshCore();
                             await loadDetail(detail.entry.id);
                           } catch (e: any) {
                             setErr(e.message);
