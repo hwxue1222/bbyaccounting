@@ -17,7 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
 jobs:
@@ -49,12 +48,8 @@ jobs:
             echo "Missing secret: VERCEL_TOKEN" >&2
             exit 1
           fi
-          if [ -z "${VERCEL_ORG_ID}" ] || [ -z "${VERCEL_PROJECT_ID}" ]; then
-            echo "Missing secrets: VERCEL_ORG_ID and/or VERCEL_PROJECT_ID" >&2
-            exit 1
-          fi
-          if ! echo "${VERCEL_ORG_ID}" | grep -q '^team_'; then
-            echo "VERCEL_ORG_ID must be your team id (team_...)." >&2
+          if [ -z "${VERCEL_PROJECT_ID}" ]; then
+            echo "Missing secret: VERCEL_PROJECT_ID" >&2
             exit 1
           fi
           if echo "${VERCEL_ORG_ID}" | grep -q '^team_'; then
@@ -64,9 +59,28 @@ jobs:
           fi
 
       - name: Verify Vercel project access
+        id: vercel
         run: |
           curl -fsSL -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
-            | python3 -c 'import sys,json; d=json.load(sys.stdin); print("project:", d.get("name"), "accountId:", d.get("accountId"), "id:", d.get("id"))'
+            | python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          d = json.load(sys.stdin)
+          account_id = d.get("accountId") or d.get("orgId")
+          project_id = d.get("id")
+          name = d.get("name")
+
+          if not account_id or not project_id:
+            raise SystemExit("Could not read accountId/project id from Vercel API response")
+
+          print(f"project: {name} accountId: {account_id} id: {project_id}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+            f.write(f"org_id={account_id}\n")
+            f.write(f"project_id={project_id}\n")
+          PY
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
@@ -75,7 +89,7 @@ jobs:
         run: |
           rm -rf .vercel
           mkdir -p .vercel
-          printf '{"orgId":"%s","projectId":"%s"}' "${VERCEL_ORG_ID}" "${VERCEL_PROJECT_ID}" > .vercel/project.json
+          printf '{"orgId":"%s","projectId":"%s"}' "${{ steps.vercel.outputs.org_id }}" "${{ steps.vercel.outputs.project_id }}" > .vercel/project.json
           cat .vercel/project.json
 
       - name: Build for Vercel
