@@ -63,19 +63,6 @@ jobs:
       - name: Reset Vercel link
         run: rm -rf .vercel
 
-      - name: Validate Vercel secrets
-        run: |
-          if [ -z "${VERCEL_ORG_ID}" ] || [ -z "${VERCEL_PROJECT_ID}" ]; then
-            echo "Missing required secrets: VERCEL_ORG_ID and/or VERCEL_PROJECT_ID"
-            exit 1
-          fi
-
-      - name: Write Vercel project link
-        run: |
-          mkdir -p .vercel
-          printf '{"orgId":"%s","projectId":"%s"}' "${VERCEL_ORG_ID}" "${VERCEL_PROJECT_ID}" > .vercel/project.json
-          cat .vercel/project.json
-
       - name: Pull Vercel project settings
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
