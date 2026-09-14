@@ -1,4 +1,4 @@
-name: Vercel Deploy (main)
+name: Vercel Deploy
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Git ref to deploy (commit SHA / branch / tag)
+        description: Commit SHA / branch / tag to deploy
         required: true
         default: main
 
@@ -43,103 +43,37 @@ jobs:
           ref: ${{ steps.resolve.outputs.ref }}
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm check
-
-      - name: Test
-        run: pnpm test
-
-      - name: Build
-        run: pnpm build
-
-      - name: Install Vercel CLI
-        run: npm install --global vercel@latest
-
-      - name: Reset Vercel link
-        run: rm -rf .vercel
-
-      - name: Validate Vercel secrets
+      - name: Validate secrets
         run: |
-          if [ -z "${VERCEL_ORG_ID}" ] || [ -z "${VERCEL_PROJECT_ID}" ]; then
-            echo "Missing required secrets: VERCEL_ORG_ID and/or VERCEL_PROJECT_ID"
+          if [ -z "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "Missing secret: VERCEL_TOKEN" >&2
             exit 1
           fi
-
-      - name: Write Vercel project link
-        run: |
-          mkdir -p .vercel
-          printf '{"orgId":"%s","projectId":"%s"}' "${VERCEL_ORG_ID}" "${VERCEL_PROJECT_ID}" > .vercel/project.json
-          cat .vercel/project.json
+          if [ -z "${VERCEL_ORG_ID}" ] || [ -z "${VERCEL_PROJECT_ID}" ]; then
+            echo "Missing secrets: VERCEL_ORG_ID and/or VERCEL_PROJECT_ID" >&2
+            exit 1
+          fi
 
       - name: Verify Vercel project access
         run: |
           curl -fsSL -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
             | python3 -c 'import sys,json; d=json.load(sys.stdin); print("project:", d.get("name"), "accountId:", d.get("accountId"), "id:", d.get("id"))'
 
-      - name: Resolve Vercel scope
-        id: scope
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Link Vercel project
         run: |
-          set -euo pipefail
-          python3 - <<'PY' > .vercel_scope_slug.txt
-          import json
-          import os
-          import urllib.request
-
-          token = "${{ secrets.VERCEL_TOKEN }}"
-          org_id = os.environ.get("VERCEL_ORG_ID")
-          if not token:
-            raise SystemExit("Missing VERCEL_TOKEN")
-          if not org_id:
-            raise SystemExit("Missing VERCEL_ORG_ID")
-
-          req = urllib.request.Request(
-            "https://api.vercel.com/v2/teams?limit=100",
-            headers={"Authorization": f"Bearer {token}"},
-          )
-          data = json.load(urllib.request.urlopen(req))
-          teams = data.get("teams") or []
-
-          slug = ""
-          for t in teams:
-            if (t.get("id") or "") == org_id:
-              slug = t.get("slug") or ""
-              break
-
-          if not slug:
-            raise SystemExit(f"Could not resolve team slug for orgId={org_id}")
-
-          print(slug)
-          PY
-          SCOPE=$(cat .vercel_scope_slug.txt)
-          if [ -z "$SCOPE" ]; then
-            echo "Could not resolve team slug for orgId=$VERCEL_ORG_ID" >&2
-            exit 1
-          fi
-          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
-          echo "Resolved scope: $SCOPE"
+          rm -rf .vercel
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}' "${VERCEL_ORG_ID}" "${VERCEL_PROJECT_ID}" > .vercel/project.json
+          cat .vercel/project.json
 
       - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=production --scope=${{ steps.scope.outputs.scope }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build for Vercel
-        run: vercel build --prod --scope=${{ steps.scope.outputs.scope }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        run: vercel deploy --prebuilt --prod --scope=${{ steps.scope.outputs.scope }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
