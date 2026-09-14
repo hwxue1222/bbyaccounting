@@ -53,10 +53,6 @@ jobs:
             echo "Missing secrets: VERCEL_ORG_ID and/or VERCEL_PROJECT_ID" >&2
             exit 1
           fi
-          if ! echo "${VERCEL_ORG_ID}" | grep -q '^team_'; then
-            echo "VERCEL_ORG_ID must be your team id (team_...)." >&2
-            exit 1
-          fi
           if echo "${VERCEL_ORG_ID}" | grep -q '^team_'; then
             echo "VERCEL_ORG_ID must be your team SLUG (URL segment), not team id (team_...)." >&2
             echo "Example: if URL is https://vercel.com/<teamSlug>/bbyaccounting then set VERCEL_ORG_ID=<teamSlug>." >&2
@@ -78,8 +74,11 @@ jobs:
           printf '{"orgId":"%s","projectId":"%s"}' "${VERCEL_ORG_ID}" "${VERCEL_PROJECT_ID}" > .vercel/project.json
           cat .vercel/project.json
 
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --scope=${VERCEL_ORG_ID} --token=${{ secrets.VERCEL_TOKEN }}
+
       - name: Build for Vercel
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --scope=${VERCEL_ORG_ID} --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --scope=${VERCEL_ORG_ID} --token=${{ secrets.VERCEL_TOKEN }}
