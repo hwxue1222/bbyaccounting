@@ -88,16 +88,11 @@ jobs:
           printf '{"orgId":"%s","projectId":"%s"}' "${VERCEL_ORG_ID}" "${VERCEL_PROJECT_ID}" > .vercel/project.json
           cat .vercel/project.json
 
-      - name: Verify Vercel project access
-        run: |
-          curl -fsSL -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
-            | python3 -c 'import sys,json; d=json.load(sys.stdin); print("project:", d.get("name"), "accountId:", d.get("accountId"), "id:", d.get("id"))'
-
       - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=production --scope=${VERCEL_ORG_ID} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build for Vercel
-        run: vercel build --prod --scope=${VERCEL_ORG_ID} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        run: vercel deploy --prebuilt --prod --scope=${VERCEL_ORG_ID} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
