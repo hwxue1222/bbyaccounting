@@ -59,6 +59,24 @@ jobs:
           curl -fsSL -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
             | python3 -c 'import sys,json; d=json.load(sys.stdin); print("project:", d.get("name"), "accountId:", d.get("accountId"), "id:", d.get("id"))'
 
+      - name: Resolve Vercel scope
+        id: scope
+        run: |
+          set -euo pipefail
+          if echo "${VERCEL_ORG_ID}" | grep -q '^team_'; then
+            SCOPE=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "https://api.vercel.com/v2/teams/${VERCEL_ORG_ID}" \
+              | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("slug") or "")')
+          else
+            SCOPE="${VERCEL_ORG_ID}"
+          fi
+          if [ -z "$SCOPE" ]; then
+            echo "Failed to resolve team slug for VERCEL_ORG_ID=${VERCEL_ORG_ID}." >&2
+            echo "Set VERCEL_ORG_ID to your team slug (URL segment) instead of team id." >&2
+            exit 1
+          fi
+          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+          echo "Resolved scope: $SCOPE"
+
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
@@ -70,10 +88,10 @@ jobs:
           cat .vercel/project.json
 
       - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --scope=${{ steps.scope.outputs.scope }} --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build for Vercel
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --scope=${{ steps.scope.outputs.scope }} --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --scope=${{ steps.scope.outputs.scope }} --token=${{ secrets.VERCEL_TOKEN }}
