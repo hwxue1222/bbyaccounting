@@ -26,22 +26,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Resolve ref
-        id: resolve
-        run: |
-          REF="${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}"
-          if echo "$REF" | grep -Eq '^[0-9a-f]{7,40}$'; then
-            SHA=$(curl -fsSL "https://api.github.com/repos/${{ github.repository }}/commits/${REF}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["sha"])')
-            echo "ref=${SHA}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=${REF}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.resolve.outputs.ref }}
-          fetch-depth: 0
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
