@@ -102,7 +102,7 @@ jobs:
           import os
           import urllib.request
 
-          token = "${{ secrets.VERCEL_TOKEN }}"
+          token = os.environ.get("VERCEL_TOKEN")
           org_id = os.environ.get("VERCEL_ORG_ID")
           if not token:
             raise SystemExit("Missing VERCEL_TOKEN")
