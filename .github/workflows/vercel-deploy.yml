@@ -6,11 +6,6 @@ on:
       - main
 
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref to deploy (commit SHA / branch / tag)
-        required: true
-        default: main
 
 concurrency:
   group: vercel-main
@@ -28,8 +23,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
