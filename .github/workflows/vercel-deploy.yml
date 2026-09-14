@@ -61,33 +61,25 @@ jobs:
       - name: Verify Vercel project access
         id: vercel
         run: |
-          set -euo pipefail
-          URL="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}"
-          STATUS=$(curl -sS -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" -o .vercel_project.json -w "%{http_code}" "$URL" || true)
-          echo "Vercel API status: $STATUS"
-          head -c 400 .vercel_project.json || true
-          echo
-          if [ "$STATUS" != "200" ]; then
-            echo "Vercel API request failed for projectId=${VERCEL_PROJECT_ID}" >&2
-            exit 1
-          fi
-          python3 - <<'PY'
+          curl -fsSL -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}" \
+            | python3 - <<'PY'
           import json
           import os
+          import sys
 
-          with open('.vercel_project.json','r',encoding='utf-8') as f:
-            d = json.load(f)
+          d = json.load(sys.stdin)
+          account_id = d.get("accountId") or d.get("orgId")
+          project_id = d.get("id")
+          name = d.get("name")
 
-          account_id = d.get('accountId') or d.get('orgId')
-          project_id = d.get('id')
-          name = d.get('name')
           if not account_id or not project_id:
-            raise SystemExit('Could not read accountId/id from Vercel API response')
+            raise SystemExit("Could not read accountId/project id from Vercel API response")
 
           print(f"project: {name} accountId: {account_id} id: {project_id}")
-          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
-            out.write(f"org_id={account_id}\n")
-            out.write(f"project_id={project_id}\n")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+            f.write(f"org_id={account_id}\n")
+            f.write(f"project_id={project_id}\n")
           PY
 
       - name: Install Vercel CLI
