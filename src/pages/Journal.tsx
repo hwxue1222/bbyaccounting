@@ -2006,6 +2006,31 @@ export default function Journal() {
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={readOnly || busy}
                   onClick={() => {
+                    resetDraftEntry();
+                    setAssistQuickAction("");
+                    setAssistQuickAmount("");
+                    setAssistQuickPayMethod("");
+                    setAssistQuickNewInvErr(null);
+                    setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
+                    setAssistQuickInvQty("");
+                    setAssistShowDisposalPicker(false);
+                    assistDisposalSnapKeyRef.current = "";
+                    setAssistDisposalAssetId("");
+                    setAssistExtra("");
+                    setAssistSuggestion(null);
+                    _setAssistText("");
+                    setAssistChatMessages([]);
+                    setAssistErr(null);
+                    setAssistOpen(false);
+                  }}
+                  type="button"
+                >
+                  {tr("清空", "Clear")}
+                </button>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={readOnly || busy}
+                  onClick={() => {
                     if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
                       setAssistDisposalAssetId(assistQuickDisposalAssetId);
                     }
@@ -2265,7 +2290,7 @@ export default function Journal() {
                         const hasAmount = amount > 0;
                         const label =
                           linkFa && code.startsWith("161")
-                            ? "处置"
+                            ? null
                             : linkFa && code.startsWith("16") && !code.startsWith("161")
                               ? "购买"
                               : linkFa && code.startsWith("61")
@@ -2291,13 +2316,6 @@ export default function Journal() {
                             onClick={() => {
                               if (disabled) return;
                               setErr(null);
-                              if (label === "处置") {
-                                setInvDetails([]);
-                                setInvConfirmed(null);
-                                setInvLineIdx(null);
-                                void openFixedAssetDisposeModal("accumDep", idx, amount);
-                                return;
-                              }
                               if (label === "购买") {
                                 setInvDetails([]);
                                 setInvConfirmed(null);
