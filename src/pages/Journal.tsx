@@ -862,9 +862,9 @@ export default function Journal() {
     }
   }
 
-  async function updateAssistSuggestionFromExtra(extraText: string) {
+  async function updateAssistSuggestionFromExtra(extraText: string): Promise<AssistJournalSuggestion | null> {
     const t = extraText.trim();
-    if (!t || assistBusy) return;
+    if (!t || assistBusy) return null;
     setAssistBusy(true);
     setAssistErr(null);
     setAssistSuggestion(null);
@@ -886,10 +886,12 @@ export default function Journal() {
           ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
           : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途等。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
       setAssistChatMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+      return r.suggestion;
     } catch (e: any) {
       const msg = e?.message || "Error";
       setAssistErr(msg);
       setAssistChatMessages((m) => [...m, { role: "assistant", text: msg }]);
+      return null;
     } finally {
       setAssistBusy(false);
     }
@@ -1023,8 +1025,9 @@ export default function Journal() {
     setAssistEditFaDisposalAccumLineIdx(null);
   }
 
-  function confirmAssistFill() {
-    if (!assistSuggestion) return;
+  function confirmAssistFill(suggestionOverride?: AssistJournalSuggestion | null) {
+    const baseSuggestion = suggestionOverride ?? assistSuggestion;
+    if (!baseSuggestion) return;
     const debit = assistEditLines.reduce((s, x) => s + (Number(x.debitTxn) || 0), 0);
     const credit = assistEditLines.reduce((s, x) => s + (Number(x.creditTxn) || 0), 0);
     const diff = Math.round((debit - credit) * 100) / 100;
@@ -1128,7 +1131,7 @@ export default function Journal() {
         inventoryDetails: includeInv ? (invOut as any) : undefined,
         lines: previewLines as any,
       },
-      warnings: Array.isArray((assistSuggestion as any).warnings) ? (assistSuggestion as any).warnings : [],
+      warnings: Array.isArray((baseSuggestion as any).warnings) ? (baseSuggestion as any).warnings : [],
       missing: [],
     };
 
@@ -1984,16 +1987,36 @@ export default function Journal() {
                   disabled={readOnly || busy}
                   onClick={() => {
                     resetDraftEntry();
+                    setAssistQuickWho("");
+                    setAssistQuickOnBehalf("");
                     setAssistQuickAction("");
                     setAssistQuickAmount("");
+                    setAssistQuickCurrency("");
                     setAssistQuickPayMethod("");
+                    setAssistQuickPurposeKind("");
+                    setAssistQuickPurpose("");
                     setAssistQuickNewInvErr(null);
                     setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
+                    setAssistQuickNewInvOpen(false);
+
+                    setAssistQuickNewVendorErr(null);
+                    setAssistQuickNewVendorForm({ code: "", name: "" });
+                    setAssistQuickNewVendorOpen(false);
+
+                    setAssistQuickNewCustomerErr(null);
+                    setAssistQuickNewCustomerForm({ code: "", name: "" });
+                    setAssistQuickNewCustomerOpen(false);
+
+                    setAssistQuickExistingInventoryItemId("");
                     setAssistQuickInvQty("");
+                    setAssistQuickDisposalAssetId("");
                     setAssistShowDisposalPicker(false);
                     assistDisposalSnapKeyRef.current = "";
                     setAssistDisposalAssetId("");
+                    setAssistDisposalErr(null);
                     setAssistExtra("");
+                    setAssistEditFaPurchase(null);
+                    setAssistEditFaInfo(null);
                     setAssistSuggestion(null);
                     setAssistChatMessages([]);
                     setAssistErr(null);
@@ -2349,7 +2372,9 @@ export default function Journal() {
                         const hasAmount = amount > 0;
                         const label =
                           linkFa && (code.startsWith("16") || code.startsWith("161"))
-                            ? "处置"
+                            ? code.startsWith("161")
+                              ? null
+                              : "处置"
                             : linkFa && code.startsWith("61")
                               ? "折旧"
                               : linkInv
@@ -3429,7 +3454,17 @@ export default function Journal() {
                 <button
                   className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
                   disabled={assistBusy || !(assistSuggestion as any)?.draft}
-                  onClick={() => confirmAssistFill()}
+                  onClick={async () => {
+                    if (assistBusy) return;
+                    if (assistExtra.trim()) {
+                      const t = assistExtra.trim();
+                      setAssistExtra("");
+                      const next = await updateAssistSuggestionFromExtra(t);
+                      confirmAssistFill(next);
+                      return;
+                    }
+                    confirmAssistFill();
+                  }}
                   type="button"
                 >
                   {tr("确认并填入分录", "Confirm & fill")}
