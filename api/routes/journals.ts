@@ -652,29 +652,31 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
       res.status(400).json({ success: false, error: "Missing inventoryDetails" });
       return;
     }
-    if (!inventoryLinkLineNo) {
-      res.status(400).json({ success: false, error: "Missing inventoryLinkLineNo" });
-      return;
-    }
-    linkLineNo = inventoryLinkLineNo;
     const detailTypes = Array.from(new Set(inventoryDetails.map((d) => d.moveType)));
     if (detailTypes.length !== 1) {
       res.status(400).json({ success: false, error: "Inventory details must be all receipt or all shipment" });
       return;
     }
-    const linkedLine = normalizedLines.find((l) => l.lineNo === inventoryLinkLineNo);
-    if (!linkedLine) {
-      res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
-      return;
-    }
-    const debitBase = round2(linkedLine.debitBase);
-    const creditBase = round2(linkedLine.creditBase);
-    if (debitBase > 0 && creditBase > 0) {
-      res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
-      return;
-    }
-    inventoryMode = detailTypes[0];
-    if (inventoryMode === "receipt") {
+    const requestedMode = detailTypes[0];
+    inventoryMode = requestedMode;
+
+    if (requestedMode === "receipt") {
+      if (!inventoryLinkLineNo) {
+        res.status(400).json({ success: false, error: "Missing inventoryLinkLineNo" });
+        return;
+      }
+      linkLineNo = inventoryLinkLineNo;
+      const linkedLine = normalizedLines.find((l) => l.lineNo === inventoryLinkLineNo);
+      if (!linkedLine) {
+        res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
+        return;
+      }
+      const debitBase = round2(linkedLine.debitBase);
+      const creditBase = round2(linkedLine.creditBase);
+      if (debitBase > 0 && creditBase > 0) {
+        res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
+        return;
+      }
       const receiptDetails = inventoryDetails.filter((d) => d.moveType === "receipt") as Array<{
         moveType: "receipt";
         itemId: string;
@@ -690,10 +692,25 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
         return;
       }
     }
-    if (inventoryMode === "shipment") {
-      const expectedBase = debitBase > 0 ? debitBase : creditBase;
-      if (expectedBase <= 0) {
-        res.status(400).json({ success: false, error: "Inventory shipment linked line amount must be greater than 0" });
+
+    if (requestedMode === "shipment") {
+      linkLineNo = inventoryLinkLineNo ?? null;
+      if (linkLineNo) {
+        const linkedLine = normalizedLines.find((l) => l.lineNo === linkLineNo);
+        if (!linkedLine) {
+          res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
+          return;
+        }
+        const debitBase = round2(linkedLine.debitBase);
+        const creditBase = round2(linkedLine.creditBase);
+        if (debitBase > 0 && creditBase > 0) {
+          res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
+          return;
+        }
+      }
+      const shipmentDetails = inventoryDetails.filter((d) => d.moveType === "shipment");
+      if (!shipmentDetails.length) {
+        res.status(400).json({ success: false, error: "Missing shipment inventoryDetails" });
         return;
       }
     }
@@ -865,8 +882,11 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
         `;
       }
 
-      if (effectiveInventoryImpact && inventoryDetails?.length && linkLineNo) {
+      if (effectiveInventoryImpact && inventoryDetails?.length) {
         if (inventoryMode === "receipt") {
+          if (!linkLineNo) {
+            throw new Error("Missing inventoryLinkLineNo");
+          }
           await insertPostedInventoryReceipts(
             trx,
             orgId,
@@ -883,7 +903,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
           const fx = Number(fxRate);
           let totalBaseAll = 0;
           const linkedCostCenterId =
-            normalizedLines.find((l) => l.lineNo === linkLineNo)?.costCenterId ?? null;
+            linkLineNo ? (normalizedLines.find((l) => l.lineNo === linkLineNo)?.costCenterId ?? null) : null;
           for (const d of inventoryDetails as any[]) {
             const itemId = String(d.itemId);
             const qtyRequested = Number(d.qty);
@@ -1204,33 +1224,33 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       res.status(400).json({ success: false, error: "Missing inventoryDetails" });
       return;
     }
-    if (!inventoryLinkLineNo) {
-      res.status(400).json({ success: false, error: "Missing inventoryLinkLineNo" });
-      return;
-    }
-    linkLineNo = inventoryLinkLineNo;
-
     const detailTypes = Array.from(new Set(inventoryDetails.map((d) => d.moveType)));
     if (detailTypes.length !== 1) {
       res.status(400).json({ success: false, error: "Inventory details must be all receipt or all shipment" });
       return;
     }
 
-    const linkedLine = normalizedLines.find((l) => l.lineNo === inventoryLinkLineNo);
-    if (!linkedLine) {
-      res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
-      return;
-    }
-    const debitBase = round2(linkedLine.debitBase);
-    const creditBase = round2(linkedLine.creditBase);
-    if (debitBase > 0 && creditBase > 0) {
-      res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
-      return;
-    }
-
     const requestedMode = detailTypes[0];
     inventoryMode = requestedMode;
+
     if (requestedMode === "receipt") {
+      if (!inventoryLinkLineNo) {
+        res.status(400).json({ success: false, error: "Missing inventoryLinkLineNo" });
+        return;
+      }
+      linkLineNo = inventoryLinkLineNo;
+      const linkedLine = normalizedLines.find((l) => l.lineNo === inventoryLinkLineNo);
+      if (!linkedLine) {
+        res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
+        return;
+      }
+      const debitBase = round2(linkedLine.debitBase);
+      const creditBase = round2(linkedLine.creditBase);
+      if (debitBase > 0 && creditBase > 0) {
+        res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
+        return;
+      }
+
       const receiptDetails = inventoryDetails.filter((d) => d.moveType === "receipt") as Array<{
         moveType: "receipt";
         itemId: string;
@@ -1246,15 +1266,25 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         return;
       }
     }
+
     if (requestedMode === "shipment") {
+      linkLineNo = inventoryLinkLineNo ?? null;
+      if (linkLineNo) {
+        const linkedLine = normalizedLines.find((l) => l.lineNo === linkLineNo);
+        if (!linkedLine) {
+          res.status(400).json({ success: false, error: "Invalid inventoryLinkLineNo" });
+          return;
+        }
+        const debitBase = round2(linkedLine.debitBase);
+        const creditBase = round2(linkedLine.creditBase);
+        if (debitBase > 0 && creditBase > 0) {
+          res.status(400).json({ success: false, error: "Inventory link line cannot have both debit and credit" });
+          return;
+        }
+      }
       const shipmentDetails = inventoryDetails.filter((d) => d.moveType === "shipment");
       if (!shipmentDetails.length) {
         res.status(400).json({ success: false, error: "Missing shipment inventoryDetails" });
-        return;
-      }
-      const expectedBase = debitBase > 0 ? debitBase : creditBase;
-      if (expectedBase <= 0) {
-        res.status(400).json({ success: false, error: "Inventory shipment linked line amount must be greater than 0" });
         return;
       }
     }

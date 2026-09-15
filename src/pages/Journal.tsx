@@ -133,6 +133,7 @@ export default function Journal() {
   const [assistQuickNewFixedAsset, setAssistQuickNewFixedAsset] = useState<"" | "yes">("");
   const [assistQuickNewFaDismissed, setAssistQuickNewFaDismissed] = useState(false);
   const [assistQuickExistingInventoryItemId, setAssistQuickExistingInventoryItemId] = useState("");
+  const [assistQuickInvQty, setAssistQuickInvQty] = useState("1");
   const [assistQuickNewFaOpen, setAssistQuickNewFaOpen] = useState(false);
   const assistQuickNewFaNoReqRef = useRef(0);
   const [assistQuickNewFaForm, setAssistQuickNewFaForm] = useState({
@@ -273,6 +274,10 @@ export default function Journal() {
       if (assistQuickExistingInventoryItemId) setAssistQuickExistingInventoryItemId("");
     }
 
+    if (assistQuickPurposeKind !== "invSale") {
+      if (assistQuickInvQty !== "1") setAssistQuickInvQty("1");
+    }
+
     if (assistQuickPurposeKind !== "faDisposal") {
       if (assistQuickDisposalAssetId) setAssistQuickDisposalAssetId("");
     }
@@ -286,6 +291,7 @@ export default function Journal() {
     assistQuickNewFaSaved,
     assistQuickNewFaDismissed,
     assistQuickExistingInventoryItemId,
+    assistQuickInvQty,
     assistQuickDisposalAssetId,
     assistQuickPurpose,
     assistQuickNewFaOpen,
@@ -996,7 +1002,14 @@ export default function Journal() {
       })
       .filter(Boolean) as any[];
 
-    const includeInv = invDetailsOut.length > 0;
+    const invSaleQty = Math.trunc(Number(assistQuickInvQty) || 0);
+    const invSaleAutoDetails =
+      assistQuickPurposeKind === "invSale" && assistQuickExistingInventoryItemId && invSaleQty > 0
+        ? [{ moveType: "shipment" as const, itemId: assistQuickExistingInventoryItemId, qty: invSaleQty }]
+        : [];
+    const invOut = invDetailsOut.length ? invDetailsOut : invSaleAutoDetails;
+    const invModeOut = invOut.length ? (invOut[0]?.moveType === "shipment" ? "shipment" : "receipt") : null;
+    const includeInv = invOut.length > 0;
 
     const accountIdToCode = new Map(accounts.map((a) => [a.id, String(a.code).trim()]));
     const accountIdToName = new Map(accounts.map((a) => [a.id, a.name]));
@@ -1009,6 +1022,16 @@ export default function Journal() {
       creditTxn: Math.max(0, Number(x.creditTxn) || 0),
     }));
 
+    const invSaleLabel = (() => {
+      if (assistQuickPurposeKind !== "invSale") return "";
+      if (!assistQuickExistingInventoryItemId) return "";
+      const it = inventoryItemById.get(assistQuickExistingInventoryItemId);
+      if (!it) return "";
+      const qty = Math.trunc(Number(assistQuickInvQty) || 0);
+      const base = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
+      return `${base}${qty > 0 ? ` × ${qty}` : ""}`.trim();
+    })();
+
     const draftLines = assistEditLines.map((x) => ({
       accountId: x.accountId,
       description: x.description || undefined,
@@ -1017,14 +1040,31 @@ export default function Journal() {
       creditTxn: Math.max(0, Number(x.creditTxn) || 0),
     }));
 
+    if (invSaleLabel) {
+      const idx = draftLines.findIndex((l) => (Number(l.creditTxn) || 0) > 0);
+      const target = idx >= 0 ? draftLines[idx] : null;
+      if (target) {
+        const s = String(target.description || "").trim();
+        const tag = tr(`存货：${invSaleLabel}`, `Inventory: ${invSaleLabel}`);
+        target.description = s ? `${s}；${tag}` : tag;
+      }
+    }
+
+    const invLinkLineNo = includeInv
+      ? (() => {
+          const idx = draftLines.findIndex((l) => (Number(l.debitTxn) || 0) > 0 || (Number(l.creditTxn) || 0) > 0);
+          return idx >= 0 ? idx + 1 : 1;
+        })()
+      : undefined;
+
     const editedSuggestion: AssistJournalSuggestion = {
       draft: {
         entryDate: assistEditEntryDate || draftDate,
         currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
         fxRate: Number(assistEditFxRate) || 1,
         memo: assistEditMemo || "",
-        inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
-        inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
+        inventoryLinkLineNo: invLinkLineNo,
+        inventoryDetails: includeInv ? (invOut as any) : undefined,
         lines: draftLines as any,
       },
       preview: {
@@ -1032,13 +1072,17 @@ export default function Journal() {
         currency: (assistEditCurrency || baseCurrency).toUpperCase().slice(0, 3),
         fxRate: Number(assistEditFxRate) || 1,
         memo: assistEditMemo || "",
-        inventoryLinkLineNo: includeInv ? Math.max(1, Math.trunc(Number(assistEditInvLinkLineNo) || 1)) : undefined,
-        inventoryDetails: includeInv ? (invDetailsOut as any) : undefined,
+        inventoryLinkLineNo: invLinkLineNo,
+        inventoryDetails: includeInv ? (invOut as any) : undefined,
         lines: previewLines as any,
       },
       warnings: Array.isArray((assistSuggestion as any).warnings) ? (assistSuggestion as any).warnings : [],
       missing: [],
     };
+
+    if (invModeOut && invModeOut !== assistEditInvMode) {
+      setAssistEditInvMode(invModeOut);
+    }
 
     let fa: any = null;
     if (assistEditFaPurchase && assistEditFaPurchase.category.trim() && assistEditFaPurchase.name.trim()) {
@@ -1390,11 +1434,12 @@ export default function Journal() {
       }
     }
 
-    if (assistQuickPurposeKind === "invSale" && assistQuickExistingInventoryItemId) {
+                    if (assistQuickPurposeKind === "invSale" && assistQuickExistingInventoryItemId) {
       const it = inventoryItems.find((x: any) => String(x.id) === assistQuickExistingInventoryItemId);
       if (it) {
         const label = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
-        quickTextParts.push(tr(`存货：${label}`, `Inventory: ${label}`));
+                        const qty = Math.trunc(Number(assistQuickInvQty) || 0);
+                        quickTextParts.push(tr(`存货：${label}${qty > 0 ? ` × ${qty}` : ""}`, `Inventory: ${label}${qty > 0 ? ` x ${qty}` : ""}`));
       }
     }
 
@@ -1439,6 +1484,8 @@ export default function Journal() {
     const needsInvSaleItem = assistQuickPurposeKind === "invSale";
     const needsFaDisposalAsset = assistQuickPurposeKind === "faDisposal";
     const validInvSaleItem = !!assistQuickExistingInventoryItemId && assistQuickExistingInventoryItemId !== "__new__";
+    const invSaleQty = Math.trunc(Number(assistQuickInvQty) || 0);
+    const validInvSaleQty = !needsInvSaleItem || invSaleQty > 0;
     const canGenerate =
       !readOnly &&
       !busy &&
@@ -1446,11 +1493,12 @@ export default function Journal() {
       !!amt &&
       !!assistQuickPurposeKind &&
       (!needsOtherInfo || !!assistQuickPurpose.trim()) &&
-      (!needsInvSaleItem || validInvSaleItem) &&
+      (!needsInvSaleItem || (validInvSaleItem && validInvSaleQty)) &&
       (!needsFaDisposalAsset || !!assistQuickDisposalAssetId);
 
     const quickMissingFaDisposalAsset = needsFaDisposalAsset && !!assistQuickAction.trim() && !!amt && !assistQuickDisposalAssetId;
     const quickMissingInvSaleItem = needsInvSaleItem && !!assistQuickAction.trim() && !!amt && !validInvSaleItem;
+    const quickMissingInvSaleQty = needsInvSaleItem && !!assistQuickAction.trim() && !!amt && validInvSaleItem && !validInvSaleQty;
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold">
@@ -1746,6 +1794,22 @@ export default function Journal() {
                             </option>
                           ))}
                         </select>
+                      </div>
+                    ) : null}
+
+                    {assistQuickPurposeKind === "invSale" ? (
+                      <div className="md:col-span-2">
+                        <label className="text-xs text-zinc-600">{tr("数量", "Qty")}</label>
+                        <input
+                          className={
+                            "mt-1 w-full rounded-md border px-3 py-2 text-sm " +
+                            (quickMissingInvSaleQty ? "border-red-300" : "border-zinc-200")
+                          }
+                          value={assistQuickInvQty}
+                          onChange={(e) => setAssistQuickInvQty(e.target.value)}
+                          disabled={readOnly || busy}
+                          inputMode="numeric"
+                        />
                       </div>
                     ) : null}
                   </div>
