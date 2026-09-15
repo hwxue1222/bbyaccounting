@@ -109,8 +109,6 @@ export default function Journal() {
   const [err, setErr] = useState<string | null>(null);
 
   const [assistOpen, setAssistOpen] = useState(false);
-  const [assistMode, setAssistMode] = useState<"manual" | "auto">("manual");
-  const [assistText, _setAssistText] = useState("");
   const [assistExtra, setAssistExtra] = useState("");
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistErr, setAssistErr] = useState<string | null>(null);
@@ -167,7 +165,7 @@ export default function Journal() {
   const [assistQuickAmount, setAssistQuickAmount] = useState("");
   const [assistQuickPurpose, setAssistQuickPurpose] = useState("");
   const [assistQuickPurposeKind, setAssistQuickPurposeKind] = useState<
-    "" | "faPurchase" | "faDisposal" | "invPurchase" | "invSale" | "other"
+    "" | "faPurchase" | "faDisposal" | "faDep" | "invPurchase" | "invSale" | "other"
   >("");
   const [assistQuickDisposalAssetId, setAssistQuickDisposalAssetId] = useState("");
   const [assistChatMessages, setAssistChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
@@ -820,36 +818,12 @@ export default function Journal() {
     return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
-  async function runAssistSuggest(overrideText?: string) {
-    const text = (overrideText ?? assistText).trim();
-    if (!text) {
-      setAssistErr(tr("请输入要生成分录的描述。", "Please enter a description."));
-      return;
-    }
-    setAssistBusy(true);
-    setAssistErr(null);
-    setAssistSuggestion(null);
-    try {
-      const r = await api<{ suggestion: AssistJournalSuggestion }>("/api/assist/journal-suggest", {
-        method: "POST",
-        json: { text, memo: draftMemo || undefined, entryDate: draftDate || undefined },
-        timeoutMs: 90_000,
-      });
-      setAssistSuggestion(r.suggestion);
-    } catch (e: any) {
-      setAssistErr(e.message);
-    } finally {
-      setAssistBusy(false);
-    }
-  }
-
   async function startAssistChat(initialText?: string) {
     const welcome = tr(
       "把交易用一句话描述给我。我会追问必要信息，直到分录可确认并填入草稿（不会自动过账）。",
       "Describe the transaction. I'll ask follow-ups until the journal is ready to confirm & fill (won't auto-post).",
     );
 
-    setAssistMode("auto");
     setAssistErr(null);
     setAssistSuggestion(null);
     setAssistExtra("");
@@ -875,39 +849,6 @@ export default function Journal() {
       const hasPreview = Array.isArray((r.suggestion as any)?.preview?.lines) && (r.suggestion as any).preview.lines.length > 0;
       const assistantText = hasPreview
         ? tr("我已生成分录建议，请确认或继续补充细节。", "I generated a journal suggestion. Review below or add more details.")
-        : missing.length
-          ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
-          : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
-      setAssistChatMessages((m) => [...m, { role: "assistant", text: assistantText }]);
-    } catch (e: any) {
-      const msg = e?.message || "Error";
-      setAssistErr(msg);
-      setAssistChatMessages((m) => [...m, { role: "assistant", text: msg }]);
-    } finally {
-      setAssistBusy(false);
-    }
-  }
-
-  async function sendAssistChatTurn(text: string) {
-    const t = text.trim();
-    if (!t || assistBusy) return;
-    setAssistBusy(true);
-    setAssistErr(null);
-    setAssistSuggestion(null);
-    const conversationText = [...assistChatMessages.filter((x) => x.role === "user").map((x) => x.text), t].join("\n");
-    setAssistChatMessages((m) => [...m, { role: "user", text: t }]);
-    try {
-      const r = await api<{ suggestion: AssistJournalSuggestion }>("/api/assist/journal-suggest", {
-        method: "POST",
-        json: { text: conversationText, memo: draftMemo || undefined, entryDate: draftDate || undefined },
-        timeoutMs: 90_000,
-      });
-      setAssistSuggestion(r.suggestion);
-
-      const missing = Array.isArray((r.suggestion as any)?.missing) ? (r.suggestion as any).missing : [];
-      const hasPreview = Array.isArray((r.suggestion as any)?.preview?.lines) && (r.suggestion as any).preview.lines.length > 0;
-      const assistantText = hasPreview
-        ? tr("我已更新分录建议，请确认或继续补充。", "Updated the suggestion. Review below or add more details.")
         : missing.length
           ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
           : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
@@ -1556,6 +1497,8 @@ export default function Journal() {
         const label = `${fa.assetNo ? `${fa.assetNo} ` : ""}${fa.name}`.trim();
         quickTextParts.push(tr(`固定资产：${label}`, `Fixed asset: ${label}`));
       }
+    } else if (assistQuickPurposeKind === "faDep") {
+      quickTextParts.push(tr("用途：折旧", "Purpose: Depreciation"));
     } else if (assistQuickPurposeKind === "invPurchase") {
       quickTextParts.push(tr("购买存货", "Buy inventory"));
     } else if (assistQuickPurposeKind === "invSale") {
@@ -1634,6 +1577,7 @@ export default function Journal() {
     }
     const quickText = quickTextParts.join("，");
 
+    const isFaDep = assistQuickPurposeKind === "faDep";
     const needsOtherInfo = assistQuickPurposeKind === "other";
     const needsInvSaleItem = assistQuickPurposeKind === "invSale";
     const needsFaDisposalAsset = assistQuickPurposeKind === "faDisposal";
@@ -1643,9 +1587,8 @@ export default function Journal() {
     const canGenerate =
       !readOnly &&
       !busy &&
-      !!assistQuickAction.trim() &&
-      !!amt &&
       !!assistQuickPurposeKind &&
+      (isFaDep || (!!assistQuickAction.trim() && !!amt)) &&
       (!needsOtherInfo || !!assistQuickPurpose.trim()) &&
       (!needsInvSaleItem || (validInvSaleItem && validInvSaleQty)) &&
       (!needsFaDisposalAsset || !!assistQuickDisposalAssetId);
@@ -1829,6 +1772,7 @@ export default function Journal() {
                         </option>
                         <option value="faPurchase">{tr("购买固定资产", "Buy fixed asset")}</option>
                         <option value="faDisposal">{tr("处置固定资产", "Dispose fixed asset")}</option>
+                        <option value="faDep">{tr("折旧", "Depreciation")}</option>
                         <option value="invPurchase">{tr("购买存货", "Buy inventory")}</option>
                         <option value="invSale">{tr("出售存货", "Sell inventory")}</option>
                         <option value="other">{tr("其他", "Other")}</option>
@@ -2018,7 +1962,6 @@ export default function Journal() {
                     setAssistDisposalAssetId("");
                     setAssistExtra("");
                     setAssistSuggestion(null);
-                    _setAssistText("");
                     setAssistChatMessages([]);
                     setAssistErr(null);
                     setAssistOpen(false);
@@ -2882,17 +2825,17 @@ export default function Journal() {
                             {assistDisposalErr ? <div className="text-sm text-red-700">{assistDisposalErr}</div> : null}
                             <div className="text-xs text-amber-900/70">
                               {tr(
-                                "选择后会自动把“原值/累计折旧”填到下面输入框，你直接点“补充并继续”。",
-                                "After selecting, cost/accum dep will be filled below; then click Continue.",
+                                "选择后会自动把“原值/累计折旧”填到下面输入框。",
+                                "After selecting, cost/accum dep will be filled below.",
                               )}
                             </div>
                           </div>
                         </div>
                       ) : null}
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <div className="text-xs text-amber-900/70">{tr("请补充必要信息后继续生成：", "Add missing info and continue:")}</div>
+                      <div className="mt-2">
+                        <div className="text-xs text-amber-900/70">{tr("补充信息（可选）：", "Extra info (optional):")}</div>
                         <input
-                          className="w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                          className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
                           value={assistExtra}
                           onChange={(e) => setAssistExtra(e.target.value)}
                           placeholder={tr(
@@ -2901,72 +2844,7 @@ export default function Journal() {
                           )}
                           disabled={assistBusy || assistDisposalBusy}
                         />
-                        <button
-                          className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
-                          disabled={assistBusy || assistDisposalBusy || !assistExtra.trim()}
-                          onClick={() => {
-                            const extra = assistExtra.trim();
-                            setAssistExtra("");
-                            void sendAssistChatTurn(extra);
-                          }}
-                          type="button"
-                        >
-                          {tr("补充并继续", "Continue")}
-                        </button>
-                        <button
-                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
-                          onClick={() => navigate("/settings")}
-                          type="button"
-                        >
-                          {tr("去设置科目", "Go to settings")}
-                        </button>
-                        <button
-                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
-                          onClick={() => navigate("/fixed-assets")}
-                          type="button"
-                        >
-                          {tr("去新增固定资产", "Add fixed asset")}
-                        </button>
-                        <button
-                          className="rounded-md border border-amber-200 bg-white px-3 py-1.5 text-sm hover:bg-amber-100"
-                          onClick={() => navigate("/inventory")}
-                          type="button"
-                        >
-                          {tr("去新增库存商品", "Add inventory item")}
-                        </button>
                       </div>
-                      {assistMode === "manual" ? (
-                        <>
-                          <div className="mt-3">
-                            <label className="text-xs text-zinc-700">{tr("补充信息（可选）", "Extra info (optional)")}</label>
-                            <textarea
-                              className="mt-1 h-20 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
-                              value={assistExtra}
-                              onChange={(e) => setAssistExtra(e.target.value)}
-                              placeholder={tr(
-                                "例如：付款方式/供应商/是否含税/用途/借款或资本等。",
-                                "E.g., payment method/vendor/tax included/purpose/loan or capital.",
-                              )}
-                            />
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <button
-                              className="rounded-md bg-amber-700 px-3 py-2 text-sm text-white hover:bg-amber-800 disabled:opacity-50"
-                              disabled={assistBusy || !assistText.trim() || !assistExtra.trim()}
-                              onClick={() => {
-                                const merged = `${assistText.trim()}\n\n补充信息：${assistExtra.trim()}`;
-                                void runAssistSuggest(merged);
-                              }}
-                              type="button"
-                            >
-                              {tr("补充并重新生成", "Regenerate")}
-                            </button>
-                            <div className="text-xs text-amber-900/70">
-                              {tr("仅用于生成建议，不会自动过账。", "Used for suggestion only; won't auto-post.")}
-                            </div>
-                          </div>
-                        </>
-                      ) : null}
                     </div>
                   ) : null}
                   {assistSuggestion.warnings?.length ? (
