@@ -187,6 +187,8 @@ export default function Journal() {
     usefulLifeMonths: string;
     salvageBase: string;
   }>(null);
+  const [assistEditFaDisposalCostLineIdx, setAssistEditFaDisposalCostLineIdx] = useState<number | null>(null);
+  const [assistEditFaDisposalAccumLineIdx, setAssistEditFaDisposalAccumLineIdx] = useState<number | null>(null);
 
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
@@ -873,6 +875,11 @@ export default function Journal() {
         usefulLifeMonths: number;
         salvageBase: number;
       } | null;
+      faDisposal?: {
+        assetId: string;
+        costLineIdx: number;
+        accumLineIdx: number;
+      } | null;
     },
   ) {
     setErr(null);
@@ -893,7 +900,17 @@ export default function Journal() {
         };
       }),
     );
-    setFixedAssetIdByLineIdx({});
+    const fixedIds: Record<number, string> = {};
+    if (opts?.faDisposal && Number.isFinite(opts.faDisposal.costLineIdx) && Number.isFinite(opts.faDisposal.accumLineIdx)) {
+      fixedIds[opts.faDisposal.costLineIdx] = opts.faDisposal.assetId;
+      fixedIds[opts.faDisposal.accumLineIdx] = opts.faDisposal.assetId;
+      setFaDisposeCostLineIdx(opts.faDisposal.costLineIdx);
+      setFaDisposeAccumLineIdx(opts.faDisposal.accumLineIdx);
+    } else {
+      setFaDisposeCostLineIdx(null);
+      setFaDisposeAccumLineIdx(null);
+    }
+    setFixedAssetIdByLineIdx(fixedIds);
     if (opts?.faPurchase && Number.isFinite(opts.faPurchase.lineIdx) && opts.faPurchase.lineIdx >= 0) {
       setFaPurchaseByLineIdx({
         [opts.faPurchase.lineIdx]: {
@@ -910,8 +927,7 @@ export default function Journal() {
       setFaPurchaseByLineIdx({});
     }
     setFaPurchaseLineIdx(null);
-    setFaDisposeCostLineIdx(null);
-    setFaDisposeAccumLineIdx(null);
+    // setFaDisposeCostLineIdx / setFaDisposeAccumLineIdx handled above
 
     const inv = s.draft.inventoryDetails;
     const link = Number(s.draft.inventoryLinkLineNo);
@@ -957,6 +973,8 @@ export default function Journal() {
     setAssistDisposalAssetId("");
     setAssistDisposalErr(null);
     setAssistEditFaInfo(null);
+    setAssistEditFaDisposalCostLineIdx(null);
+    setAssistEditFaDisposalAccumLineIdx(null);
   }
 
   function closeAssist() {
@@ -969,6 +987,8 @@ export default function Journal() {
     setAssistDisposalAssetId("");
     setAssistDisposalErr(null);
     setAssistEditFaInfo(null);
+    setAssistEditFaDisposalCostLineIdx(null);
+    setAssistEditFaDisposalAccumLineIdx(null);
   }
 
   function confirmAssistFill() {
@@ -1101,7 +1121,20 @@ export default function Journal() {
       }
     }
 
-    applyAssistSuggestion(editedSuggestion, { faPurchase: fa });
+    let disposal: any = null;
+    if (assistDisposalAssetId && assistEditFaDisposalCostLineIdx != null && assistEditFaDisposalAccumLineIdx != null) {
+      if (assistEditFaDisposalCostLineIdx === assistEditFaDisposalAccumLineIdx) {
+        setAssistErr(tr("处置需要同时选择成本行与累计折旧行（且不能是同一行）。", "Disposal requires both cost and accum dep lines (must be different)."));
+        return;
+      }
+      disposal = {
+        assetId: assistDisposalAssetId,
+        costLineIdx: assistEditFaDisposalCostLineIdx,
+        accumLineIdx: assistEditFaDisposalAccumLineIdx,
+      };
+    }
+
+    applyAssistSuggestion(editedSuggestion, { faPurchase: fa, faDisposal: disposal });
     closeAssist();
   }
 
@@ -1117,6 +1150,8 @@ export default function Journal() {
       setAssistEditInvLinkLineNo(1);
       setAssistEditInvDetails([]);
       setAssistEditFaPurchase(null);
+      setAssistEditFaDisposalCostLineIdx(null);
+      setAssistEditFaDisposalAccumLineIdx(null);
       return;
     }
 
@@ -1159,23 +1194,57 @@ export default function Journal() {
           .filter(Boolean) as any,
       );
     } else {
-      setAssistEditInvMode("receipt");
-      setAssistEditInvLinkLineNo(1);
-      setAssistEditInvDetails([]);
+      const invSaleQty = Math.trunc(Number(assistQuickInvQty) || 0);
+      if (assistQuickPurposeKind === "invSale") {
+        setAssistEditInvMode("shipment");
+        setAssistEditInvLinkLineNo(1);
+        if (assistQuickExistingInventoryItemId && invSaleQty > 0) {
+          setAssistEditInvDetails([{ rowId: newRowId(), itemId: assistQuickExistingInventoryItemId, qty: String(invSaleQty), unitCostTxn: "" }]);
+        } else {
+          setAssistEditInvDetails([]);
+        }
+      } else if (assistQuickPurposeKind === "invPurchase") {
+        setAssistEditInvMode("receipt");
+        setAssistEditInvLinkLineNo(1);
+        if (assistQuickExistingInventoryItemId && assistQuickExistingInventoryItemId !== "__new__") {
+          setAssistEditInvDetails([{ rowId: newRowId(), itemId: assistQuickExistingInventoryItemId, qty: "1", unitCostTxn: "" }]);
+        } else {
+          setAssistEditInvDetails([]);
+        }
+      } else {
+        setAssistEditInvMode("receipt");
+        setAssistEditInvLinkLineNo(1);
+        setAssistEditInvDetails([]);
+      }
     }
 
-    if (!assistNeedsFaDisposalInfo) {
+    const accById = new Map(accounts.map((a) => [a.id, a] as const));
+
+    if (!assistNeedsFaDisposalInfo && assistQuickPurposeKind !== "faDisposal") {
       setAssistDisposalAssetId("");
       setAssistDisposalErr(null);
       setAssistEditFaInfo(null);
     }
 
-    if (assistNeedsFaDisposalInfo || assistDisposalAssetId) {
+    if (assistQuickPurposeKind === "faDisposal" || assistNeedsFaDisposalInfo || assistDisposalAssetId) {
+      const costIdx = d.lines.findIndex((l) => {
+        const acc = accById.get(String((l as any).accountId || "")) as any;
+        const code = acc?.code ? String(acc.code) : "";
+        const credit = Number((l as any).creditTxn) || 0;
+        return credit > 0 && code.startsWith("16") && !code.startsWith("161");
+      });
+      const accumIdx = d.lines.findIndex((l) => {
+        const acc = accById.get(String((l as any).accountId || "")) as any;
+        const code = acc?.code ? String(acc.code) : "";
+        const credit = Number((l as any).creditTxn) || 0;
+        return credit > 0 && code.startsWith("161");
+      });
+      if (assistEditFaDisposalCostLineIdx == null) setAssistEditFaDisposalCostLineIdx(costIdx >= 0 ? costIdx : null);
+      if (assistEditFaDisposalAccumLineIdx == null) setAssistEditFaDisposalAccumLineIdx(accumIdx >= 0 ? accumIdx : null);
       setAssistEditFaPurchase(null);
       return;
     }
 
-    const accById = new Map(accounts.map((a) => [a.id, a] as const));
     const fixedIdx = d.lines.findIndex((l) => {
       const acc = accById.get(String((l as any).accountId || ""));
       if (!acc || !(acc as any).linkFixedAssets) return false;
@@ -1197,7 +1266,22 @@ export default function Journal() {
     } else {
       setAssistEditFaPurchase(null);
     }
-  }, [assistSuggestion, accounts, baseCurrency, draftDate, assistQuickNewFixedAsset, assistQuickNewFaSaved, tr, assistNeedsFaDisposalInfo, assistDisposalAssetId]);
+  }, [
+    assistSuggestion,
+    accounts,
+    baseCurrency,
+    draftDate,
+    assistQuickNewFixedAsset,
+    assistQuickNewFaSaved,
+    tr,
+    assistNeedsFaDisposalInfo,
+    assistDisposalAssetId,
+    assistQuickPurposeKind,
+    assistQuickExistingInventoryItemId,
+    assistQuickInvQty,
+    assistEditFaDisposalCostLineIdx,
+    assistEditFaDisposalAccumLineIdx,
+  ]);
 
   function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
     const line = draftLines[lineIdx];
@@ -2966,7 +3050,7 @@ export default function Journal() {
                           const acc = accountById.get(x.accountId);
                           return Boolean((acc as any)?.linkInventoryFifo);
                         });
-                        const show = needsInv || assistEditInvDetails.length > 0;
+                        const show = needsInv || assistEditInvDetails.length > 0 || assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale";
                         if (!show) return null;
                         return (
                           <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
@@ -3095,23 +3179,113 @@ export default function Journal() {
                       })()}
 
                       {(() => {
+                        const show = assistQuickPurposeKind === "faDisposal" || assistNeedsFaDisposalInfo || !!assistDisposalAssetId;
+                        if (!show) return null;
+                        return (
+                          <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
+                            <div className="text-sm font-semibold">{tr("处置（选择资产）", "Disposal")}</div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-12">
+                              <div className="md:col-span-6">
+                                <label className="text-xs text-zinc-600">{tr("处置资产", "Asset")}</label>
+                                <select
+                                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                                  value={assistDisposalAssetId}
+                                  onChange={(e) => setAssistDisposalAssetId(e.target.value)}
+                                  onFocus={() => {
+                                    if (!fixedAssets.length) {
+                                      refreshFixedAssets(pageAbortRef.current?.signal).catch(() => null);
+                                    }
+                                  }}
+                                  disabled={assistBusy || assistDisposalBusy}
+                                >
+                                  <option value="">{tr("请选择", "Select")}</option>
+                                  {fixedAssets
+                                    .filter((a) => a.status !== "disposed")
+                                    .map((a) => {
+                                      const label = `${a.assetNo ? a.assetNo + " " : ""}${a.name}`.trim();
+                                      return (
+                                        <option key={a.id} value={a.id}>
+                                          {label || a.id}
+                                        </option>
+                                      );
+                                    })}
+                                </select>
+                              </div>
+                              <div className="md:col-span-3">
+                                <label className="text-xs text-zinc-600">{tr("成本行", "Cost line")}</label>
+                                <select
+                                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                                  value={assistEditFaDisposalCostLineIdx == null ? "" : String(assistEditFaDisposalCostLineIdx)}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setAssistEditFaDisposalCostLineIdx(v ? Number(v) : null);
+                                  }}
+                                >
+                                  <option value="">{tr("请选择", "Select")}</option>
+                                  {assistEditLines.map((l, idx) => {
+                                    const a = accountById.get(l.accountId) as any;
+                                    const label = `${idx + 1}. ${a ? `${a.code} ${a.name}` : tr("未选科目", "No account")}`;
+                                    return (
+                                      <option key={idx} value={String(idx)}>
+                                        {label}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
+                              <div className="md:col-span-3">
+                                <label className="text-xs text-zinc-600">{tr("累计折旧行", "Accum dep line")}</label>
+                                <select
+                                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                                  value={assistEditFaDisposalAccumLineIdx == null ? "" : String(assistEditFaDisposalAccumLineIdx)}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setAssistEditFaDisposalAccumLineIdx(v ? Number(v) : null);
+                                  }}
+                                >
+                                  <option value="">{tr("请选择", "Select")}</option>
+                                  {assistEditLines.map((l, idx) => {
+                                    const a = accountById.get(l.accountId) as any;
+                                    const label = `${idx + 1}. ${a ? `${a.code} ${a.name}` : tr("未选科目", "No account")}`;
+                                    return (
+                                      <option key={idx} value={String(idx)}>
+                                        {label}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
+                            </div>
+                            {assistDisposalErr ? <div className="mt-2 text-sm text-red-700">{assistDisposalErr}</div> : null}
+                          </div>
+                        );
+                      })()}
+
+                      {(() => {
                         const faInfo = assistDisposalAssetId ? assistEditFaInfo : assistEditFaPurchase || assistEditFaInfo;
-                        if (!faInfo) return null;
+                        const show = !!faInfo || assistQuickPurposeKind === "faPurchase";
+                        if (!show) return null;
                         const isPurchase = Boolean(assistEditFaPurchase);
                         return (
                         <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
                           <div className="text-sm font-semibold">{tr("固定资产信息（可选）", "Fixed asset info (optional)")}</div>
+                          {!faInfo ? (
+                            <div className="mt-2 text-sm text-zinc-600">
+                              {tr("请先在分录行里选择固定资产科目（例如 16xx），再填写资产信息。", "Select a fixed-asset account (e.g. 16xx) in a line first, then fill the asset info.")}
+                            </div>
+                          ) : null}
                           <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <div>
                               <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
                               <select
                                 className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
-                                value={faInfo.category}
+                                value={faInfo?.category || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, category: v } : p));
                                   else setAssistEditFaInfo((p) => (p ? { ...p, category: v } : p));
                                 }}
+                                disabled={!faInfo}
                               >
                                 <option value="">{tr("请选择", "Select")}</option>
                                 <option value="Machinery and Equipment">Machinery and Equipment</option>
@@ -3126,43 +3300,46 @@ export default function Journal() {
                               <label className="text-xs text-zinc-600">{tr("编号（可选）", "Asset no (optional)")}</label>
                               <input
                                 className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                                value={faInfo.assetNo}
+                                value={faInfo?.assetNo || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, assetNo: v } : p));
                                   else setAssistEditFaInfo((p) => (p ? { ...p, assetNo: v } : p));
                                 }}
+                                disabled={!faInfo}
                               />
                             </div>
                             <div className="md:col-span-2">
                               <label className="text-xs text-zinc-600">{tr("资产名称", "Name")}</label>
                               <input
                                 className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                                value={faInfo.name}
+                                value={faInfo?.name || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, name: v } : p));
                                   else setAssistEditFaInfo((p) => (p ? { ...p, name: v } : p));
                                 }}
+                                disabled={!faInfo}
                               />
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("购置日", "Acquisition date")}</label>
                               <input
                                 className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                                value={faInfo.acquisitionDate}
+                                value={faInfo?.acquisitionDate || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, acquisitionDate: v } : p));
                                   else setAssistEditFaInfo((p) => (p ? { ...p, acquisitionDate: v } : p));
                                 }}
+                                disabled={!faInfo}
                               />
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("使用年限（月）", "Useful life (months)")}</label>
                               <input
                                 className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                                value={faInfo.usefulLifeMonths}
+                                value={faInfo?.usefulLifeMonths || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, usefulLifeMonths: v } : p));
@@ -3170,13 +3347,14 @@ export default function Journal() {
                                 }}
                                 type="number"
                                 step="1"
+                                disabled={!faInfo}
                               />
                             </div>
                             <div>
                               <label className="text-xs text-zinc-600">{tr("残值（本位）", "Salvage (base)")}</label>
                               <input
                                 className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                                value={faInfo.salvageBase}
+                                value={faInfo?.salvageBase || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
                                   if (isPurchase) setAssistEditFaPurchase((p) => (p ? { ...p, salvageBase: v } : p));
@@ -3184,6 +3362,7 @@ export default function Journal() {
                                 }}
                                 type="number"
                                 step="0.01"
+                                disabled={!faInfo}
                               />
                             </div>
                           </div>
