@@ -1366,7 +1366,7 @@ export default function Journal() {
       }
     }
 
-    if (assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale") {
+    if (assistQuickPurposeKind === "invPurchase") {
       if (assistQuickExistingInventoryItemId === "__new__") {
         quickTextParts.push(tr("新增存货", "New inventory item"));
       } else if (assistQuickExistingInventoryItemId) {
@@ -1375,6 +1375,14 @@ export default function Journal() {
           const label = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
           quickTextParts.push(tr(`现有存货：${label}`, `Existing inventory: ${label}`));
         }
+      }
+    }
+
+    if (assistQuickPurposeKind === "invSale" && assistQuickExistingInventoryItemId) {
+      const it = inventoryItems.find((x: any) => String(x.id) === assistQuickExistingInventoryItemId);
+      if (it) {
+        const label = `${it.sku ? `${it.sku} ` : ""}${it.name}`.trim();
+        quickTextParts.push(tr(`存货：${label}`, `Inventory: ${label}`));
       }
     }
 
@@ -1416,13 +1424,21 @@ export default function Journal() {
     const quickText = quickTextParts.join("，");
 
     const needsOtherInfo = assistQuickPurposeKind === "other";
+    const needsInvSaleItem = assistQuickPurposeKind === "invSale";
+    const needsFaDisposalAsset = assistQuickPurposeKind === "faDisposal";
+    const validInvSaleItem = !!assistQuickExistingInventoryItemId && assistQuickExistingInventoryItemId !== "__new__";
     const canGenerate =
       !readOnly &&
       !busy &&
       !!assistQuickAction.trim() &&
       !!amt &&
       !!assistQuickPurposeKind &&
-      (!needsOtherInfo || !!assistQuickPurpose.trim());
+      (!needsOtherInfo || !!assistQuickPurpose.trim()) &&
+      (!needsInvSaleItem || validInvSaleItem) &&
+      (!needsFaDisposalAsset || !!assistQuickDisposalAssetId);
+
+    const quickMissingFaDisposalAsset = needsFaDisposalAsset && !!assistQuickAction.trim() && !!amt && !assistQuickDisposalAssetId;
+    const quickMissingInvSaleItem = needsInvSaleItem && !!assistQuickAction.trim() && !!amt && !validInvSaleItem;
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold">
@@ -1655,7 +1671,10 @@ export default function Journal() {
                     {assistQuickPurposeKind === "faDisposal" ? (
                       <div className="md:col-span-5">
                         <select
-                          className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                          className={
+                            "w-full rounded-md border bg-white px-3 py-2 text-sm " +
+                            (quickMissingFaDisposalAsset ? "border-red-300" : "border-zinc-200")
+                          }
                           value={assistQuickDisposalAssetId}
                           onChange={(e) => setAssistQuickDisposalAssetId(e.target.value)}
                           onFocus={() => {
@@ -1682,12 +1701,15 @@ export default function Journal() {
                     {assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale" ? (
                       <div className="md:col-span-5">
                         <select
-                          className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                          className={
+                            "w-full rounded-md border bg-white px-3 py-2 text-sm " +
+                            (quickMissingInvSaleItem ? "border-red-300" : "border-zinc-200")
+                          }
                           value={assistQuickExistingInventoryItemId}
                           onChange={(e) => {
                             const v = e.target.value;
                             setAssistQuickExistingInventoryItemId(v);
-                            if (v === "__new__") {
+                            if (assistQuickPurposeKind === "invPurchase" && v === "__new__") {
                               setAssistQuickNewInvErr(null);
                               setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
                               setAssistQuickNewInvOpen(true);
@@ -1701,9 +1723,11 @@ export default function Journal() {
                           disabled={readOnly || busy}
                         >
                           <option value="" disabled>
-                            {tr("请选择存货（可选）", "Select inventory (optional)")}
+                            {assistQuickPurposeKind === "invSale"
+                              ? tr("请选择存货", "Select inventory")
+                              : tr("请选择存货（可选）", "Select inventory (optional)")}
                           </option>
-                          <option value="__new__">{tr("新增", "New")}</option>
+                          {assistQuickPurposeKind === "invPurchase" ? <option value="__new__">{tr("新增", "New")}</option> : null}
                           {inventoryItemsSorted.map((it: any) => (
                             <option key={String(it.id)} value={String(it.id)}>
                               {it.sku ? `${it.sku} ` : ""}{it.name}
