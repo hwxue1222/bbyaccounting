@@ -131,6 +131,7 @@ export default function Journal() {
   const [assistQuickPayMethod, setAssistQuickPayMethod] = useState("");
   const [assistQuickAction, setAssistQuickAction] = useState("");
   const [assistQuickNewFixedAsset, setAssistQuickNewFixedAsset] = useState<"" | "yes">("");
+  const [assistQuickNewFaDismissed, setAssistQuickNewFaDismissed] = useState(false);
   const [assistQuickExistingInventoryItemId, setAssistQuickExistingInventoryItemId] = useState("");
   const [assistQuickNewFaOpen, setAssistQuickNewFaOpen] = useState(false);
   const assistQuickNewFaNoReqRef = useRef(0);
@@ -221,10 +222,11 @@ export default function Journal() {
 
   const inventoryItemById = useMemo(() => new Map(inventoryItems.map((it) => [it.id, it] as const)), [inventoryItems]);
 
-  const quickNeedsNewFixedAsset = assistQuickPurposeKind === "faPurchase";
+  const quickNeedsNewFixedAsset = assistQuickPurposeKind === "faPurchase" && assistQuickNewFixedAsset === "yes";
   const quickMissingNewFixedAsset = quickNeedsNewFixedAsset && !assistQuickNewFaSaved?.name?.trim();
 
   const triggerQuickNewFixedAsset = useCallback(() => {
+    setAssistQuickNewFaDismissed(false);
     setAssistQuickNewFixedAsset("yes");
     setAssistQuickNewFaForm({
       category: "",
@@ -250,13 +252,21 @@ export default function Journal() {
 
   useEffect(() => {
     if (assistQuickPurposeKind === "faPurchase") {
-      setAssistQuickNewFixedAsset("yes");
-      if (!assistQuickNewFaSaved?.name?.trim()) {
-        triggerQuickNewFixedAsset();
+      if (assistQuickNewFaDismissed) {
+        if (assistQuickNewFixedAsset) setAssistQuickNewFixedAsset("");
+        if (assistQuickNewFaSaved) setAssistQuickNewFaSaved(null);
+        if (assistQuickNewFaOpen) setAssistQuickNewFaOpen(false);
+      } else {
+        setAssistQuickNewFixedAsset("yes");
+        if (!assistQuickNewFaOpen && !assistQuickNewFaSaved?.name?.trim()) {
+          triggerQuickNewFixedAsset();
+        }
       }
     } else {
       if (assistQuickNewFixedAsset) setAssistQuickNewFixedAsset("");
       if (assistQuickNewFaSaved) setAssistQuickNewFaSaved(null);
+      if (assistQuickNewFaDismissed) setAssistQuickNewFaDismissed(false);
+      if (assistQuickNewFaOpen) setAssistQuickNewFaOpen(false);
     }
 
     if (assistQuickPurposeKind !== "invPurchase" && assistQuickPurposeKind !== "invSale") {
@@ -274,9 +284,11 @@ export default function Journal() {
     assistQuickPurposeKind,
     assistQuickNewFixedAsset,
     assistQuickNewFaSaved,
+    assistQuickNewFaDismissed,
     assistQuickExistingInventoryItemId,
     assistQuickDisposalAssetId,
     assistQuickPurpose,
+    assistQuickNewFaOpen,
     triggerQuickNewFixedAsset,
   ]);
 
@@ -3148,8 +3160,10 @@ export default function Journal() {
             className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4"
             onMouseDown={() => {
               setAssistQuickNewFaOpen(false);
-              if (!assistQuickNewFaSaved) {
+              if (!assistQuickNewFaSaved?.name?.trim()) {
+                setAssistQuickNewFaDismissed(true);
                 setAssistQuickNewFixedAsset("");
+                setAssistQuickNewFaSaved(null);
               }
             }}
           >
@@ -3165,8 +3179,10 @@ export default function Journal() {
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                   onClick={() => {
                     setAssistQuickNewFaOpen(false);
-                    if (!assistQuickNewFaSaved) {
+                    if (!assistQuickNewFaSaved?.name?.trim()) {
+                      setAssistQuickNewFaDismissed(true);
                       setAssistQuickNewFixedAsset("");
+                      setAssistQuickNewFaSaved(null);
                     }
                   }}
                   type="button"
@@ -3279,8 +3295,10 @@ export default function Journal() {
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
                   onClick={() => {
                     setAssistQuickNewFaOpen(false);
-                    if (!assistQuickNewFaSaved) {
+                    if (!assistQuickNewFaSaved?.name?.trim()) {
+                      setAssistQuickNewFaDismissed(true);
                       setAssistQuickNewFixedAsset("");
+                      setAssistQuickNewFaSaved(null);
                     }
                   }}
                   type="button"
