@@ -190,6 +190,17 @@ export default function Journal() {
   const [assistEditFaDisposalCostLineIdx, setAssistEditFaDisposalCostLineIdx] = useState<number | null>(null);
   const [assistEditFaDisposalAccumLineIdx, setAssistEditFaDisposalAccumLineIdx] = useState<number | null>(null);
 
+  const inferQtyFromAction = useCallback((text: string) => {
+    const t = String(text || "").trim();
+    if (!t) return null;
+    const m1 = /(?:买|卖|购买|出售)\s*(\d{1,6})\s*(?:把|件|个|pcs?|pc|x)?/i.exec(t);
+    const raw = m1?.[1] || /\b(\d{1,6})\s*(?:把|件|个|pcs?|pc)\b/i.exec(t)?.[1] || null;
+    if (!raw) return null;
+    const n = Math.trunc(Number(raw) || 0);
+    if (!(n > 0) || n > 100000) return null;
+    return n;
+  }, []);
+
   const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
   const baseCurrency = useMemo(() => {
     const active = orgs.find((o) => o.orgId === activeOrgId);
@@ -1194,12 +1205,14 @@ export default function Journal() {
           .filter(Boolean) as any,
       );
     } else {
+      const inferredQty = inferQtyFromAction(assistQuickAction) || null;
       const invSaleQty = Math.trunc(Number(assistQuickInvQty) || 0);
       if (assistQuickPurposeKind === "invSale") {
         setAssistEditInvMode("shipment");
         setAssistEditInvLinkLineNo(1);
-        if (assistQuickExistingInventoryItemId && invSaleQty > 0) {
-          setAssistEditInvDetails([{ rowId: newRowId(), itemId: assistQuickExistingInventoryItemId, qty: String(invSaleQty), unitCostTxn: "" }]);
+        const qty = inferredQty || invSaleQty;
+        if (assistQuickExistingInventoryItemId && qty > 0) {
+          setAssistEditInvDetails([{ rowId: newRowId(), itemId: assistQuickExistingInventoryItemId, qty: String(qty), unitCostTxn: "" }]);
         } else {
           setAssistEditInvDetails([]);
         }
@@ -1207,7 +1220,18 @@ export default function Journal() {
         setAssistEditInvMode("receipt");
         setAssistEditInvLinkLineNo(1);
         if (assistQuickExistingInventoryItemId && assistQuickExistingInventoryItemId !== "__new__") {
-          setAssistEditInvDetails([{ rowId: newRowId(), itemId: assistQuickExistingInventoryItemId, qty: "1", unitCostTxn: "" }]);
+          const qty = inferredQty || 1;
+          const amountLine = (d.lines || []).find((l: any) => (Number(l?.debitTxn) || 0) > 0 || (Number(l?.creditTxn) || 0) > 0) as any;
+          const totalTxn = amountLine ? (Number(amountLine.debitTxn) || 0) + (Number(amountLine.creditTxn) || 0) : 0;
+          const unit = qty > 0 && totalTxn > 0 ? Math.round((totalTxn / qty) * 100) / 100 : 0;
+          setAssistEditInvDetails([
+            {
+              rowId: newRowId(),
+              itemId: assistQuickExistingInventoryItemId,
+              qty: String(qty),
+              unitCostTxn: unit > 0 ? unit.toFixed(2) : "",
+            },
+          ]);
         } else {
           setAssistEditInvDetails([]);
         }
@@ -1278,7 +1302,9 @@ export default function Journal() {
     assistDisposalAssetId,
     assistQuickPurposeKind,
     assistQuickExistingInventoryItemId,
+    assistQuickAction,
     assistQuickInvQty,
+    inferQtyFromAction,
     assistEditFaDisposalCostLineIdx,
     assistEditFaDisposalAccumLineIdx,
   ]);
@@ -3134,7 +3160,23 @@ export default function Journal() {
                                         <input
                                           className="w-28 rounded-md border border-zinc-200 px-2 py-1.5 text-sm text-right"
                                           value={d.qty}
-                                          onChange={(e) => setAssistEditInvDetails((prev) => prev.map((x) => (x.rowId === d.rowId ? { ...x, qty: e.target.value } : x)))}
+                                          onChange={(e) => {
+                                            const nextQty = e.target.value;
+                                            setAssistEditInvDetails((prev) => {
+                                              const updated = prev.map((x) => (x.rowId === d.rowId ? { ...x, qty: nextQty } : x));
+                                              if (assistEditInvMode !== "receipt") return updated;
+                                              if (updated.length !== 1) return updated;
+                                              const q = Math.trunc(Number(nextQty) || 0);
+                                              if (!(q > 0)) return updated;
+                                              const idx = Math.max(0, Math.min(updated.length - 1, (assistEditInvLinkLineNo || 1) - 1));
+                                              const l = assistEditLines[idx];
+                                              const totalTxn = (Number(l?.debitTxn) || 0) + (Number(l?.creditTxn) || 0);
+                                              if (!(totalTxn > 0)) return updated;
+                                              const unit = Math.round((totalTxn / q) * 100) / 100;
+                                              if (!(unit > 0)) return updated;
+                                              return updated.map((x) => (x.rowId === d.rowId && !String(x.unitCostTxn || "").trim() ? { ...x, unitCostTxn: unit.toFixed(2) } : x));
+                                            });
+                                          }}
                                           inputMode="numeric"
                                         />
                                       </td>
