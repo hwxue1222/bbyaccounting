@@ -118,6 +118,9 @@ export default function Journal() {
   const [assistDisposalAssetId, setAssistDisposalAssetId] = useState("");
   const [assistDisposalBusy, setAssistDisposalBusy] = useState(false);
   const [assistDisposalErr, setAssistDisposalErr] = useState<string | null>(null);
+  const [assistShowDisposalPicker, setAssistShowDisposalPicker] = useState(false);
+  const assistDisposalSnapKeyRef = useRef<string>("");
+  const fixedAssetsRef = useRef<any[]>([]);
   const [assistEditFaInfo, setAssistEditFaInfo] = useState<null | {
     category: string;
     assetNo: string;
@@ -261,6 +264,46 @@ export default function Journal() {
       return s.includes("处置固定资产") || s.toLowerCase().includes("fixed asset disposal");
     });
   }, [assistSuggestion]);
+
+  useEffect(() => {
+    if (!assistOpen) return;
+    if (!assistNeedsFaDisposalInfo) return;
+    if (!assistDisposalAssetId) return;
+    const key = `${assistDisposalAssetId}:${draftDate}`;
+    if (assistDisposalSnapKeyRef.current === key) return;
+    assistDisposalSnapKeyRef.current = key;
+    setAssistDisposalErr(null);
+    setAssistDisposalBusy(true);
+    void (async () => {
+      try {
+        const snap = await api<{ costBase: number; accumDepBase: number }>(
+          `/api/fixed-assets/${encodeURIComponent(assistDisposalAssetId)}/disposal-snapshot?date=${encodeURIComponent(draftDate)}`,
+          { signal: pageAbortRef.current?.signal },
+        );
+        const asset = fixedAssetsRef.current.find((x) => x.id === assistDisposalAssetId);
+        const label = asset ? `${asset.assetNo ? asset.assetNo + " " : ""}${asset.name}`.trim() : assistDisposalAssetId;
+        const cost = Number(snap.costBase || 0);
+        const accum = Number(snap.accumDepBase || 0);
+        setAssistExtra(`${label}；原值 ${cost}；累计折旧 ${accum}`);
+        if (asset) {
+          const acq = asset.acquisitionDate || draftDate;
+          const acqDate = String(acq || "").includes("T") ? String(acq).slice(0, 10) : String(acq || "");
+          setAssistEditFaInfo({
+            category: asset.category || "",
+            assetNo: asset.assetNo || "",
+            name: asset.name || "",
+            acquisitionDate: acqDate,
+            usefulLifeMonths: String(asset.usefulLifeMonths ?? 60),
+            salvageBase: String(asset.salvageValueBase ?? 0),
+          });
+        }
+      } catch (err: any) {
+        setAssistDisposalErr(err?.message || "Failed to load fixed asset snapshot");
+      } finally {
+        setAssistDisposalBusy(false);
+      }
+    })();
+  }, [assistOpen, assistNeedsFaDisposalInfo, assistDisposalAssetId, draftDate]);
 
   const bankAccountById = useMemo(() => new Map(bankAccounts.map((b) => [b.id, b] as const)), [bankAccounts]);
 
@@ -413,6 +456,10 @@ export default function Journal() {
   >([]);
 
   useEffect(() => {
+    fixedAssetsRef.current = fixedAssets as any;
+  }, [fixedAssets]);
+
+  useEffect(() => {
     setFaPurchaseByLineIdx((prev) => {
       const entries = Object.entries(prev).filter(([k]) => Number(k) >= 0 && Number(k) < draftLines.length);
       if (entries.length === Object.keys(prev).length) return prev;
@@ -552,7 +599,7 @@ export default function Journal() {
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setEntries(entries as any);
-    await refreshNextVoucherNo(undefined, signal);
+    void refreshNextVoucherNo(undefined, signal);
   }
 
   async function refreshVendorsOnly(signal?: AbortSignal) {
@@ -1437,10 +1484,7 @@ export default function Journal() {
       if (e?.message === "请求超时，请重试") return;
       setErr(e.message);
     });
-    refreshInventoryItemsOnly(ctrl.signal).catch(() => null);
-    refreshVendorsOnly(ctrl.signal).catch(() => null);
-    refreshCustomersOnly(ctrl.signal).catch(() => null);
-    refreshBankAccountsOnly(ctrl.signal).catch(() => null);
+    void refreshBankAccountsOnly(ctrl.signal).catch(() => null);
     return () => {
       ctrl.abort();
     };
@@ -2765,64 +2809,56 @@ export default function Journal() {
                         <div className="mt-3 grid gap-2 md:grid-cols-12">
                           <div className="md:col-span-6">
                             <div className="text-xs text-amber-900/70">{tr("选择现有固定资产（自动带入原值/累计折旧）", "Select fixed asset (auto-fill cost/accum dep)")}</div>
-                            <select
-                              className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
-                              value={assistDisposalAssetId}
-                              onChange={async (e) => {
-                                const id = e.target.value;
-                                setAssistDisposalAssetId(id);
-                                setAssistDisposalErr(null);
-                                if (!id) return;
-                                setAssistDisposalBusy(true);
-                                try {
-                                  const snap = await api<{ costBase: number; accumDepBase: number }>(
-                                    `/api/fixed-assets/${encodeURIComponent(id)}/disposal-snapshot?date=${encodeURIComponent(draftDate)}`,
-                                    { signal: pageAbortRef.current?.signal },
-                                  );
-                                  const asset = fixedAssets.find((x) => x.id === id);
-                                  const label = asset ? `${asset.assetNo ? asset.assetNo + " " : ""}${asset.name}`.trim() : id;
-                                  const cost = Number(snap.costBase || 0);
-                                  const accum = Number(snap.accumDepBase || 0);
-                                  setAssistExtra(`${label}；原值 ${cost}；累计折旧 ${accum}`);
-                                  if (asset) {
-                                    const acq = asset.acquisitionDate || draftDate;
-                                    const acqDate = acq.includes("T") ? acq.slice(0, 10) : acq;
-                                    setAssistEditFaInfo({
-                                      category: asset.category || "",
-                                      assetNo: asset.assetNo || "",
-                                      name: asset.name || "",
-                                      acquisitionDate: acqDate,
-                                      usefulLifeMonths: String(asset.usefulLifeMonths ?? 60),
-                                      salvageBase: String(asset.salvageValueBase ?? 0),
-                                    });
+                            {assistDisposalAssetId && !assistShowDisposalPicker ? (
+                              <div className="mt-1 flex flex-wrap items-center gap-2">
+                                <div className="rounded-md border border-amber-200 bg-white px-3 py-2 text-sm">
+                                  {(() => {
+                                    const a = fixedAssets.find((x) => x.id === assistDisposalAssetId);
+                                    const label = a ? `${a.assetNo ? a.assetNo + " " : ""}${a.name}`.trim() : assistDisposalAssetId;
+                                    return label || assistDisposalAssetId;
+                                  })()}
+                                </div>
+                                <button
+                                  className="rounded-md border border-amber-200 bg-white px-3 py-2 text-sm hover:bg-amber-50"
+                                  onClick={() => {
+                                    setAssistShowDisposalPicker(true);
+                                    if (!fixedAssets.length) {
+                                      refreshFixedAssets(pageAbortRef.current?.signal).catch(() => null);
+                                    }
+                                  }}
+                                  type="button"
+                                >
+                                  {tr("更换", "Change")}
+                                </button>
+                              </div>
+                            ) : (
+                              <select
+                                className="mt-1 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm"
+                                value={assistDisposalAssetId}
+                                onChange={(e) => {
+                                  setAssistDisposalAssetId(e.target.value);
+                                  setAssistShowDisposalPicker(false);
+                                }}
+                                onFocus={() => {
+                                  if (!fixedAssets.length) {
+                                    refreshFixedAssets(pageAbortRef.current?.signal).catch(() => null);
                                   }
-                                } catch (err: any) {
-                                  setAssistDisposalErr(err?.message || "Failed to load fixed asset snapshot");
-                                } finally {
-                                  setAssistDisposalBusy(false);
-                                }
-                              }}
-                              onFocus={() => {
-                                if (!fixedAssets.length) {
-                                  refreshFixedAssets(pageAbortRef.current?.signal).catch(() => null);
-                                }
-                              }}
-                              disabled={assistBusy || assistDisposalBusy}
-                            >
-                              <option value="" disabled>
-                                {tr("请选择", "Select")}
-                              </option>
-                              {fixedAssets
-                                .filter((a) => a.status !== "disposed")
-                                .map((a) => {
-                                  const label = `${a.assetNo ? a.assetNo + " " : ""}${a.name}`.trim();
-                                  return (
-                                    <option key={a.id} value={a.id}>
-                                      {label || a.id}
-                                    </option>
-                                  );
-                                })}
-                            </select>
+                                }}
+                                disabled={assistBusy || assistDisposalBusy}
+                              >
+                                <option value="">{tr("请选择", "Select")}</option>
+                                {fixedAssets
+                                  .filter((a) => a.status !== "disposed")
+                                  .map((a) => {
+                                    const label = `${a.assetNo ? a.assetNo + " " : ""}${a.name}`.trim();
+                                    return (
+                                      <option key={a.id} value={a.id}>
+                                        {label || a.id}
+                                      </option>
+                                    );
+                                  })}
+                              </select>
+                            )}
                           </div>
                           <div className="md:col-span-6">
                             {assistDisposalErr ? <div className="text-sm text-red-700">{assistDisposalErr}</div> : null}
