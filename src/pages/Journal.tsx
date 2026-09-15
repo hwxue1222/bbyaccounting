@@ -862,6 +862,39 @@ export default function Journal() {
     }
   }
 
+  async function updateAssistSuggestionFromExtra(extraText: string) {
+    const t = extraText.trim();
+    if (!t || assistBusy) return;
+    setAssistBusy(true);
+    setAssistErr(null);
+    setAssistSuggestion(null);
+    const conversationText = [...assistChatMessages.filter((x) => x.role === "user").map((x) => x.text), t].join("\n");
+    setAssistChatMessages((m) => [...m, { role: "user", text: t }]);
+    try {
+      const r = await api<{ suggestion: AssistJournalSuggestion }>("/api/assist/journal-suggest", {
+        method: "POST",
+        json: { text: conversationText, memo: draftMemo || undefined, entryDate: draftDate || undefined },
+        timeoutMs: 90_000,
+      });
+      setAssistSuggestion(r.suggestion);
+
+      const missing = Array.isArray((r.suggestion as any)?.missing) ? (r.suggestion as any).missing : [];
+      const hasPreview = Array.isArray((r.suggestion as any)?.preview?.lines) && (r.suggestion as any).preview.lines.length > 0;
+      const assistantText = hasPreview
+        ? tr("我已更新分录建议，请确认。", "Updated the suggestion. Please confirm.")
+        : missing.length
+          ? tr(`还需要补充信息：${missing.join("；")}`, `More info needed: ${missing.join("; ")}`)
+          : tr("我还没能生成完整分录，你可以继续补充金额/币种/付款方式/用途等。", "I couldn't generate a complete journal yet. Add amount/currency/payment method/purpose.");
+      setAssistChatMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+    } catch (e: any) {
+      const msg = e?.message || "Error";
+      setAssistErr(msg);
+      setAssistChatMessages((m) => [...m, { role: "assistant", text: msg }]);
+    } finally {
+      setAssistBusy(false);
+    }
+  }
+
   function applyAssistSuggestion(
     s: AssistJournalSuggestion,
     opts?: {
@@ -3360,6 +3393,39 @@ export default function Journal() {
                 >
                   {tr("重新生成", "Reset")}
                 </button>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
+                  <div className="w-full sm:w-[420px]">
+                    <label className="text-xs text-zinc-600">{tr("补充信息（可选）", "Extra info (optional)")}</label>
+                    <textarea
+                      className="mt-1 h-20 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                      value={assistExtra}
+                      onChange={(e) => setAssistExtra(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                          const t = assistExtra.trim();
+                          if (!t) return;
+                          setAssistExtra("");
+                          void updateAssistSuggestionFromExtra(t);
+                        }
+                      }}
+                      placeholder={tr("例如：金额 20000 MYR；用现金；付款方式未支付。", "E.g., amount 20000 MYR; cash; unpaid.")}
+                      disabled={assistBusy}
+                    />
+                  </div>
+                  <button
+                    className="h-10 rounded-md border border-zinc-200 bg-white px-3 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                    disabled={assistBusy || !assistExtra.trim()}
+                    onClick={() => {
+                      const t = assistExtra.trim();
+                      if (!t) return;
+                      setAssistExtra("");
+                      void updateAssistSuggestionFromExtra(t);
+                    }}
+                    type="button"
+                  >
+                    {tr("更新建议", "Update")}
+                  </button>
+                </div>
                 <button
                   className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50"
                   disabled={assistBusy || !(assistSuggestion as any)?.draft}
