@@ -1870,9 +1870,10 @@ export default function Journal() {
 
                     {assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale" ? (
                       <div className="md:col-span-5">
+                        <label className="text-xs text-zinc-600">{tr("存货", "Inventory")}</label>
                         <select
                           className={
-                            "w-full rounded-md border bg-white px-3 py-2 text-sm " +
+                            "mt-1 w-full rounded-md border bg-white px-3 py-2 text-sm " +
                             (quickMissingInvSaleItem ? "border-red-300" : "border-zinc-200")
                           }
                           value={assistQuickExistingInventoryItemId}
