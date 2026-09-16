@@ -104,7 +104,7 @@ export default function FixedAssets() {
   const { activeOrgId, orgSwitching, orgs } = useAuthStore();
   const tr = useTr();
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
-  const baseCurrency = active?.baseCurrency || "BASE";
+  const baseCurrency = (active?.baseCurrency || "BASE").toUpperCase();
   const [params] = useSearchParams();
   const [tab, setTab] = useState<"list" | "purchase" | "depreciate" | "dispose" | "schedule">("list");
   const [accounts, setAccounts] = useState<Account[]>([]);

@@ -8,7 +8,7 @@ type Account = { id: string; code: string; name: string; type: string };
 type CostCenter = { id: string; code: string; name: string };
 
 export default function Reports() {
-  const { activeOrgId, orgSwitching } = useAuthStore();
+  const { activeOrgId, orgSwitching, orgs } = useAuthStore();
   const tr = useTr();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
@@ -26,6 +26,9 @@ export default function Reports() {
   const [rows, setRows] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
+  const baseCurrency = useMemo(() => (active?.baseCurrency || "BASE").toUpperCase(), [active?.baseCurrency]);
 
   const accountOptions = useMemo(
     () => accounts.filter((a) => ((a as any).isActive ?? true) || a.id === accountId).slice().sort((a, b) => a.code.localeCompare(b.code)),
@@ -120,7 +123,7 @@ export default function Reports() {
     const n = Number(net || 0);
     const abs = Math.abs(n);
     const side = n >= 0 ? "Dr" : "Cr";
-    return `${abs.toFixed(2)} ${side}`;
+    return `${baseCurrency} ${abs.toFixed(2)} ${side}`;
   }
 
   const glRows = useMemo(() => {
@@ -235,6 +238,7 @@ export default function Reports() {
             <input type="checkbox" className="h-4 w-4" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
             {tr("不显示金额为 0 的科目", "Hide zero-amount accounts")}
           </label>
+          <div className="ml-auto text-sm text-zinc-600">{tr("本位币", "Base")}: {baseCurrency}</div>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
@@ -248,30 +252,30 @@ export default function Reports() {
                   <th className="px-3 py-2 text-left">日期</th>
                   <th className="px-3 py-2 text-left">摘要</th>
                   <th className="px-3 py-2 text-left">成本中心</th>
-                  <th className="px-3 py-2 text-right">借</th>
-                  <th className="px-3 py-2 text-right">贷</th>
-                  <th className="px-3 py-2 text-right">余额</th>
+                  <th className="px-3 py-2 text-right">借（{baseCurrency}）</th>
+                  <th className="px-3 py-2 text-right">贷（{baseCurrency}）</th>
+                  <th className="px-3 py-2 text-right">余额（{baseCurrency}）</th>
                 </tr>
               ) : tab === "tb" ? (
                 <tr>
                   <th className="px-3 py-2 text-left">Code</th>
                   <th className="px-3 py-2 text-left">Name</th>
-                  <th className="px-3 py-2 text-right">Opening Dr</th>
-                  <th className="px-3 py-2 text-right">Opening Cr</th>
-                  <th className="px-3 py-2 text-right">Period Dr</th>
-                  <th className="px-3 py-2 text-right">Period Cr</th>
-                  <th className="px-3 py-2 text-right">Closing Dr</th>
-                  <th className="px-3 py-2 text-right">Closing Cr</th>
+                  <th className="px-3 py-2 text-right">Opening Dr ({baseCurrency})</th>
+                  <th className="px-3 py-2 text-right">Opening Cr ({baseCurrency})</th>
+                  <th className="px-3 py-2 text-right">Period Dr ({baseCurrency})</th>
+                  <th className="px-3 py-2 text-right">Period Cr ({baseCurrency})</th>
+                  <th className="px-3 py-2 text-right">Closing Dr ({baseCurrency})</th>
+                  <th className="px-3 py-2 text-right">Closing Cr ({baseCurrency})</th>
                 </tr>
               ) : tab === "pl" ? (
                 <tr>
                   <th className="px-3 py-2 text-left">Account</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
+                  <th className="px-3 py-2 text-right">Amount ({baseCurrency})</th>
                 </tr>
               ) : (
                 <tr>
                   <th className="px-3 py-2 text-left">Account</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
+                  <th className="px-3 py-2 text-right">Amount ({baseCurrency})</th>
                 </tr>
               )}
             </thead>
