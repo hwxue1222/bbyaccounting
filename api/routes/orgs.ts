@@ -6,6 +6,7 @@ import { requireAuth, setSessionCookie, type AuthedRequest } from "../lib/auth.j
 import { signSession } from "../lib/security.js";
 import { seedOrgDefaults } from "../lib/seed.js";
 import { roleAtLeast, type Role } from "../lib/roles.js";
+import { requireOrgRole } from "../lib/orgAccess.js";
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
           o.base_currency as "baseCurrency",
           'admin' as "role"
         FROM organizations o
+        WHERE o.deleted_at IS NULL
         ORDER BY o.created_at ASC
       `
     : await sql`
@@ -45,11 +47,16 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
         FROM memberships m
         JOIN organizations o ON o.id = m.org_id
         WHERE m.user_id = ${req.auth!.userId} AND m.status = 'active'
+          AND o.deleted_at IS NULL
         ORDER BY o.created_at ASC
       `;
 
   const isMemberOfActive = req.auth!.orgId ? rows.some((r: any) => String(r.orgId) === String(req.auth!.orgId)) : false;
   const nextActive = isMemberOfActive ? req.auth!.orgId : defaultOrgId || (rows.length ? String((rows[0] as any).orgId) : null);
+
+  if (nextActive !== req.auth!.orgId) {
+    setSessionCookie(res, signSession({ userId: req.auth!.userId, orgId: nextActive }));
+  }
 
   res.status(200).json({ success: true, data: { orgs: rows, activeOrgId: nextActive } });
 });
@@ -60,6 +67,7 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
     name: z.string().min(2),
     registrationNo: z.string().trim().min(1).optional(),
     baseCurrency: z.string().min(3).max(3).default("SGD"),
+    industry: z.enum(["restaurant", "trading", "service"]).default("restaurant"),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -71,9 +79,14 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
   const created = await sql.begin(async (trx) => {
     const org = (
       await trx`
-        INSERT INTO organizations (name, registration_no, base_currency)
-        VALUES (${parsed.data.name.trim()}, ${parsed.data.registrationNo || null}, ${parsed.data.baseCurrency.toUpperCase()})
-        RETURNING id, name, registration_no as "registrationNo", base_currency as "baseCurrency"
+        INSERT INTO organizations (name, registration_no, base_currency, industry)
+        VALUES (
+          ${parsed.data.name.trim()},
+          ${parsed.data.registrationNo || null},
+          ${parsed.data.baseCurrency.toUpperCase()},
+          ${parsed.data.industry}
+        )
+        RETURNING id, name, registration_no as "registrationNo", base_currency as "baseCurrency", industry
       `
     )[0] as any;
     await trx`
@@ -89,7 +102,7 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
     return org;
   });
 
-  await seedOrgDefaults(sql, created.id, created.baseCurrency);
+  await seedOrgDefaults(sql, created.id, created.baseCurrency, created.industry);
 
   setSessionCookie(res, signSession({ userId: req.auth!.userId, orgId: created.id }));
   res.status(200).json({ success: true, data: { org: created } });
@@ -138,7 +151,7 @@ router.post("/update", requireAuth, async (req: AuthedRequest, res: Response) =>
           await sql`
             UPDATE organizations
             SET name = ${parsed.data.name.trim()}
-            WHERE id = ${parsed.data.orgId}
+            WHERE id = ${parsed.data.orgId} AND deleted_at IS NULL
             RETURNING id as "orgId", name as "orgName", registration_no as "registrationNo", base_currency as "baseCurrency"
           `
         )[0]
@@ -146,10 +159,15 @@ router.post("/update", requireAuth, async (req: AuthedRequest, res: Response) =>
           await sql`
             UPDATE organizations
             SET name = ${parsed.data.name.trim()}, registration_no = ${parsed.data.registrationNo}
-            WHERE id = ${parsed.data.orgId}
+            WHERE id = ${parsed.data.orgId} AND deleted_at IS NULL
             RETURNING id as "orgId", name as "orgName", registration_no as "registrationNo", base_currency as "baseCurrency"
           `
         )[0];
+
+  if (!updated) {
+    res.status(404).json({ success: false, error: "Organization not found" });
+    return;
+  }
 
   res.status(200).json({ success: true, data: { org: updated } });
 });
@@ -163,6 +181,13 @@ router.post("/switch", requireAuth, async (req: AuthedRequest, res: Response) =>
     return;
   }
   const sql = getSql();
+
+  const orgRows = await sql`SELECT id FROM organizations WHERE id = ${parsed.data.orgId} AND deleted_at IS NULL LIMIT 1`;
+  if (!orgRows.length) {
+    res.status(404).json({ success: false, error: "Organization not found" });
+    return;
+  }
+
   const ok = await sql`
     SELECT id FROM memberships
     WHERE user_id = ${req.auth!.userId} AND org_id = ${parsed.data.orgId} AND status = 'active'
@@ -187,6 +212,72 @@ router.post("/switch", requireAuth, async (req: AuthedRequest, res: Response) =>
   `;
   setSessionCookie(res, signSession({ userId: req.auth!.userId, orgId: parsed.data.orgId }));
   res.status(200).json({ success: true, data: { orgId: parsed.data.orgId } });
+});
+
+router.post("/delete", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const bodySchema = z.object({ orgId: z.string().uuid() });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+
+  const guard = await requireOrgRole(req, res, parsed.data.orgId, "admin");
+  if (guard === null) return;
+
+  const r = await sql.begin(async (trx) => {
+    const updated = await trx`
+      UPDATE organizations
+      SET deleted_at = now()
+      WHERE id = ${parsed.data.orgId} AND deleted_at IS NULL
+      RETURNING id
+    `;
+    if (!updated.length) {
+      return { deleted: false, nextOrgId: null as string | null };
+    }
+
+    await trx`UPDATE memberships SET status = 'inactive' WHERE org_id = ${parsed.data.orgId}`;
+    await trx`DELETE FROM user_default_org WHERE org_id = ${parsed.data.orgId}`;
+
+    let nextOrgId: string | null = null;
+    if (req.auth!.orgId === parsed.data.orgId) {
+      const fallback = await trx`
+        SELECT m.org_id as "orgId"
+        FROM memberships m
+        JOIN organizations o ON o.id = m.org_id
+        WHERE m.user_id = ${req.auth!.userId}
+          AND m.status = 'active'
+          AND m.org_id <> ${parsed.data.orgId}
+          AND o.deleted_at IS NULL
+        ORDER BY o.created_at ASC
+        LIMIT 1
+      `;
+      nextOrgId = fallback.length ? String((fallback[0] as any).orgId) : null;
+      if (nextOrgId) {
+        await trx`
+          INSERT INTO user_default_org (user_id, org_id)
+          VALUES (${req.auth!.userId}, ${nextOrgId})
+          ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
+        `;
+      }
+    }
+
+    return { deleted: true, nextOrgId };
+  });
+
+  if (!r.deleted) {
+    res.status(404).json({ success: false, error: "Organization not found" });
+    return;
+  }
+
+  if (req.auth!.orgId === parsed.data.orgId) {
+    setSessionCookie(res, signSession({ userId: req.auth!.userId, orgId: r.nextOrgId }));
+  }
+
+  res.status(200).json({ success: true, data: { orgId: parsed.data.orgId, nextOrgId: r.nextOrgId } });
 });
 
 export default router;

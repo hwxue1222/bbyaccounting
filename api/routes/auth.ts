@@ -24,6 +24,7 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     password: z.string().min(8),
     orgName: z.string().min(2),
     baseCurrency: z.string().min(3).max(3).default("SGD"),
+    industry: z.enum(["restaurant", "trading", "service"]).default("restaurant"),
   });
 
   const parsed = bodySchema.safeParse(req.body);
@@ -32,7 +33,7 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const { email, password, orgName, baseCurrency } = parsed.data;
+  const { email, password, orgName, baseCurrency, industry } = parsed.data;
   const sql = getSql();
   const emailNorm = normalizeEmail(email);
 
@@ -52,9 +53,9 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     `;
     const user = userRows[0];
     const orgRows = await trx`
-      INSERT INTO organizations (name, base_currency)
-      VALUES (${orgName.trim()}, ${baseCurrency.toUpperCase()})
-      RETURNING id, name, base_currency
+      INSERT INTO organizations (name, base_currency, industry)
+      VALUES (${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry})
+      RETURNING id, name, base_currency, industry
     `;
     const org = orgRows[0];
     await trx`
@@ -69,7 +70,7 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     return { user, org };
   });
 
-  await seedOrgDefaults(sql, created.org.id, created.org.base_currency);
+  await seedOrgDefaults(sql, created.org.id, created.org.base_currency, (created.org as any).industry);
 
   setSessionCookie(res, signSession({ userId: created.user.id, orgId: created.org.id }));
   res.status(200).json({
@@ -207,6 +208,12 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
     return;
   }
 
+  const orgRows = await sql`SELECT id FROM organizations WHERE id = ${inv.orgId} AND deleted_at IS NULL LIMIT 1`;
+  if (!orgRows.length) {
+    res.status(404).json({ success: false, error: "Organization not found" });
+    return;
+  }
+
   const emailNorm = normalizeEmail(inv.email);
   const userRows = await sql`SELECT id, email FROM users WHERE email = ${emailNorm}`;
   const userExisting = userRows[0];
@@ -256,6 +263,12 @@ router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Respo
     return;
   }
   const sql = getSql();
+
+  const orgRows = await sql`SELECT id FROM organizations WHERE id = ${orgId} AND deleted_at IS NULL LIMIT 1`;
+  if (!orgRows.length) {
+    res.status(404).json({ success: false, error: "Organization not found" });
+    return;
+  }
   const token = randomToken();
   const tokenHash = sha256(token);
   const emailNorm = normalizeEmail(parsed.data.email);

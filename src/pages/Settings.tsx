@@ -20,7 +20,7 @@ type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: numb
 type BankAccount = { id: string; bankName: string; accountNo: string; accountId: string; isActive: boolean };
 
 export default function Settings() {
-  const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg, deleteOrg } = useAuthStore();
   const tr = useTr();
   const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
   const [rightTab, setRightTab] = useState<"accounts" | "bankAccounts" | "costCenters" | "currencies" | "fxRates">("accounts");
@@ -74,6 +74,7 @@ export default function Settings() {
   const [editBankActive, setEditBankActive] = useState(true);
 
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
+  const activeRole = useMemo(() => (active?.role ? String(active.role) : null), [active?.role]);
 
   const [companyName, setCompanyName] = useState("");
   const [companyRegNo, setCompanyRegNo] = useState("");
@@ -203,6 +204,43 @@ export default function Settings() {
             >
               保存
             </button>
+
+            <div className="mt-6 border-t border-zinc-100 pt-4">
+              <div className="text-sm font-semibold text-red-700">危险操作</div>
+              <div className="mt-2 text-sm text-zinc-600">删除公司会移除该公司的所有数据，并且无法恢复。</div>
+              <button
+                className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+                disabled={busy || !activeOrgId || !(activeRole === "owner" || activeRole === "admin")}
+                onClick={async () => {
+                  if (!activeOrgId) return;
+                  const confirmName = window.prompt("请输入公司名称以确认删除", "");
+                  if (confirmName == null) return;
+                  if (String(confirmName).trim() !== String(active?.orgName || "").trim()) {
+                    window.alert("公司名称不匹配，已取消删除");
+                    return;
+                  }
+                  const ok = window.confirm("确定要删除公司吗？此操作不可恢复。");
+                  if (!ok) return;
+
+                  setBusy(true);
+                  setErr(null);
+                  try {
+                    await deleteOrg(activeOrgId);
+                    setLeftTab("switch");
+                  } catch (e: any) {
+                    setErr(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                type="button"
+              >
+                删除公司
+              </button>
+              {!(activeRole === "owner" || activeRole === "admin") ? (
+                <div className="mt-2 text-xs text-zinc-500">仅 owner/admin 可删除公司</div>
+              ) : null}
+            </div>
           </div>
 
           <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (leftTab === "invite" ? "" : "hidden")}
@@ -319,7 +357,17 @@ export default function Settings() {
             <div className="mt-3 grid gap-3 md:grid-cols-5">
               <div>
                 <label className="text-xs text-zinc-600">Code</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-2 text-sm" value={newAccountCode} onChange={(e) => setNewAccountCode(e.target.value)} />
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-2 text-sm"
+                  value={newAccountCode}
+                  onChange={(e) => {
+                    const code = e.target.value;
+                    const norm = String(code || "").trim();
+                    if (norm === "1500") setNewAccountLinkInventoryFifo(true);
+                    if (norm.startsWith("16") || norm.startsWith("61")) setNewAccountLinkFixedAssets(true);
+                    setNewAccountCode(code);
+                  }}
+                />
               </div>
               <div className="md:col-span-2">
                 <label className="text-xs text-zinc-600">Name</label>

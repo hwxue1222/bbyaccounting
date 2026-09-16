@@ -19,11 +19,12 @@ type AuthState = {
   error: string | null;
   bootstrap: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, orgName: string, baseCurrency: string) => Promise<void>;
+  register: (email: string, password: string, orgName: string, baseCurrency: string, industry: string) => Promise<void>;
   logout: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
-  createOrg: (name: string, baseCurrency: string) => Promise<void>;
+  createOrg: (name: string, baseCurrency: string, industry: string) => Promise<void>;
   updateOrg: (orgId: string, name: string, registrationNo: string | null) => Promise<void>;
+  deleteOrg: (orgId: string) => Promise<void>;
   acceptInvite: (token: string, password: string) => Promise<void>;
   createInvite: (email: string, role: string) => Promise<{ inviteUrl: string }>
 };
@@ -68,12 +69,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ status: "anon", error: e?.message || "登录失败" });
     }
   },
-  register: async (email, password, orgName, baseCurrency) => {
+  register: async (email, password, orgName, baseCurrency, industry) => {
     set({ status: "loading", error: null });
     try {
       const resp = await api<{ user: { id: string; email: string }; org: { id: string } }>("/api/auth/register", {
         method: "POST",
-        json: { email, password, orgName, baseCurrency },
+        json: { email, password, orgName, baseCurrency, industry },
       });
       const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
       set({ status: "authed", user: resp.user, activeOrgId: resp.org.id, orgs: orgsResp.orgs, error: null });
@@ -96,8 +97,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ pendingOrgId: null, orgSwitching: false, error: e?.message || "切换公司失败" });
     }
   },
-  createOrg: async (name: string, baseCurrency: string) => {
-    await api("/api/orgs/create", { method: "POST", json: { name, baseCurrency } });
+  createOrg: async (name: string, baseCurrency: string, industry: string) => {
+    await api("/api/orgs/create", { method: "POST", json: { name, baseCurrency, industry } });
     const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
     set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId });
   },
@@ -109,6 +110,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({
       orgs: get().orgs.map((o) => (o.orgId === orgId ? { ...o, orgName: resp.org.orgName, registrationNo: resp.org.registrationNo } : o)),
     });
+  },
+  deleteOrg: async (orgId: string) => {
+    await api<{ orgId: string; nextOrgId: string | null }>("/api/orgs/delete", { method: "POST", json: { orgId } });
+    const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { cache: "no-store" });
+    set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId });
   },
   acceptInvite: async (token: string, password: string) => {
     set({ status: "loading", error: null });

@@ -4,21 +4,13 @@ import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { buildHeuristicSuggestion, detectLang } from "../lib/assistRules.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
 
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
-
 router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const bodySchema = z.object({
@@ -35,7 +27,7 @@ router.post("/journal-suggest", requireAuth, async (req: AuthedRequest, res: Res
   const lang = detectLang(parsed.data.text);
 
   const sql = getSql();
-  const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`;
+  const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} AND deleted_at IS NULL LIMIT 1`;
   const baseCurrency = String((orgRows[0] as any)?.baseCurrency || "BASE").toUpperCase();
 
   const accounts = (await sql`

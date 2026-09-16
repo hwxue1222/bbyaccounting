@@ -349,14 +349,22 @@ export function buildHeuristicSuggestion(input: {
       !hasInventory &&
       !isFixedAssetNew &&
       !isVehicle &&
-      !/rent|rental|fuel|gas|petrol|salary|wage|utilities|electric|water|internet|office|suppl|repair|maintenance|insurance|commission|advertis|marketing|travel|meal|\u79df|\u79df\u91d1|\u6c34\u7535|\u5de5\u8d44|\u85aa|\u6cb9|\u6c7d\u6cb9|\u529e\u516c|\u6587\u5177|\u8017\u6750|\u7ef4\u4fee|\u4fdd\u517b|\u4fdd\u9669|\u5e7f\u544a|\u8425\u9500|\u65c5\u884c|\u5dee\u65c5|\u9910/i.test(lower)
+      !/rent|rental|fuel|gas|petrol|salary|wage|utilities|electric|water|internet|office|suppl|repair|maintenance|insurance|commission|advertis|marketing|travel|meal|renovat|fit\s*-?\s*out|design|\u88c5\u4fee|\u88c5\u6f62|\u8bbe\u8ba1\u8d39|\u8bbe\u8ba1|\u79df|\u79df\u91d1|\u6c34\u7535|\u5de5\u8d44|\u85aa|\u6cb9|\u6c7d\u6cb9|\u529e\u516c|\u6587\u5177|\u8017\u6750|\u7ef4\u4fee|\u4fdd\u517b|\u4fdd\u9669|\u5e7f\u544a|\u8425\u9500|\u65c5\u884c|\u5dee\u65c5|\u9910/i.test(lower)
     ) {
       missing.push(t("请说明用途/性质：这是存货、固定资产，还是费用？", "Please clarify purpose/type: inventory, fixed asset, or expense?"));
       return { draft: null, preview: null, warnings, missing };
     }
 
     if (!debitCode) {
-      debitCode = pickBestAccountCode(input.accounts, { type: "expense", keywords: ["\u8d2d\u4e70", "\u8d39\u7528", "expense"] });
+      if (/renovat|fit\s*-?\s*out|design|\u88c5\u4fee|\u88c5\u6f62|\u8bbe\u8ba1\u8d39|\u8bbe\u8ba1/i.test(lower)) {
+        debitCode = pickBestAccountCode(input.accounts, {
+          type: "expense",
+          keywords: ["renovation", "design", "fitout", "\u88c5\u4fee", "\u88c5\u6f62", "\u8bbe\u8ba1"],
+        });
+      }
+      if (!debitCode) {
+        debitCode = pickBestAccountCode(input.accounts, { type: "expense", keywords: ["\u8d2d\u4e70", "\u8d39\u7528", "expense"] });
+      }
       if (!debitCode) debitCode = input.accounts.find((a) => String(a.type) === "expense")?.code || input.accounts[0]?.code || null;
     }
 

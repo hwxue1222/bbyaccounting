@@ -4,17 +4,9 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
-
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
 
 function fmtDateLong(isoDate: string): string {
   const d = new Date(isoDate + "T00:00:00Z");
@@ -106,7 +98,7 @@ async function computeNetProfit(sql: ReturnType<typeof getSql>, orgId: string, s
 
 router.get("/trial-balance", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const q = z
     .object({
@@ -264,7 +256,7 @@ router.get("/trial-balance", requireAuth, async (req: AuthedRequest, res: Respon
 
 router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z
@@ -501,7 +493,7 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
 
 router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const q = z
     .object({
@@ -615,7 +607,7 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
 
 router.get("/balance-sheet", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const q = z
     .object({
@@ -687,7 +679,7 @@ router.get("/balance-sheet", requireAuth, async (req: AuthedRequest, res: Respon
 
 router.get("/balance-sheet.xlsx", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z
@@ -836,7 +828,7 @@ router.get("/balance-sheet.xlsx", requireAuth, async (req: AuthedRequest, res: R
 
 router.get("/profit-loss.xlsx", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z
@@ -957,7 +949,7 @@ router.get("/profit-loss.xlsx", requireAuth, async (req: AuthedRequest, res: Res
 
 router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const q = z
     .object({
@@ -1125,7 +1117,7 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.get("/ap-aging", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z.object({ asOf: z.string().min(10) }).safeParse({ asOf: req.query.asOf });
@@ -1171,7 +1163,7 @@ router.get("/ap-aging", requireAuth, async (req: AuthedRequest, res: Response) =
 
 router.get("/ar-aging", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z.object({ asOf: z.string().min(10) }).safeParse({ asOf: req.query.asOf });

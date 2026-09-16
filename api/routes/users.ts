@@ -3,17 +3,9 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess, requireOrgRole } from "../lib/orgAccess.js";
 
 const router = Router();
-
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
 
 async function getMyMembershipRole(sql: ReturnType<typeof getSql>, orgId: string, userId: string): Promise<string | null> {
   const rows = await sql`
@@ -25,27 +17,23 @@ async function getMyMembershipRole(sql: ReturnType<typeof getSql>, orgId: string
   return rows.length ? String((rows[0] as any).role) : null;
 }
 
-async function requireOwnerOrAdmin(req: AuthedRequest, res: Response, orgId: string): Promise<string | null> {
-  const sql = getSql();
-  const role = await getMyMembershipRole(sql, orgId, req.auth!.userId);
-  if (!role) {
-    res.status(403).json({ success: false, error: "Forbidden" });
-    return null;
-  }
-  if (role !== "owner" && role !== "admin") {
-    res.status(403).json({ success: false, error: "Forbidden" });
-    return null;
-  }
-  return role;
+async function isGlobalAdmin(sql: ReturnType<typeof getSql>, userId: string): Promise<boolean> {
+  const rows = await sql`
+    SELECT id
+    FROM memberships
+    WHERE user_id = ${userId} AND status = 'active' AND role = 'admin' AND is_global = true
+    LIMIT 1
+  `;
+  return rows.length > 0;
 }
 
 router.get("/members", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
-  const role = await requireOwnerOrAdmin(req, res, orgId);
-  if (!role) return;
+  const guard = await requireOrgRole(req, res, orgId, "admin");
+  if (guard === null) return;
 
   const sql = getSql();
   const rows = await sql`
@@ -66,11 +54,11 @@ router.get("/members", requireAuth, async (req: AuthedRequest, res: Response) =>
 
 router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
-  const myRole = await requireOwnerOrAdmin(req, res, orgId);
-  if (!myRole) return;
+  const guard = await requireOrgRole(req, res, orgId, "admin");
+  if (guard === null) return;
 
   const bodySchema = z.object({
     role: z.enum(["owner", "admin", "accountant", "viewer", "auditor"]).optional(),
@@ -86,12 +74,19 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
     return;
   }
 
+  const sql = getSql();
+  const globalAdmin = await isGlobalAdmin(sql, req.auth!.userId);
+  const myRole = globalAdmin ? "admin" : await getMyMembershipRole(sql, orgId, req.auth!.userId);
+  if (!myRole) {
+    res.status(403).json({ success: false, error: "Forbidden" });
+    return;
+  }
+
   if (myRole !== "owner" && parsed.data.role) {
     res.status(403).json({ success: false, error: "Only owner can change roles" });
     return;
   }
 
-  const sql = getSql();
   const membershipId = req.params.membershipId;
   const rows = await sql`
     SELECT id, user_id as "userId", role, status

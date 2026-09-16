@@ -3,23 +3,15 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 import { round2, round6 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
 
 const router = Router();
 
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
-
 router.get("/items", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
@@ -33,7 +25,7 @@ router.get("/items", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.get("/stock-take/items", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
@@ -63,7 +55,7 @@ router.get("/stock-take/items", requireAuth, async (req: AuthedRequest, res: Res
 
 router.post("/stock-take/preview", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     date: z.string().min(10),
@@ -197,7 +189,7 @@ router.post("/stock-take/preview", requireAuth, async (req: AuthedRequest, res: 
 
 router.post("/stock-take", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     date: z.string().min(10),
@@ -398,7 +390,7 @@ router.post("/stock-take", requireAuth, async (req: AuthedRequest, res: Response
 
 router.post("/items", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     sku: z.string().trim().min(1),
@@ -432,7 +424,7 @@ router.post("/items", requireAuth, async (req: AuthedRequest, res: Response) => 
 
 router.get("/stock", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
   if (!itemId) {
@@ -454,7 +446,7 @@ router.get("/stock", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const status = typeof req.query.status === "string" ? req.query.status : null;
   const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
@@ -539,7 +531,7 @@ router.get("/moves", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.get("/moves/balances", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const startDate = typeof req.query.startDate === "string" ? req.query.startDate : null;
   const endDate = typeof req.query.endDate === "string" ? req.query.endDate : null;
@@ -594,7 +586,7 @@ router.get("/moves/balances", requireAuth, async (req: AuthedRequest, res: Respo
 
 router.get("/shipments/quote", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const itemId = typeof req.query.itemId === "string" ? req.query.itemId : null;
   const qty = typeof req.query.qty === "string" ? Number(req.query.qty) : NaN;
@@ -636,7 +628,7 @@ router.get("/shipments/quote", requireAuth, async (req: AuthedRequest, res: Resp
 
 router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const bodySchema = z.object({
@@ -741,7 +733,7 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
 
 router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     itemId: z.string().uuid(),

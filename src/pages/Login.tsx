@@ -13,6 +13,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("BBY Demo");
+  const [industry, setIndustry] = useState("restaurant");
   const [baseCurrency, setBaseCurrency] = useState("SGD");
   const [backendReady, setBackendReady] = useState<null | { ok: boolean; message?: string }>(null);
 
@@ -151,6 +152,18 @@ export default function Login() {
                   />
                 </div>
                 <div>
+                  <label className="text-xs text-zinc-600">{tr("行业", "Industry")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={industry}
+                    onChange={(e) => setIndustry(e.target.value)}
+                  >
+                    <option value="restaurant">{tr("餐饮", "Restaurant")}</option>
+                    <option value="trading">{tr("贸易", "Trading")}</option>
+                    <option value="service">{tr("服务", "Service")}</option>
+                  </select>
+                </div>
+                <div>
                   <label className="text-xs text-zinc-600">{tr("基准币", "Base currency")}</label>
                   <input
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
@@ -171,7 +184,7 @@ export default function Login() {
                 if (mode === "login") {
                   await login(email, password);
                 } else {
-                  await register(email, password, orgName, baseCurrency);
+                  await register(email, password, orgName, baseCurrency, industry);
                 }
               }}
             >

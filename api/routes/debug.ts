@@ -3,21 +3,13 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
 
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
-
 router.get("/errors/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const schema = z.object({ id: z.string().uuid() });
@@ -44,7 +36,7 @@ router.get("/errors/:id", requireAuth, async (req: AuthedRequest, res: Response)
 
 router.get("/errors", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const limit = typeof req.query.limit === "string" ? Math.min(50, Math.max(1, Number(req.query.limit) || 10)) : 10;
   const sql = getSql();
@@ -64,4 +56,3 @@ router.get("/errors", requireAuth, async (req: AuthedRequest, res: Response) => 
 });
 
 export default router;
-

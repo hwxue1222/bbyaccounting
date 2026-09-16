@@ -3,20 +3,12 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 import { round2 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
 import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory, peekNextFixedAssetNo } from "../lib/fixedAssetNo.js";
 
 const router = Router();
-
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
 
 function monthKey(date: Date): string {
   const y = date.getUTCFullYear();
@@ -26,7 +18,7 @@ function monthKey(date: Date): string {
 
 router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const q = z
@@ -102,7 +94,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.patch("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const id = String(req.params.id || "");
   if (!id) {
@@ -194,7 +186,7 @@ router.patch("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const id = String(req.params.id || "");
   if (!id) {
@@ -241,7 +233,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
 
 router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     assetNo: z
@@ -350,7 +342,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.get("/next-no", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z
@@ -368,7 +360,7 @@ router.get("/next-no", requireAuth, async (req: AuthedRequest, res: Response) =>
 
 router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) });
   const parsed = bodySchema.safeParse(req.body);
@@ -467,7 +459,7 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
 
 router.get("/depreciation/entries", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).safeParse({ period: req.query.period });
@@ -511,7 +503,7 @@ router.get("/depreciation/entries", requireAuth, async (req: AuthedRequest, res:
 
 router.get("/disposal/entries", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).safeParse({ period: req.query.period });
@@ -554,7 +546,7 @@ router.get("/disposal/entries", requireAuth, async (req: AuthedRequest, res: Res
 
 router.get("/purchase/entries", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).safeParse({ period: req.query.period });
@@ -598,7 +590,7 @@ router.get("/purchase/entries", requireAuth, async (req: AuthedRequest, res: Res
 
 router.get("/:id/disposal-snapshot", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const id = String(req.params.id || "");
   if (!id) {
@@ -659,7 +651,7 @@ router.get("/:id/disposal-snapshot", requireAuth, async (req: AuthedRequest, res
 
 router.post("/:id/dispose", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     date: z.string().min(10),

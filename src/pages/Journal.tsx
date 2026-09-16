@@ -108,6 +108,21 @@ export default function Journal() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [newAccountOpen, setNewAccountOpen] = useState(false);
+  const [newAccountBusy, setNewAccountBusy] = useState(false);
+  const [newAccountErr, setNewAccountErr] = useState<string | null>(null);
+  const [newAccountLineIdx, setNewAccountLineIdx] = useState<number | null>(null);
+  const [newAccountForm, setNewAccountForm] = useState({
+    code: "",
+    name: "",
+    type: "expense" as "asset" | "liability" | "equity" | "income" | "cogs" | "expense",
+    normalBalance: "debit" as "debit" | "credit",
+    linkInventoryFifo: false,
+    linkFixedAssets: false,
+  });
+
+  const [pendingAttachmentFiles, setPendingAttachmentFiles] = useState<File[]>([]);
+
   const [assistOpen, setAssistOpen] = useState(false);
   const [assistExtra, setAssistExtra] = useState("");
   const [assistBusy, setAssistBusy] = useState(false);
@@ -517,7 +532,75 @@ export default function Journal() {
     setAssistQuickNewInvOpen(false);
     setDraftVendorId("");
     setDraftCustomerId("");
+    setPendingAttachmentFiles([]);
     void refreshNextVoucherNo(true, pageAbortRef.current?.signal);
+  }
+
+  function openInlineNewAccount(lineIdx: number) {
+    setNewAccountLineIdx(lineIdx);
+    setNewAccountErr(null);
+    setNewAccountForm({
+      code: "",
+      name: "",
+      type: "expense",
+      normalBalance: "debit",
+      linkInventoryFifo: false,
+      linkFixedAssets: false,
+    });
+    setNewAccountOpen(true);
+  }
+
+  async function createInlineAccount() {
+    const code = newAccountForm.code.trim();
+    const name = newAccountForm.name.trim();
+    if (!code || !name) {
+      setNewAccountErr(tr("请填写科目代码与名称", "Please provide account code and name"));
+      return;
+    }
+    setNewAccountBusy(true);
+    setNewAccountErr(null);
+    try {
+      const r = await api<{ account: any }>("/api/settings/accounts", {
+        method: "POST",
+        json: {
+          code,
+          name,
+          type: newAccountForm.type,
+          normalBalance: newAccountForm.normalBalance,
+          linkInventoryFifo: newAccountForm.linkInventoryFifo,
+          linkFixedAssets: newAccountForm.linkFixedAssets,
+        },
+      });
+      const acc = r.account as any;
+      setAccounts((prev) => {
+        const next = [...prev, acc];
+        next.sort((a: any, b: any) => String(a.code || "").localeCompare(String(b.code || "")));
+        return next as any;
+      });
+      if (newAccountLineIdx != null) {
+        setDraftLines((prev) => {
+          const next = [...prev];
+          if (newAccountLineIdx >= 0 && newAccountLineIdx < next.length) {
+            next[newAccountLineIdx] = { ...next[newAccountLineIdx], accountId: String(acc.id) };
+          }
+          return next;
+        });
+      }
+      setNewAccountOpen(false);
+    } catch (e: any) {
+      setNewAccountErr(e.message);
+    } finally {
+      setNewAccountBusy(false);
+    }
+  }
+
+  async function uploadPendingAttachments(entryId: string, files: File[]) {
+    if (!files.length) return;
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append("file", f);
+      await api(`/api/journals/${encodeURIComponent(entryId)}/attachments`, { method: "POST", body: fd });
+    }
   }
 
   async function refreshFixedAssets(signal?: AbortSignal) {
@@ -2215,30 +2298,46 @@ export default function Journal() {
               {draftLines.map((l, idx) => (
                 <tr key={idx} className="border-t border-zinc-100">
                   <td className="px-3 py-2">
-                    <select
-                      className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
-                      value={l.accountId}
-                      onChange={(e) => {
-                        if (e.target.value === "__new_account__") {
-                          navigate("/settings");
-                          return;
-                        }
-                        const next = [...draftLines];
-                        next[idx] = { ...l, accountId: e.target.value };
-                        setDraftLines(next);
-                      }}
-                      disabled={readOnly}
-                    >
-                      <option value="__new_account__">{tr("+ 新增科目", "+ New account")}</option>
-                      <option value="">{tr("请选择", "Select")}</option>
-                      {accounts
-                        .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
-                        .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                        value={l.accountId}
+                        onChange={(e) => {
+                          if (e.target.value === "__new_account__") {
+                            openInlineNewAccount(idx);
+                            return;
+                          }
+                          if (e.target.value === "__manage_accounts__") {
+                            navigate("/settings");
+                            return;
+                          }
+                          const next = [...draftLines];
+                          next[idx] = { ...l, accountId: e.target.value };
+                          setDraftLines(next);
+                        }}
+                        disabled={readOnly}
+                      >
+                        <option value="">{tr("请选择", "Select")}</option>
+                        <option value="__new_account__">{tr("+ 新建", "+ New")}</option>
+                        <option value="__manage_accounts__">{tr("去设置", "Open settings")}</option>
+                        {accounts
+                          .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.code} {a.name}
+                              {(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        className="whitespace-nowrap rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                        disabled={readOnly}
+                        onClick={() => openInlineNewAccount(idx)}
+                        type="button"
+                      >
+                        {tr("新建", "New")}
+                      </button>
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <input
@@ -2290,16 +2389,18 @@ export default function Journal() {
                         const code = acc?.code ? String(acc.code) : "";
                         const linkFa = Boolean(acc?.linkFixedAssets);
                         const linkInv = Boolean(acc?.linkInventoryFifo);
+                        const isFa = linkFa || code.startsWith("16") || code.startsWith("61");
+                        const isInv = linkInv || code === "1500";
                         const amount = Number(l.debitTxn) || 0;
                         const hasAmount = amount > 0;
                         const label =
-                          linkFa && code.startsWith("161")
+                          isFa && code.startsWith("161")
                             ? null
-                            : linkFa && code.startsWith("16") && !code.startsWith("161")
+                            : isFa && code.startsWith("16") && !code.startsWith("161")
                               ? "购买"
-                              : linkFa && code.startsWith("61")
+                              : isFa && code.startsWith("61")
                                 ? "折旧"
-                                : linkInv
+                                : isInv
                                   ? "库存"
                                   : null;
                         if (!label) return null;
@@ -2373,16 +2474,18 @@ export default function Journal() {
                         const code = acc?.code ? String(acc.code) : "";
                         const linkFa = Boolean(acc?.linkFixedAssets);
                         const linkInv = Boolean(acc?.linkInventoryFifo);
+                        const isFa = linkFa || code.startsWith("16") || code.startsWith("61");
+                        const isInv = linkInv || code === "1500";
                         const amount = Number(l.creditTxn) || 0;
                         const hasAmount = amount > 0;
                         const label =
-                          linkFa && (code.startsWith("16") || code.startsWith("161"))
+                          isFa && code.startsWith("16")
                             ? code.startsWith("161")
                               ? null
                               : "处置"
-                            : linkFa && code.startsWith("61")
+                            : isFa && code.startsWith("61")
                               ? "折旧"
-                              : linkInv
+                              : isInv
                                 ? "库存"
                                 : null;
                         if (!label) return null;
@@ -2485,6 +2588,24 @@ export default function Journal() {
             >
               {tr("清空", "Clear")}
             </button>
+
+            <label className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50">
+              <input
+                className="hidden"
+                type="file"
+                multiple
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (!files.length) return;
+                  setPendingAttachmentFiles(files);
+                  e.target.value = "";
+                }}
+                disabled={busy || readOnly}
+              />
+              {pendingAttachmentFiles.length
+                ? tr(`附件(${pendingAttachmentFiles.length})`, `Attachments (${pendingAttachmentFiles.length})`)
+                : tr("上传附件", "Add attachments")}
+            </label>
             <button
               className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
               disabled={busy || txnDiff !== 0 || voucherEmpty || draftLines.some((l) => !l.accountId)}
@@ -2576,6 +2697,14 @@ export default function Journal() {
                       method: "POST",
                       json: fixedAssetPurchases ? { fixedAssetPurchases } : undefined,
                     });
+
+                    if (pendingAttachmentFiles.length) {
+                      try {
+                        await uploadPendingAttachments(id, pendingAttachmentFiles);
+                      } finally {
+                        setPendingAttachmentFiles([]);
+                      }
+                    }
                     resetDraftEntry();
                     await refreshEntriesOnly();
                     setSelectedId(id);
@@ -2679,11 +2808,21 @@ export default function Journal() {
                     ? await api<{ entry: { id: string } }>(`/api/journals/${encodeURIComponent(editingEntryId)}` as any, { method: "PUT", json: reqBody })
                     : await api<{ entry?: { id: string }; entries?: Array<{ id: string; entryDate: string; voucherNo: string | null }> }>("/api/journals/post", { method: "POST", json: reqBody });
 
-                  resetDraftEntry();
-                  await refreshEntriesOnly();
                   const firstId = (resp as any)?.entry?.id || (resp as any)?.entries?.[0]?.id;
                   if (firstId) {
+                    if (pendingAttachmentFiles.length) {
+                      try {
+                        await uploadPendingAttachments(firstId, pendingAttachmentFiles);
+                      } finally {
+                        setPendingAttachmentFiles([]);
+                      }
+                    }
+                    resetDraftEntry();
+                    await refreshEntriesOnly();
                     setSelectedId(firstId);
+                  } else {
+                    resetDraftEntry();
+                    await refreshEntriesOnly();
                   }
                   const seriesCount = Array.isArray((resp as any)?.entries) ? (resp as any).entries.length : 0;
                   if (seriesCount > 1) {
@@ -4782,15 +4921,18 @@ export default function Journal() {
                     <input
                       type="file"
                       className="block w-full text-sm"
+                      multiple
                       onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const fd = new FormData();
-                        fd.append("file", file);
+                        const files = Array.from(e.target.files || []);
+                        if (!files.length) return;
                         setBusy(true);
                         setErr(null);
                         try {
-                          await api(`/api/journals/${detail.entry.id}/attachments`, { method: "POST", body: fd });
+                          for (const file of files) {
+                            const fd = new FormData();
+                            fd.append("file", file);
+                            await api(`/api/journals/${detail.entry.id}/attachments`, { method: "POST", body: fd });
+                          }
                           await loadDetail(detail.entry.id);
                         } catch (e: any) {
                           setErr(e.message);
@@ -4801,16 +4943,81 @@ export default function Journal() {
                       }}
                     />
                   </div>
-                  <div className="mt-2 space-y-1">
-                    {detail.attachments.map((a) => (
-                      <a
-                        key={a.id}
-                        className="block rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                        href={`/api/journals/${detail.entry.id}/attachments/${a.id}`}
-                      >
-                        {a.fileName}
-                      </a>
-                    ))}
+                  <div className="mt-2 space-y-2">
+                    {detail.attachments.map((a) => {
+                      const mime = String(a.mimeType || "").toLowerCase();
+                      const isPreviewable = mime.startsWith("image/") || mime.includes("pdf");
+                      const inlineUrl = `/api/journals/${encodeURIComponent(detail.entry.id)}/attachments/${encodeURIComponent(a.id)}?inline=1`;
+                      const downloadUrl = `/api/journals/${encodeURIComponent(detail.entry.id)}/attachments/${encodeURIComponent(a.id)}`;
+                      return (
+                        <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2">
+                          <a
+                            className="min-w-0 flex-1 truncate text-sm hover:underline"
+                            href={isPreviewable ? inlineUrl : downloadUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {a.fileName}
+                          </a>
+                          <div className="flex items-center gap-2">
+                            {isPreviewable ? (
+                              <a className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50" href={inlineUrl} target="_blank" rel="noreferrer">
+                                {tr("预览", "Preview")}
+                              </a>
+                            ) : null}
+                            <a className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50" href={downloadUrl} target="_blank" rel="noreferrer">
+                              {tr("下载", "Download")}
+                            </a>
+                            <label className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50">
+                              <input
+                                className="hidden"
+                                type="file"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const fd = new FormData();
+                                  fd.append("file", file);
+                                  setBusy(true);
+                                  setErr(null);
+                                  try {
+                                    await api(`/api/journals/${detail.entry.id}/attachments/${a.id}`, { method: "PUT", body: fd });
+                                    await loadDetail(detail.entry.id);
+                                  } catch (e: any) {
+                                    setErr(e.message);
+                                  } finally {
+                                    setBusy(false);
+                                    e.target.value = "";
+                                  }
+                                }}
+                                disabled={busy}
+                              />
+                              {tr("替换", "Replace")}
+                            </label>
+                            <button
+                              className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800 hover:bg-red-100 disabled:opacity-50"
+                              disabled={busy}
+                              onClick={async () => {
+                                const ok = window.confirm(tr("确认删除该附件？", "Delete this attachment?"));
+                                if (!ok) return;
+                                setBusy(true);
+                                setErr(null);
+                                try {
+                                  await api(`/api/journals/${detail.entry.id}/attachments/${a.id}` as any, { method: "DELETE" });
+                                  await loadDetail(detail.entry.id);
+                                } catch (e: any) {
+                                  setErr(e.message);
+                                } finally {
+                                  setBusy(false);
+                                }
+                              }}
+                              type="button"
+                            >
+                              {tr("删除", "Delete")}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -4821,6 +5028,133 @@ export default function Journal() {
             )}
           </div>
       </div>
+
+      {newAccountOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-4 shadow-xl">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">{tr("新建科目", "New account")}</div>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                onClick={() => {
+                  setNewAccountOpen(false);
+                  setNewAccountErr(null);
+                }}
+                type="button"
+              >
+                {tr("关闭", "Close")}
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div>
+                <label className="text-xs text-zinc-600">{tr("科目代码", "Code")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={newAccountForm.code}
+                  onChange={(e) => {
+                    const code = e.target.value;
+                    const codeNorm = String(code || "").trim();
+                    const autoInv = codeNorm === "1500";
+                    const autoFa = codeNorm.startsWith("16") || codeNorm.startsWith("61");
+                    setNewAccountForm({
+                      ...newAccountForm,
+                      code,
+                      linkInventoryFifo: autoInv ? true : newAccountForm.linkInventoryFifo,
+                      linkFixedAssets: autoFa ? true : newAccountForm.linkFixedAssets,
+                    });
+                  }}
+                  disabled={newAccountBusy}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-600">{tr("科目名称", "Name")}</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  value={newAccountForm.name}
+                  onChange={(e) => setNewAccountForm({ ...newAccountForm, name: e.target.value })}
+                  disabled={newAccountBusy}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-600">{tr("类型", "Type")}</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                  value={newAccountForm.type}
+                  onChange={(e) => {
+                    const type = e.target.value as any;
+                    const normalBalance = type === "liability" || type === "equity" || type === "income" ? "credit" : "debit";
+                    setNewAccountForm({ ...newAccountForm, type, normalBalance });
+                  }}
+                  disabled={newAccountBusy}
+                >
+                  {(["asset", "liability", "equity", "income", "cogs", "expense"] as const).map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-zinc-600">{tr("余额方向", "Normal balance")}</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                  value={newAccountForm.normalBalance}
+                  onChange={(e) => setNewAccountForm({ ...newAccountForm, normalBalance: e.target.value as any })}
+                  disabled={newAccountBusy}
+                >
+                  <option value="debit">debit</option>
+                  <option value="credit">credit</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={newAccountForm.linkInventoryFifo}
+                  onChange={(e) => setNewAccountForm({ ...newAccountForm, linkInventoryFifo: e.target.checked })}
+                  disabled={newAccountBusy}
+                />
+                {tr("关联库存 FIFO", "Link inventory FIFO")}
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={newAccountForm.linkFixedAssets}
+                  onChange={(e) => setNewAccountForm({ ...newAccountForm, linkFixedAssets: e.target.checked })}
+                  disabled={newAccountBusy}
+                />
+                {tr("关联固定资产", "Link fixed assets")}
+              </label>
+            </div>
+
+            {newAccountErr ? <div className="mt-3 text-sm text-red-700">{newAccountErr}</div> : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                disabled={newAccountBusy}
+                onClick={() => {
+                  setNewAccountOpen(false);
+                  setNewAccountErr(null);
+                }}
+                type="button"
+              >
+                {tr("取消", "Cancel")}
+              </button>
+              <button
+                className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                disabled={newAccountBusy}
+                onClick={() => {
+                  void createInlineAccount();
+                }}
+                type="button"
+              >
+                {newAccountBusy ? tr("处理中...", "Working...") : tr("创建", "Create")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {invModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

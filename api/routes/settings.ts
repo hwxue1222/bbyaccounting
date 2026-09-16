@@ -3,21 +3,13 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
 
-async function requireOrg(req: AuthedRequest, res: Response): Promise<string | null> {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
-}
-
 router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
 
@@ -82,7 +74,7 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
 
 router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
@@ -104,7 +96,7 @@ router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) =
 
 router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const bodySchema = z.object({
@@ -121,17 +113,20 @@ router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) 
     return;
   }
   const sql = getSql();
+  const codeNorm = parsed.data.code.trim();
+  const autoLinkInv = codeNorm === "1500";
+  const autoLinkFa = codeNorm.startsWith("16") || codeNorm.startsWith("61");
   const row = (
     await sql`
       INSERT INTO accounts (org_id, code, name, type, normal_balance, link_inventory_fifo, link_fixed_assets)
       VALUES (
         ${orgId},
-        ${parsed.data.code.trim()},
+        ${codeNorm},
         ${parsed.data.name.trim()},
         ${parsed.data.type},
         ${parsed.data.normalBalance},
-        ${parsed.data.linkInventoryFifo ?? false},
-        ${parsed.data.linkFixedAssets ?? false}
+        ${autoLinkInv ? true : (parsed.data.linkInventoryFifo ?? false)},
+        ${autoLinkFa ? true : (parsed.data.linkFixedAssets ?? false)}
       )
       RETURNING
         id,
@@ -149,7 +144,7 @@ router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) 
 
 router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const bodySchema = z.object({
@@ -179,8 +174,10 @@ router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Respo
   const type = parsed.data.type;
   const normalBalance = parsed.data.normalBalance;
   const isActive = parsed.data.isActive;
-  const linkInventoryFifo = parsed.data.linkInventoryFifo;
-  const linkFixedAssets = parsed.data.linkFixedAssets;
+  const autoLinkInv = code === "1500";
+  const autoLinkFa = !!code && (code.startsWith("16") || code.startsWith("61"));
+  const linkInventoryFifo = autoLinkInv ? true : parsed.data.linkInventoryFifo;
+  const linkFixedAssets = autoLinkFa ? true : parsed.data.linkFixedAssets;
 
   try {
     const row = (
@@ -223,7 +220,7 @@ router.patch("/accounts/:id", requireAuth, async (req: AuthedRequest, res: Respo
 
 router.get("/cost-centers", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
@@ -237,7 +234,7 @@ router.get("/cost-centers", requireAuth, async (req: AuthedRequest, res: Respons
 
 router.post("/cost-centers", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({ code: z.string().min(1), name: z.string().min(1) });
   const parsed = bodySchema.safeParse(req.body);
@@ -258,7 +255,7 @@ router.post("/cost-centers", requireAuth, async (req: AuthedRequest, res: Respon
 
 router.get("/currencies", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
@@ -272,7 +269,7 @@ router.get("/currencies", requireAuth, async (req: AuthedRequest, res: Response)
 
 router.post("/currencies", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({ code: z.string().min(3).max(3), isEnabled: z.boolean().optional() });
   const parsed = bodySchema.safeParse(req.body);
@@ -297,7 +294,7 @@ router.post("/currencies", requireAuth, async (req: AuthedRequest, res: Response
 
 router.patch("/currencies/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({ isEnabled: z.boolean().optional(), code: z.string().min(3).max(3).optional() });
   const parsed = bodySchema.safeParse(req.body);
@@ -422,7 +419,7 @@ router.patch("/currencies/:id", requireAuth, async (req: AuthedRequest, res: Res
 
 router.get("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const q = z
@@ -508,7 +505,7 @@ router.get("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) =
 
 router.post("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const bodySchema = z.object({
     rateDate: z.string().min(10),
@@ -535,7 +532,7 @@ router.post("/fx-rates", requireAuth, async (req: AuthedRequest, res: Response) 
 
 router.get("/bank-accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const rows = await sql`
@@ -554,7 +551,7 @@ router.get("/bank-accounts", requireAuth, async (req: AuthedRequest, res: Respon
 
 router.post("/bank-accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const bodySchema = z.object({
@@ -607,7 +604,7 @@ router.post("/bank-accounts", requireAuth, async (req: AuthedRequest, res: Respo
 
 router.patch("/bank-accounts/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = await requireOrg(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const bodySchema = z.object({

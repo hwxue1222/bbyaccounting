@@ -91,8 +91,11 @@ export default function AppShell({ title, children }: { title: string; children:
                 onClick={async () => {
                   const name = window.prompt(tr("公司名称", "Company name"));
                   if (!name || !name.trim()) return;
+                  const industry =
+                    (window.prompt(tr("行业：restaurant/trading/service", "Industry: restaurant/trading/service"), "restaurant") || "restaurant").trim() ||
+                    "restaurant";
                   const base = (window.prompt(tr("基准币（默认 SGD）", "Base currency (default SGD)"), active?.baseCurrency || "SGD") || "SGD").toUpperCase();
-                  await createOrg(name.trim(), base);
+                  await createOrg(name.trim(), base, industry);
                 }}
                 disabled={orgSwitching}
               >

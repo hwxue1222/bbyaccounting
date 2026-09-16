@@ -16,7 +16,7 @@ export async function ensureMigrated(): Promise<void> {
   try {
     await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
   } catch {
-    // ignore
+    void 0;
   }
 
   await sql`
@@ -34,11 +34,15 @@ export async function ensureMigrated(): Promise<void> {
       name TEXT NOT NULL,
       registration_no TEXT,
       base_currency TEXT NOT NULL,
+      industry TEXT NOT NULL DEFAULT 'restaurant',
+      deleted_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
 
   await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS registration_no TEXT`;
+  await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry TEXT NOT NULL DEFAULT 'restaurant'`;
+  await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS user_default_org (
@@ -95,6 +99,51 @@ export async function ensureMigrated(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_accounts_org ON accounts(org_id)`;
   await sql`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS link_inventory_fifo BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS link_fixed_assets BOOLEAN NOT NULL DEFAULT false`;
+
+  await sql`UPDATE accounts SET link_fixed_assets = true WHERE link_fixed_assets = false AND (code LIKE '16%' OR code LIKE '61%')`;
+  await sql`UPDATE accounts SET link_inventory_fifo = true WHERE link_inventory_fifo = false AND code = '1500'`;
+
+  const restaurantSeedAccounts = [
+    { code: "1000", name: "Cash", type: "asset", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "1100", name: "Bank", type: "asset", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "1200", name: "Accounts Receivable", type: "asset", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "1500", name: "Inventory", type: "asset", normal_balance: "debit", link_inventory_fifo: true, link_fixed_assets: false },
+    { code: "1600", name: "Fixed Assets", type: "asset", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: true },
+    { code: "1610", name: "Accumulated Depreciation", type: "asset", normal_balance: "credit", link_inventory_fifo: false, link_fixed_assets: true },
+    { code: "2000", name: "Accounts Payable", type: "liability", normal_balance: "credit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "2021", name: "Amount due to director", type: "liability", normal_balance: "credit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "3000", name: "Retained Earnings", type: "equity", normal_balance: "credit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "4000", name: "Sales", type: "income", normal_balance: "credit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "5000", name: "Cost of Goods Sold", type: "cogs", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "5010", name: "Food & Beverage Cost", type: "cogs", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6000", name: "Operating Expenses", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6020", name: "Rent", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6030", name: "Utilities", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6040", name: "Renovation", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6050", name: "Design Fee", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6060", name: "Salary", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6070", name: "Marketing", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6080", name: "Cleaning", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6090", name: "POS / Software", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+    { code: "6100", name: "Depreciation Expense", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: true },
+    { code: "7000", name: "Gain/Loss on Disposal", type: "expense", normal_balance: "debit", link_inventory_fifo: false, link_fixed_assets: false },
+  ];
+
+  try {
+    const orgRows = await sql`SELECT id FROM organizations WHERE deleted_at IS NULL AND industry = 'restaurant'`;
+    for (const o of orgRows as any[]) {
+      const orgId = String(o.id);
+      for (const a of restaurantSeedAccounts) {
+        await sql`
+          INSERT INTO accounts (org_id, code, name, type, normal_balance, link_inventory_fifo, link_fixed_assets)
+          VALUES (${orgId}, ${a.code}, ${a.name}, ${a.type}, ${a.normal_balance}, ${a.link_inventory_fifo}, ${a.link_fixed_assets})
+          ON CONFLICT (org_id, code) DO NOTHING
+        `;
+      }
+    }
+  } catch {
+    void 0;
+  }
 
   await sql`
     CREATE TABLE IF NOT EXISTS cost_centers (
@@ -288,9 +337,12 @@ export async function ensureMigrated(): Promise<void> {
       mime_type TEXT,
       size_bytes INT,
       data_base64 TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  await sql`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS inventory_items (

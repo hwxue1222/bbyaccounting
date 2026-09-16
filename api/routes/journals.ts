@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
+import { requireOrgAccess } from "../lib/orgAccess.js";
 import { round2, round6 } from "../lib/nums.js";
 import { issueVoucherNo } from "../lib/voucher.js";
 import { FIXED_ASSET_CATEGORIES, issueFixedAssetNo, normalizeFixedAssetCategory } from "../lib/fixedAssetNo.js";
@@ -55,15 +56,6 @@ async function tryLogError(sql: any, input: { id: string; orgId: string | null; 
   } catch {
     // ignore
   }
-}
-
-function requireOrgId(req: AuthedRequest, res: Response): string | null {
-  const orgId = req.auth!.orgId;
-  if (!orgId) {
-    res.status(400).json({ success: false, error: "No active organization" });
-    return null;
-  }
-  return orgId;
 }
 
 function isSystemAutoLine(desc: unknown): boolean {
@@ -391,7 +383,7 @@ async function deleteSystemEntriesForParent(trx: any, orgId: string, parentEntry
 
 router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const q = z
@@ -460,7 +452,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.get("/voucher/next", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
 
@@ -491,7 +483,7 @@ router.get("/voucher/next", requireAuth, async (req: AuthedRequest, res: Respons
 
 router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const id = req.params.id;
@@ -550,7 +542,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const id = req.params.id;
 
@@ -1091,7 +1083,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const lineSchema = z.object({
@@ -1762,7 +1754,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const id = req.params.id;
   const sql = getSql();
@@ -1849,7 +1841,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
 
 router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
   const lineSchema = z.object({
@@ -2068,7 +2060,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
 router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const id = req.params.id;
@@ -2413,7 +2405,7 @@ router.post(
   upload.single("file"),
   async (req: AuthedRequest, res: Response) => {
     await ensureMigrated();
-    const orgId = requireOrgId(req, res);
+    const orgId = await requireOrgAccess(req, res);
     if (!orgId) return;
     const sql = getSql();
     const id = req.params.id;
@@ -2442,9 +2434,76 @@ router.post(
   },
 );
 
+router.put(
+  "/:id/attachments/:attachmentId",
+  requireAuth,
+  upload.single("file"),
+  async (req: AuthedRequest, res: Response) => {
+    await ensureMigrated();
+    const orgId = await requireOrgAccess(req, res);
+    if (!orgId) return;
+    const sql = getSql();
+    const entryId = req.params.id;
+    const attachmentId = req.params.attachmentId;
+
+    const entryRows = await sql`SELECT id FROM journal_entries WHERE id = ${entryId} AND org_id = ${orgId} LIMIT 1`;
+    if (!entryRows.length) {
+      res.status(404).json({ success: false, error: "Not found" });
+      return;
+    }
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) {
+      res.status(400).json({ success: false, error: "Missing file" });
+      return;
+    }
+
+    const base64 = file.buffer.toString("base64");
+    const row = (
+      await sql`
+        UPDATE attachments
+        SET file_name = ${file.originalname},
+            mime_type = ${file.mimetype},
+            size_bytes = ${file.size},
+            data_base64 = ${base64},
+            updated_at = now()
+        WHERE id = ${attachmentId} AND entry_id = ${entryId} AND org_id = ${orgId}
+        RETURNING id, file_name as "fileName", mime_type as "mimeType", size_bytes as "sizeBytes", created_at as "createdAt"
+      `
+    )[0];
+    if (!row) {
+      res.status(404).json({ success: false, error: "Not found" });
+      return;
+    }
+    res.status(200).json({ success: true, data: { attachment: row } });
+  },
+);
+
+router.delete("/:id/attachments/:attachmentId", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+  const entryId = req.params.id;
+  const attachmentId = req.params.attachmentId;
+
+  const entryRows = await sql`SELECT id FROM journal_entries WHERE id = ${entryId} AND org_id = ${orgId} LIMIT 1`;
+  if (!entryRows.length) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+
+  const rows = await sql`DELETE FROM attachments WHERE id = ${attachmentId} AND entry_id = ${entryId} AND org_id = ${orgId} RETURNING id`;
+  if (!rows.length) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+  res.status(200).json({ success: true });
+});
+
 router.get("/:id/attachments/:attachmentId", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
-  const orgId = requireOrgId(req, res);
+  const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
   const sql = getSql();
   const row = (
@@ -2460,8 +2519,9 @@ router.get("/:id/attachments/:attachmentId", requireAuth, async (req: AuthedRequ
     return;
   }
   const buf = Buffer.from(row.dataBase64 || "", "base64");
+  const inline = typeof req.query.inline === "string" ? req.query.inline === "1" || req.query.inline.toLowerCase() === "true" : false;
   res.setHeader("Content-Type", row.mimeType || "application/octet-stream");
-  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(row.fileName)}`);
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(row.fileName)}`);
   res.status(200).send(buf);
 });
 
