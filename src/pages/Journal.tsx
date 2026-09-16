@@ -1666,6 +1666,7 @@ export default function Journal() {
     const d = await fetchDetailCore(id, { signal, force: opts?.force });
     if (signal?.aborted) return;
     setDetail(d);
+    setErr((prev) => (prev === "请求超时，请重试" ? null : prev));
   }
 
   function prefetchDetail(id: string) {
