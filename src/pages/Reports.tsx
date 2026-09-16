@@ -238,7 +238,7 @@ export default function Reports() {
             <input type="checkbox" className="h-4 w-4" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
             {tr("不显示金额为 0 的科目", "Hide zero-amount accounts")}
           </label>
-          <div className="ml-auto text-sm text-zinc-600">{tr("本位币", "Base")}: {baseCurrency}</div>
+          <div className="ml-auto text-sm text-zinc-600">{baseCurrency}</div>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}

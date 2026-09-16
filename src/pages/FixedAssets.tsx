@@ -626,7 +626,7 @@ export default function FixedAssets() {
               </select>
             </div>
             <div className="text-xs text-zinc-600">
-              {tr("本位合计", "Base total")}: {assetCostCenterSummary.total.costBase.toFixed(2)} {baseCurrency} · {tr("项数", "Count")}: {assetCostCenterSummary.total.count}
+              {tr("合计", "Total")}: {assetCostCenterSummary.total.costBase.toFixed(2)} {baseCurrency} · {tr("项数", "Count")}: {assetCostCenterSummary.total.count}
             </div>
           </div>
 
@@ -639,7 +639,7 @@ export default function FixedAssets() {
                     <th className="px-3 py-2 text-right">项数</th>
                     <th className="px-3 py-2 text-right">金额（交易币）</th>
                     <th className="px-3 py-2 text-left">币种</th>
-                    <th className="px-3 py-2 text-right">成本（本位 {baseCurrency}）</th>
+                    <th className="px-3 py-2 text-right">成本（{baseCurrency}）</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -689,7 +689,7 @@ export default function FixedAssets() {
                           <th className="px-3 py-2 text-left">分录号</th>
                           <th className="px-3 py-2 text-right">金额（交易币）</th>
                           <th className="px-3 py-2 text-left">币种</th>
-                          <th className="px-3 py-2 text-right">成本（本位）</th>
+                          <th className="px-3 py-2 text-right">成本（{baseCurrency}）</th>
                           <th className="px-3 py-2 text-right">折旧月数</th>
                           <th className="px-3 py-2 text-left">备注</th>
                           <th className="px-3 py-2 text-left">状态</th>
@@ -831,7 +831,7 @@ export default function FixedAssets() {
               <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.usefulLifeMonths} onChange={(e) => setAssetForm({ ...assetForm, usefulLifeMonths: Number(e.target.value) || 0 })} type="number" />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">残值（本位）</label>
+              <label className="text-xs text-zinc-600">残值（{baseCurrency}）</label>
               <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.salvageBase} onChange={(e) => setAssetForm({ ...assetForm, salvageBase: Number(e.target.value) || 0 })} type="number" step="0.01" />
             </div>
             <div>
@@ -901,7 +901,7 @@ export default function FixedAssets() {
                     <th className="px-3 py-2 text-left">分录号</th>
                     <th className="px-3 py-2 text-left">资产编号</th>
                     <th className="px-3 py-2 text-left">状态</th>
-                    <th className="px-3 py-2 text-right">成本（本位 {baseCurrency}）</th>
+                    <th className="px-3 py-2 text-right">成本（{baseCurrency}）</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -946,7 +946,7 @@ export default function FixedAssets() {
                   <th className="px-3 py-2 text-left">分录号</th>
                   <th className="px-3 py-2 text-left">资产编号</th>
                   <th className="px-3 py-2 text-left">备注</th>
-                  <th className="px-3 py-2 text-right">借（本位 {baseCurrency}）</th>
+                  <th className="px-3 py-2 text-right">借（{baseCurrency}）</th>
                 </tr>
               </thead>
               <tbody>
@@ -1000,7 +1000,7 @@ export default function FixedAssets() {
               <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={disposeForm.date} onChange={(e) => setDisposeForm({ ...disposeForm, date: e.target.value })} />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">处置收入（本位 {baseCurrency}）</label>
+              <label className="text-xs text-zinc-600">处置收入（{baseCurrency}）</label>
               <input
                 className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                 value={disposeForm.proceedsBase}
@@ -1088,8 +1088,8 @@ export default function FixedAssets() {
                     <th className="px-3 py-2 text-left">日期</th>
                     <th className="px-3 py-2 text-left">分录号</th>
                     <th className="px-3 py-2 text-left">资产编号</th>
-                    <th className="px-3 py-2 text-right">处置成本（本位 {baseCurrency}）</th>
-                    <th className="px-3 py-2 text-right">处置累计折旧（本位 {baseCurrency}）</th>
+                    <th className="px-3 py-2 text-right">处置成本（{baseCurrency}）</th>
+                    <th className="px-3 py-2 text-right">处置累计折旧（{baseCurrency}）</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1262,7 +1262,7 @@ export default function FixedAssets() {
                           </tr>
                         ))}
                         <tr className="border-t border-zinc-200 bg-zinc-50">
-                          <td className="px-3 py-2 font-medium">小计（本位 {baseCurrency}）</td>
+                          <td className="px-3 py-2 font-medium">小计（{baseCurrency}）</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.openingCost.toFixed(2)}</td>
                           <td className="px-3 py-2 text-right font-medium">{totals.additions.toFixed(2)}</td>
                           <td className="px-3 py-2 text-right font-medium">{fmtDisposal(totals.disposals)}</td>
@@ -1285,7 +1285,7 @@ export default function FixedAssets() {
                 <table className="w-full text-sm">
                   <tbody>
                     <tr className="bg-zinc-50">
-                      <td className="px-3 py-2 font-medium">合计（本位 {baseCurrency}）</td>
+                      <td className="px-3 py-2 font-medium">合计（{baseCurrency}）</td>
                       {(() => {
                         const effectiveRows = costCenterFilterId
                           ? costCenterFilterId === "__none__"
