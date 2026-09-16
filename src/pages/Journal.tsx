@@ -4882,16 +4882,8 @@ export default function Journal() {
                         return;
                       }
                       setErr(null);
-                      if (e.isSystem) {
-                        selectEntry(e.id);
-                        setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-                        return;
-                      }
-                      if (e.status === "draft") {
-                        void loadDraftForPosting(e.id);
-                        return;
-                      }
-                      void openEditModal(e.id);
+                      selectEntry(e.id);
+                      setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
                     }}
                     onMouseEnter={() => {
                       prefetchDetail(e.id);
