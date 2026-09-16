@@ -2467,10 +2467,6 @@ export default function Journal() {
                             openInlineNewAccount(idx);
                             return;
                           }
-                          if (e.target.value === "__manage_accounts__") {
-                            navigate("/settings");
-                            return;
-                          }
                           const next = [...draftLines];
                           next[idx] = { ...l, accountId: e.target.value };
                           setDraftLines(next);
@@ -2479,7 +2475,6 @@ export default function Journal() {
                       >
                         <option value="">{tr("请选择", "Select")}</option>
                         <option value="__new_account__">{tr("+ 新建", "+ New")}</option>
-                        <option value="__manage_accounts__">{tr("去设置", "Open settings")}</option>
                         {accounts
                           .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
                           .map((a) => (
@@ -2489,14 +2484,6 @@ export default function Journal() {
                             </option>
                           ))}
                       </select>
-                      <button
-                        className="whitespace-nowrap rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                        disabled={readOnly}
-                        onClick={() => openInlineNewAccount(idx)}
-                        type="button"
-                      >
-                        {tr("新建", "New")}
-                      </button>
                     </div>
                   </td>
                   <td className="px-3 py-2">
