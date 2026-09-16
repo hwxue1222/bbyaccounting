@@ -4891,8 +4891,17 @@ export default function Journal() {
                         setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
                         return;
                       }
-                      selectEntry(e.id);
-                      setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                      setErr(null);
+                      if (e.isSystem) {
+                        selectEntry(e.id);
+                        setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                        return;
+                      }
+                      if (e.status === "draft") {
+                        void loadDraftForPosting(e.id);
+                        return;
+                      }
+                      void openEditModal(e.id);
                     }}
                     onMouseEnter={() => {
                       prefetchDetail(e.id);
