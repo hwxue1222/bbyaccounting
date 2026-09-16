@@ -13,6 +13,78 @@ export async function ensureMigrated(): Promise<void> {
   migrating = (async () => {
   const sql = getSql();
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  const MIGRATION_ID = "base_2026_09";
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${MIGRATION_ID} LIMIT 1`;
+    if ((applied as any[])?.length) {
+      migrated = true;
+      return;
+    }
+  } catch {
+    void 0;
+  }
+
+  try {
+    const rows = await sql`
+      SELECT
+        to_regclass('public.organizations') IS NOT NULL AS org_ok,
+        EXISTS(
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'industry'
+        ) AS org_industry_ok,
+        EXISTS(
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'deleted_at'
+        ) AS org_deleted_ok,
+        to_regclass('public.accounts') IS NOT NULL AS accounts_ok,
+        EXISTS(
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'link_fixed_assets'
+        ) AS accounts_link_fa_ok,
+        EXISTS(
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'link_inventory_fifo'
+        ) AS accounts_link_inv_ok,
+        to_regclass('public.journal_entries') IS NOT NULL AS journals_ok,
+        EXISTS(
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'inventory_impact'
+        ) AS journals_inv_ok,
+        to_regclass('public.journal_lines') IS NOT NULL AS journal_lines_ok,
+        to_regclass('public.attachments') IS NOT NULL AS attachments_ok
+    `;
+    const s: any = (rows as any[])?.[0];
+    const schemaReady =
+      !!s?.org_ok &&
+      !!s?.org_industry_ok &&
+      !!s?.org_deleted_ok &&
+      !!s?.accounts_ok &&
+      !!s?.accounts_link_fa_ok &&
+      !!s?.accounts_link_inv_ok &&
+      !!s?.journals_ok &&
+      !!s?.journals_inv_ok &&
+      !!s?.journal_lines_ok &&
+      !!s?.attachments_ok;
+    if (schemaReady) {
+      try {
+        await sql`INSERT INTO schema_migrations (id) VALUES (${MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      } catch {
+        void 0;
+      }
+      migrated = true;
+      return;
+    }
+  } catch {
+    void 0;
+  }
+
   try {
     await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
   } catch {
@@ -130,17 +202,35 @@ export async function ensureMigrated(): Promise<void> {
   ];
 
   try {
-    const orgRows = await sql`SELECT id FROM organizations WHERE deleted_at IS NULL AND industry = 'restaurant'`;
-    for (const o of orgRows as any[]) {
-      const orgId = String(o.id);
-      for (const a of restaurantSeedAccounts) {
-        await sql`
-          INSERT INTO accounts (org_id, code, name, type, normal_balance, link_inventory_fifo, link_fixed_assets)
-          VALUES (${orgId}, ${a.code}, ${a.name}, ${a.type}, ${a.normal_balance}, ${a.link_inventory_fifo}, ${a.link_fixed_assets})
-          ON CONFLICT (org_id, code) DO NOTHING
-        `;
-      }
-    }
+    const codes = restaurantSeedAccounts.map((a) => a.code);
+    const names = restaurantSeedAccounts.map((a) => a.name);
+    const types = restaurantSeedAccounts.map((a) => a.type);
+    const normals = restaurantSeedAccounts.map((a) => a.normal_balance);
+    const linkInv = restaurantSeedAccounts.map((a) => a.link_inventory_fifo);
+    const linkFa = restaurantSeedAccounts.map((a) => a.link_fixed_assets);
+    await sql`
+      INSERT INTO accounts (org_id, code, name, type, normal_balance, link_inventory_fifo, link_fixed_assets)
+      SELECT
+        o.id,
+        x.code,
+        x.name,
+        x.type,
+        x.normal_balance,
+        x.link_inventory_fifo,
+        x.link_fixed_assets
+      FROM organizations o
+      CROSS JOIN LATERAL (
+        SELECT
+          unnest(${sql.array(codes)}::text[]) AS code,
+          unnest(${sql.array(names)}::text[]) AS name,
+          unnest(${sql.array(types)}::text[]) AS type,
+          unnest(${sql.array(normals)}::text[]) AS normal_balance,
+          unnest(${sql.array(linkInv)}::boolean[]) AS link_inventory_fifo,
+          unnest(${sql.array(linkFa)}::boolean[]) AS link_fixed_assets
+      ) x
+      WHERE o.deleted_at IS NULL AND o.industry = 'restaurant'
+      ON CONFLICT (org_id, code) DO NOTHING
+    `;
   } catch {
     void 0;
   }
@@ -471,6 +561,12 @@ export async function ensureMigrated(): Promise<void> {
       UNIQUE (org_id, asset_id, run_id)
     )
   `;
+
+  try {
+    await sql`INSERT INTO schema_migrations (id) VALUES (${MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+  } catch {
+    void 0;
+  }
 
     migrated = true;
   })().finally(() => {
