@@ -508,6 +508,8 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             account_id as "accountId",
             description,
             cost_center_id as "costCenterId",
+            inventory_item_id as "inventoryItemId",
+            fixed_asset_id as "fixedAssetId",
             debit_txn as "debitTxn",
             credit_txn as "creditTxn",
             debit_base as "debitBase",
@@ -523,6 +525,8 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             account_id as "accountId",
             description,
             cost_center_id as "costCenterId",
+            inventory_item_id as "inventoryItemId",
+            fixed_asset_id as "fixedAssetId",
             debit_txn as "debitTxn",
             credit_txn as "creditTxn",
             debit_base as "debitBase",
@@ -531,13 +535,40 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
           WHERE entry_id = ${id} AND org_id = ${orgId} AND (description IS NULL OR description NOT IN ('COGS (FIFO)', 'Inventory (FIFO)'))
           ORDER BY line_no ASC
         `;
+
+  const faIds = Array.from(
+    new Set(
+      (lines as any[])
+        .map((l) => (l as any).fixedAssetId)
+        .filter((x) => typeof x === "string" && x)
+        .map(String),
+    ),
+  );
+  const fixedAssets = faIds.length
+    ? await sql`
+        SELECT
+          id,
+          asset_no as "assetNo",
+          name,
+          category,
+          memo,
+          acquisition_date as "acquisitionDate",
+          useful_life_months as "usefulLifeMonths",
+          salvage_value_base as "salvageValueBase",
+          status
+        FROM fixed_assets
+        WHERE org_id = ${orgId} AND id = ANY(${faIds}::uuid[])
+        ORDER BY acquisition_date DESC, created_at DESC, id DESC
+      `
+    : [];
+
   const atts = await sql`
     SELECT id, file_name as "fileName", mime_type as "mimeType", size_bytes as "sizeBytes", created_at as "createdAt"
     FROM attachments
     WHERE entry_id = ${id} AND org_id = ${orgId}
     ORDER BY created_at DESC
   `;
-  res.status(200).json({ success: true, data: { entry, lines, attachments: atts } });
+  res.status(200).json({ success: true, data: { entry, lines, fixedAssets, attachments: atts } });
 });
 
 router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {

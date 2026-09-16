@@ -46,10 +46,23 @@ type EntryDetail = {
     accountId: string;
     description: string | null;
     costCenterId: string | null;
+    inventoryItemId?: string | null;
+    fixedAssetId?: string | null;
     debitTxn: string;
     creditTxn: string;
     debitBase: string;
     creditBase: string;
+  }>;
+  fixedAssets?: Array<{
+    id: string;
+    assetNo: string | null;
+    name: string;
+    category: string | null;
+    memo: string | null;
+    acquisitionDate: string | null;
+    usefulLifeMonths: number | null;
+    salvageValueBase: number | null;
+    status: string;
   }>;
   attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; createdAt: string }>;
 };
@@ -490,6 +503,10 @@ export default function Journal() {
     const credit = draftLines.reduce((s, l) => s + (Number(l.creditTxn) || 0), 0);
     return Math.round((debit - credit) * 100) / 100;
   }, [draftLines]);
+
+  const costCenterLabelById = useMemo(() => {
+    return new Map(costCenters.map((c) => [String(c.id), `${c.code} ${c.name}`.trim()]));
+  }, [costCenters]);
 
   function resetDraftEntry() {
     setDraftLines([
@@ -1732,7 +1749,7 @@ export default function Journal() {
 
         {!editingEntryId ? (
           <div className="mt-3">
-            <div className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
               <div className="grid gap-3 md:grid-cols-12">
                 <div className="md:col-span-2">
                   <label className="text-xs text-zinc-600">{tr("谁", "Who")}</label>
@@ -4883,12 +4900,35 @@ export default function Journal() {
                   </div>
                 </div>
 
+                {detail.entry.memo ? <div className="text-sm text-zinc-600">{tr("备注：", "Memo: ")}{detail.entry.memo}</div> : null}
+
+                {detail.fixedAssets && detail.fixedAssets.length ? (
+                  <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-3 text-sm">
+                    <div className="text-xs text-zinc-600">{tr("固定资产", "Fixed assets")}</div>
+                    <div className="mt-1 space-y-1">
+                      {detail.fixedAssets.map((fa) => {
+                        const no = fa.assetNo ? String(fa.assetNo) : "";
+                        const cat = fa.category ? String(fa.category) : "";
+                        const acq = fa.acquisitionDate ? String(fa.acquisitionDate).slice(0, 10) : "";
+                        const parts = [no, fa.name, cat ? `(${cat})` : "", acq ? `· ${acq}` : ""].filter(Boolean);
+                        return (
+                          <div key={fa.id} className="text-zinc-800">
+                            {parts.join(" ")}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="overflow-auto rounded-lg border border-zinc-100">
                   <table className="w-full text-sm">
                     <thead className="bg-zinc-50 text-xs text-zinc-600">
                       <tr>
                         <th className="px-3 py-2 text-left">行</th>
                         <th className="px-3 py-2 text-left">科目</th>
+                        <th className="px-3 py-2 text-left">摘要</th>
+                        <th className="px-3 py-2 text-left">Cost Center</th>
                         <th className="px-3 py-2 text-right">借</th>
                         <th className="px-3 py-2 text-right">贷</th>
                       </tr>
@@ -4897,15 +4937,23 @@ export default function Journal() {
                       {detail.lines.map((l) => {
                         const acc = accounts.find((a) => a.id === l.accountId);
                         const isAuto = l.lineNo > 2 && (String(acc?.code || "") === "5000" || String(acc?.code || "") === "1500");
+                        const fa = l.fixedAssetId && detail.fixedAssets ? detail.fixedAssets.find((x) => String(x.id) === String(l.fixedAssetId)) : null;
+                        const faLabel = fa ? `${fa.assetNo ? `${fa.assetNo} ` : ""}${fa.name}`.trim() : "";
+                        const cc = l.costCenterId ? costCenterLabelById.get(String(l.costCenterId)) || String(l.costCenterId) : "";
                         return (
                           <tr key={l.id} className={"border-t border-zinc-100 " + (isAuto ? "bg-amber-50" : "")}>
                             <td className="px-3 py-2">{l.lineNo}</td>
                             <td className="px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0 flex-1">{acc ? `${acc.code} ${acc.name}` : l.accountId}</div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate">{acc ? `${acc.code} ${acc.name}` : l.accountId}</div>
+                                  {faLabel ? <div className="mt-0.5 truncate text-xs text-zinc-600">{tr("固定资产：", "FA: ")}{faLabel}</div> : null}
+                                </div>
                                 {isAuto ? <span className="whitespace-nowrap text-xs text-amber-800">系统自动生成</span> : null}
                               </div>
                             </td>
+                            <td className="px-3 py-2">{l.description || ""}</td>
+                            <td className="px-3 py-2">{cc}</td>
                             <td className="px-3 py-2 text-right">{Number(l.debitTxn).toFixed(2)}</td>
                             <td className="px-3 py-2 text-right">{Number(l.creditTxn).toFixed(2)}</td>
                           </tr>
