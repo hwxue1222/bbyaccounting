@@ -92,6 +92,42 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   res.status(200).json({ success: true, data: { assets: rows } });
 });
 
+router.post("/batch", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+
+  const bodySchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const rows = await sql`
+    SELECT
+      id,
+      asset_no as "assetNo",
+      name,
+      category,
+      memo,
+      acquisition_date as "acquisitionDate",
+      cost_base as "costBase",
+      useful_life_months as "usefulLifeMonths",
+      salvage_value_base as "salvageValueBase",
+      status,
+      disposed_at as "disposedAt",
+      asset_account_id as "assetAccountId",
+      accum_dep_account_id as "accumDepAccountId",
+      dep_expense_account_id as "depExpenseAccountId"
+    FROM fixed_assets
+    WHERE org_id = ${orgId}
+      AND id = ANY(${sql.array(parsed.data.ids)}::uuid[])
+  `;
+  res.status(200).json({ success: true, data: { assets: rows } });
+});
+
 router.patch("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrgAccess(req, res);

@@ -46,38 +46,17 @@ type EntryDetail = {
     accountId: string;
     description: string | null;
     costCenterId: string | null;
-    costCenterCode?: string | null;
-    costCenterName?: string | null;
     inventoryItemId?: string | null;
     fixedAssetId?: string | null;
-    fixedAssetNo?: string | null;
-    fixedAssetName?: string | null;
-    fixedAssetCategory?: string | null;
-    fixedAssetMemo?: string | null;
-    fixedAssetAcquisitionDate?: string | null;
-    fixedAssetUsefulLifeMonths?: number | null;
-    fixedAssetSalvageValueBase?: number | null;
-    fixedAssetStatus?: string | null;
     debitTxn: string;
     creditTxn: string;
     debitBase: string;
     creditBase: string;
   }>;
-  fixedAssets?: Array<{
-    id: string;
-    assetNo: string | null;
-    name: string;
-    category: string | null;
-    memo: string | null;
-    acquisitionDate: string | null;
-    usefulLifeMonths: number | null;
-    salvageValueBase: number | null;
-    status: string;
-  }>;
   attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; createdAt: string }>;
 };
 
-type CachedDetail = { id: string; ts: number; value: EntryDetail };
+type CachedDetail = { key: string; ts: number; value: EntryDetail };
 
 type AssistJournalSuggestion = {
   draft:
@@ -121,6 +100,7 @@ export default function Journal() {
   const pageAbortRef = useRef<AbortController | null>(null);
   const invQuoteAbortRef = useRef<AbortController | null>(null);
   const detailCacheRef = useRef<Map<string, CachedDetail>>(new Map());
+  const detailInflightRef = useRef<Map<string, Promise<EntryDetail>>>(new Map());
   const detailAbortRef = useRef<AbortController | null>(null);
   const detailPrefetchAbortRef = useRef<AbortController | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -162,6 +142,7 @@ export default function Journal() {
   const [assistShowDisposalPicker, setAssistShowDisposalPicker] = useState(false);
   const assistDisposalSnapKeyRef = useRef<string>("");
   const fixedAssetsRef = useRef<any[]>([]);
+  const fixedAssetFetchRef = useRef<Set<string>>(new Set());
   const [assistEditFaInfo, setAssistEditFaInfo] = useState<null | {
     category: string;
     assetNo: string;
@@ -501,6 +482,57 @@ export default function Journal() {
   }, [fixedAssets]);
 
   useEffect(() => {
+    if (!detail?.lines?.length) return;
+    const ids = Array.from(
+      new Set(
+        detail.lines
+          .map((l: any) => (l as any).fixedAssetId)
+          .filter(Boolean)
+          .map((x: any) => String(x)),
+      ),
+    );
+    if (!ids.length) return;
+    const known = new Set((fixedAssetsRef.current || []).map((a: any) => String(a.id)));
+    const missing = ids.filter((id) => !known.has(id) && !fixedAssetFetchRef.current.has(id));
+    if (!missing.length) return;
+    for (const id of missing) fixedAssetFetchRef.current.add(id);
+
+    const ctrl = new AbortController();
+    api<{ assets: any[] }>("/api/fixed-assets/batch", { method: "POST", json: { ids: missing }, signal: ctrl.signal, timeoutMs: 30_000 })
+      .then((r) => {
+        const rows = Array.isArray((r as any).assets) ? ((r as any).assets as any[]) : [];
+        if (!rows.length) return;
+        setFixedAssets((prev) => {
+          const map = new Map(prev.map((a: any) => [String(a.id), a] as const));
+          for (const a of rows) {
+            const id = String(a.id);
+            map.set(id, {
+              id,
+              assetNo: a.assetNo ? String(a.assetNo) : null,
+              category: a.category ? String(a.category) : null,
+              name: String(a.name || ""),
+              status: String(a.status || ""),
+              acquisitionDate: a.acquisitionDate ? String(a.acquisitionDate) : null,
+              usefulLifeMonths: a.usefulLifeMonths != null ? Number(a.usefulLifeMonths) : null,
+              salvageValueBase: a.salvageValueBase != null ? Number(a.salvageValueBase) : null,
+              memo: a.memo ? String(a.memo) : null,
+              costBase: Number(a.costBase || 0),
+              depExpenseAccountId: a.depExpenseAccountId ? String(a.depExpenseAccountId) : null,
+              accumDepAccountId: a.accumDepAccountId ? String(a.accumDepAccountId) : null,
+              assetAccountId: a.assetAccountId ? String(a.assetAccountId) : null,
+            });
+          }
+          return Array.from(map.values()) as any;
+        });
+      })
+      .catch(() => null);
+
+    return () => {
+      ctrl.abort();
+    };
+  }, [detail?.entry?.id]);
+
+  useEffect(() => {
     setFaPurchaseByLineIdx((prev) => {
       const entries = Object.entries(prev).filter(([k]) => Number(k) >= 0 && Number(k) < draftLines.length);
       if (entries.length === Object.keys(prev).length) return prev;
@@ -749,12 +781,49 @@ export default function Journal() {
     await refreshEntriesOnly();
   }
 
-  async function startEditEntry(id: string) {
+  function detailCacheKey(entryId: string): string {
+    return `${activeOrgId || ""}:${String(entryId)}`;
+  }
+
+  function isDetailCacheFresh(cached: CachedDetail | undefined): cached is CachedDetail {
+    if (!cached) return false;
+    return Date.now() - cached.ts <= 60_000;
+  }
+
+  async function fetchDetailCore(entryId: string, opts?: { signal?: AbortSignal; force?: boolean }): Promise<EntryDetail> {
+    const key = detailCacheKey(entryId);
+    const cached = detailCacheRef.current.get(key);
+    if (!opts?.force && isDetailCacheFresh(cached)) {
+      return cached.value;
+    }
+
+    const inflight = detailInflightRef.current.get(key);
+    if (inflight) {
+      return inflight;
+    }
+
+    let p: Promise<EntryDetail>;
+    p = api<EntryDetail>(`/api/journals/${encodeURIComponent(entryId)}`, { signal: opts?.signal, cache: "no-store" })
+      .then((d) => {
+        detailCacheRef.current.set(key, { key, ts: Date.now(), value: d });
+        return d;
+      })
+      .finally(() => {
+        if (detailInflightRef.current.get(key) === p) {
+          detailInflightRef.current.delete(key);
+        }
+      });
+
+    detailInflightRef.current.set(key, p);
+    return p;
+  }
+
+  async function startEditEntry(id: string, detailOverride?: EntryDetail) {
     setBusy(true);
     setErr(null);
     try {
-      const d = await api<EntryDetail>(`/api/journals/${id}`, { cache: "no-store" });
-      detailCacheRef.current.set(id, { id, ts: Date.now(), value: d });
+      const d = detailOverride ?? (await fetchDetailCore(id, { force: true }));
+      setDetail(d);
 
       const needsInv = d.entry.status === "posted" && d.lines.some((l: any) => (l as any).inventoryItemId);
       const movesResp = needsInv ? await api<{ moves: any[] }>(`/api/inventory/moves?entryId=${encodeURIComponent(id)}&limit=200`) : ({ moves: [] } as any);
@@ -862,15 +931,6 @@ export default function Journal() {
     }
     setErr(null);
     selectEntry(entryId);
-    const cached = detailCacheRef.current.get(entryId);
-    const now = Date.now();
-    if (!(cached && now - cached.ts <= 60_000)) {
-      try {
-        await loadDetail(entryId);
-      } catch {
-        // ignore
-      }
-    }
     await startEditEntry(entryId);
     setEditModalOpen(true);
   }
@@ -883,7 +943,7 @@ export default function Journal() {
     setBusy(true);
     setErr(null);
     try {
-      const d = await api<EntryDetail>(`/api/journals/${entryId}`);
+      const d = await fetchDetailCore(entryId, { force: true });
       if (d.entry.status !== "draft") {
         throw new Error(tr("仅支持对草稿凭证使用“新建”", "Only draft journals are supported for this action."));
       }
@@ -1575,37 +1635,25 @@ export default function Journal() {
     setDraftFx(Number(fx));
   }
 
-  async function loadDetail(id: string, signal?: AbortSignal) {
-    const cached = detailCacheRef.current.get(id);
-    const now = Date.now();
-    if (cached && now - cached.ts <= 60_000) {
-      setDetail(cached.value);
-      return;
-    }
-    const d = await api<EntryDetail>(`/api/journals/${id}`, { signal, cache: "no-store" });
-    detailCacheRef.current.set(id, { id, ts: Date.now(), value: d });
+  async function loadDetail(id: string, signal?: AbortSignal, opts?: { force?: boolean }) {
+    const d = await fetchDetailCore(id, { signal, force: opts?.force });
+    if (signal?.aborted) return;
     setDetail(d);
   }
 
   function prefetchDetail(id: string) {
-    const cached = detailCacheRef.current.get(id);
-    const now = Date.now();
-    if (cached && now - cached.ts <= 60_000) return;
+    const cached = detailCacheRef.current.get(detailCacheKey(id));
+    if (isDetailCacheFresh(cached)) return;
     detailPrefetchAbortRef.current?.abort();
     const ctrl = new AbortController();
     detailPrefetchAbortRef.current = ctrl;
-    api<EntryDetail>(`/api/journals/${id}`, { signal: ctrl.signal, cache: "no-store" })
-      .then((d) => {
-        detailCacheRef.current.set(id, { id, ts: Date.now(), value: d });
-      })
-      .catch(() => null);
+    fetchDetailCore(id, { signal: ctrl.signal }).catch(() => null);
   }
 
   function selectEntry(id: string) {
     setSelectedId(id);
-    const cached = detailCacheRef.current.get(id);
-    const now = Date.now();
-    if (cached && now - cached.ts <= 60_000) {
+    const cached = detailCacheRef.current.get(detailCacheKey(id));
+    if (isDetailCacheFresh(cached)) {
       setDetail(cached.value);
       return;
     }
@@ -1615,11 +1663,17 @@ export default function Journal() {
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     pageAbortRef.current?.abort();
+    detailAbortRef.current?.abort();
+    detailPrefetchAbortRef.current?.abort();
     const ctrl = new AbortController();
     pageAbortRef.current = ctrl;
     setErr(null);
     setSelectedId(null);
     setDetail(null);
+    detailCacheRef.current.clear();
+    detailInflightRef.current.clear();
+    fixedAssetFetchRef.current.clear();
+    setFixedAssets([]);
     refreshCore(ctrl.signal).catch((e) => {
       if (e?.name === "AbortError") return;
       if (e?.message === "请求超时，请重试") return;
@@ -4925,7 +4979,7 @@ export default function Journal() {
                           try {
                             await api(`/api/journals/${encodeURIComponent(detail.entry.id)}/post` as any, { method: "POST" });
                             await refreshCore();
-                            await loadDetail(detail.entry.id);
+                            await loadDetail(detail.entry.id, undefined, { force: true });
                           } catch (e: any) {
                             setErr(e.message);
                           } finally {
@@ -4968,24 +5022,43 @@ export default function Journal() {
 
                 {detail.entry.memo ? <div className="text-sm text-zinc-600">{tr("备注：", "Memo: ")}{detail.entry.memo}</div> : null}
 
-                {detail.fixedAssets && detail.fixedAssets.length ? (
-                  <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-3 text-sm">
-                    <div className="text-xs text-zinc-600">{tr("固定资产", "Fixed assets")}</div>
-                    <div className="mt-1 space-y-1">
-                      {detail.fixedAssets.map((fa) => {
-                        const no = fa.assetNo ? String(fa.assetNo) : "";
-                        const cat = fa.category ? String(fa.category) : "";
-                        const acq = fa.acquisitionDate ? String(fa.acquisitionDate).slice(0, 10) : "";
-                        const parts = [no, fa.name, cat ? `(${cat})` : "", acq ? `· ${acq}` : ""].filter(Boolean);
-                        return (
-                          <div key={fa.id} className="text-zinc-800">
-                            {parts.join(" ")}
-                          </div>
-                        );
-                      })}
+                {(() => {
+                  const ids = Array.from(
+                    new Set(
+                      detail.lines
+                        .map((l: any) => (l as any).fixedAssetId)
+                        .filter(Boolean)
+                        .map((x: any) => String(x)),
+                    ),
+                  );
+                  if (!ids.length) return null;
+                  return (
+                    <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-3 text-sm">
+                      <div className="text-xs text-zinc-600">{tr("固定资产", "Fixed assets")}</div>
+                      <div className="mt-1 space-y-1">
+                        {ids.map((id) => {
+                          const fa = fixedAssets.find((x) => String(x.id) === id);
+                          if (!fa) {
+                            return (
+                              <div key={id} className="text-zinc-800">
+                                {id}
+                              </div>
+                            );
+                          }
+                          const no = fa.assetNo ? String(fa.assetNo) : "";
+                          const cat = fa.category ? String(fa.category) : "";
+                          const acq = fa.acquisitionDate ? String(fa.acquisitionDate).slice(0, 10) : "";
+                          const parts = [no, fa.name, cat ? `(${cat})` : "", acq ? `· ${acq}` : ""].filter(Boolean);
+                          return (
+                            <div key={id} className="text-zinc-800">
+                              {parts.join(" ")}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
+                  );
+                })()}
 
                 <div className="overflow-auto rounded-lg border border-zinc-100">
                   <table className="w-full text-sm">
@@ -5003,7 +5076,7 @@ export default function Journal() {
                       {detail.lines.map((l) => {
                         const acc = accounts.find((a) => a.id === l.accountId);
                         const isAuto = l.lineNo > 2 && (String(acc?.code || "") === "5000" || String(acc?.code || "") === "1500");
-                        const fa = l.fixedAssetId && detail.fixedAssets ? detail.fixedAssets.find((x) => String(x.id) === String(l.fixedAssetId)) : null;
+                        const fa = l.fixedAssetId ? fixedAssets.find((x) => String(x.id) === String(l.fixedAssetId)) : null;
                         const faLabel = fa ? `${fa.assetNo ? `${fa.assetNo} ` : ""}${fa.name}`.trim() : "";
                         const cc = l.costCenterId ? costCenterLabelById.get(String(l.costCenterId)) || String(l.costCenterId) : "";
                         return (
@@ -5047,7 +5120,7 @@ export default function Journal() {
                             fd.append("file", file);
                             await api(`/api/journals/${detail.entry.id}/attachments`, { method: "POST", body: fd });
                           }
-                          await loadDetail(detail.entry.id);
+                          await loadDetail(detail.entry.id, undefined, { force: true });
                         } catch (e: any) {
                           setErr(e.message);
                         } finally {
@@ -5095,7 +5168,7 @@ export default function Journal() {
                                   setErr(null);
                                   try {
                                     await api(`/api/journals/${detail.entry.id}/attachments/${a.id}`, { method: "PUT", body: fd });
-                                    await loadDetail(detail.entry.id);
+                                    await loadDetail(detail.entry.id, undefined, { force: true });
                                   } catch (e: any) {
                                     setErr(e.message);
                                   } finally {
@@ -5117,7 +5190,7 @@ export default function Journal() {
                                 setErr(null);
                                 try {
                                   await api(`/api/journals/${detail.entry.id}/attachments/${a.id}` as any, { method: "DELETE" });
-                                  await loadDetail(detail.entry.id);
+                                  await loadDetail(detail.entry.id, undefined, { force: true });
                                 } catch (e: any) {
                                   setErr(e.message);
                                 } finally {

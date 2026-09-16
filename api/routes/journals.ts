@@ -508,25 +508,13 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             account_id as "accountId",
             description,
             cost_center_id as "costCenterId",
-            cc.code as "costCenterCode",
-            cc.name as "costCenterName",
             inventory_item_id as "inventoryItemId",
             fixed_asset_id as "fixedAssetId",
-            fa.asset_no as "fixedAssetNo",
-            fa.name as "fixedAssetName",
-            fa.category as "fixedAssetCategory",
-            fa.memo as "fixedAssetMemo",
-            fa.acquisition_date as "fixedAssetAcquisitionDate",
-            fa.useful_life_months as "fixedAssetUsefulLifeMonths",
-            fa.salvage_value_base as "fixedAssetSalvageValueBase",
-            fa.status as "fixedAssetStatus",
             debit_txn as "debitTxn",
             credit_txn as "creditTxn",
             debit_base as "debitBase",
             credit_base as "creditBase"
-          FROM journal_lines l
-          LEFT JOIN cost_centers cc ON cc.id = l.cost_center_id AND cc.org_id = l.org_id
-          LEFT JOIN fixed_assets fa ON fa.id = l.fixed_asset_id AND fa.org_id = l.org_id
+          FROM journal_lines
           WHERE entry_id = ${id} AND org_id = ${orgId}
           ORDER BY line_no ASC
         `
@@ -537,46 +525,16 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
             account_id as "accountId",
             description,
             cost_center_id as "costCenterId",
-            cc.code as "costCenterCode",
-            cc.name as "costCenterName",
             inventory_item_id as "inventoryItemId",
             fixed_asset_id as "fixedAssetId",
-            fa.asset_no as "fixedAssetNo",
-            fa.name as "fixedAssetName",
-            fa.category as "fixedAssetCategory",
-            fa.memo as "fixedAssetMemo",
-            fa.acquisition_date as "fixedAssetAcquisitionDate",
-            fa.useful_life_months as "fixedAssetUsefulLifeMonths",
-            fa.salvage_value_base as "fixedAssetSalvageValueBase",
-            fa.status as "fixedAssetStatus",
             debit_txn as "debitTxn",
             credit_txn as "creditTxn",
             debit_base as "debitBase",
             credit_base as "creditBase"
-          FROM journal_lines l
-          LEFT JOIN cost_centers cc ON cc.id = l.cost_center_id AND cc.org_id = l.org_id
-          LEFT JOIN fixed_assets fa ON fa.id = l.fixed_asset_id AND fa.org_id = l.org_id
+          FROM journal_lines
           WHERE entry_id = ${id} AND org_id = ${orgId} AND (description IS NULL OR description NOT IN ('COGS (FIFO)', 'Inventory (FIFO)'))
           ORDER BY line_no ASC
         `;
-
-  const fixedAssetById = new Map<string, any>();
-  for (const l of lines as any[]) {
-    const fid = typeof l.fixedAssetId === "string" ? l.fixedAssetId : null;
-    if (!fid || fixedAssetById.has(fid)) continue;
-    fixedAssetById.set(fid, {
-      id: fid,
-      assetNo: l.fixedAssetNo ? String(l.fixedAssetNo) : null,
-      name: l.fixedAssetName ? String(l.fixedAssetName) : "",
-      category: l.fixedAssetCategory ? String(l.fixedAssetCategory) : null,
-      memo: l.fixedAssetMemo ? String(l.fixedAssetMemo) : null,
-      acquisitionDate: l.fixedAssetAcquisitionDate ? String(l.fixedAssetAcquisitionDate) : null,
-      usefulLifeMonths: l.fixedAssetUsefulLifeMonths != null ? Number(l.fixedAssetUsefulLifeMonths) : null,
-      salvageValueBase: l.fixedAssetSalvageValueBase != null ? Number(l.fixedAssetSalvageValueBase) : null,
-      status: l.fixedAssetStatus ? String(l.fixedAssetStatus) : "",
-    });
-  }
-  const fixedAssets = Array.from(fixedAssetById.values());
 
   const atts = await sql`
     SELECT id, file_name as "fileName", mime_type as "mimeType", size_bytes as "sizeBytes", created_at as "createdAt"
@@ -584,7 +542,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     WHERE entry_id = ${id} AND org_id = ${orgId}
     ORDER BY created_at DESC
   `;
-  res.status(200).json({ success: true, data: { entry, lines, fixedAssets, attachments: atts } });
+  res.status(200).json({ success: true, data: { entry, lines, attachments: atts } });
 });
 
 router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
