@@ -80,7 +80,7 @@ async function insertPostedInventoryReceipts(
   const itemIds = details.map((d) => String(d.itemId));
   const qtys = details.map((d) => Number(d.qty));
   const unitCostsTxn = details.map((d) => round6(Number(d.unitCostTxn)));
-  const unitCostsBase = details.map((d, i) => round6(Number(unitCostsTxn[i]) * fx));
+  const unitCostsBase = details.map((d, i) => (fx > 0 ? round6(Number(unitCostsTxn[i]) / fx) : round6(Number(unitCostsTxn[i]))));
   const entrySeqs = details.map((_, i) => i + 1);
 
   await trx`
@@ -634,8 +634,8 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const normalizedLines = userLines.map((l, idx) => {
     const debit = l.debitTxn || 0;
     const credit = l.creditTxn || 0;
-    const debitBase = round2(debit * fxRate);
-    const creditBase = round2(credit * fxRate);
+    const debitBase = fxRate > 0 ? round2(debit / fxRate) : round2(debit);
+    const creditBase = fxRate > 0 ? round2(credit / fxRate) : round2(credit);
     return {
       lineNo: idx + 1,
       accountId: l.accountId,
@@ -1016,7 +1016,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
               null;
             if (invAccId && cogsAccId) {
               const costBase = round2(totalBaseAll);
-              const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
+              const costTxn = fx > 0 ? round2(costBase * fx) : round2(costBase);
               await upsertSystemCogsEntry(
                 trx,
                 orgId,
@@ -1205,8 +1205,8 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const normalizedLines = userLines.map((l, idx) => {
     const debit = l.debitTxn || 0;
     const credit = l.creditTxn || 0;
-    const debitBase = round2(debit * fxRate);
-    const creditBase = round2(credit * fxRate);
+    const debitBase = fxRate > 0 ? round2(debit / fxRate) : round2(debit);
+    const creditBase = fxRate > 0 ? round2(credit / fxRate) : round2(credit);
     return {
       lineNo: idx + 1,
       accountId: l.accountId,
@@ -1658,7 +1658,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
             if (invAccId && cogsAccId) {
               const costBase = round2(totalBaseAll);
-              const costTxn = fx > 0 ? round2(costBase / fx) : round2(costBase);
+              const costTxn = fx > 0 ? round2(costBase * fx) : round2(costBase);
               await upsertSystemCogsEntry(
                 trx,
                 orgId,
@@ -1795,7 +1795,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res: Response) => 
             AND l.fixed_asset_id = ANY(${fixedAssetIds}::uuid[])
             AND fa.org_id = ${orgId}
             AND l.account_id = fa.asset_account_id
-            AND COALESCE(l.debit_base, 0) > 0
+            AND COALESCE(l.debit_txn, 0) > 0
         `) as any[];
         for (const r of purchaseRows) purchaseAssetIds.add(String(r.assetId));
       }
@@ -1922,8 +1922,8 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const normalizedLines = lines.map((l, idx) => {
     const debit = l.debitTxn || 0;
     const credit = l.creditTxn || 0;
-    const debitBase = round2(debit * fxRate);
-    const creditBase = round2(credit * fxRate);
+    const debitBase = fxRate > 0 ? round2(debit / fxRate) : round2(debit);
+    const creditBase = fxRate > 0 ? round2(credit / fxRate) : round2(credit);
     return {
       lineNo: idx + 1,
       accountId: l.accountId,
@@ -2005,7 +2005,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
     if (effectiveInventoryImpact && inventoryDetails?.length) {
       for (const d of inventoryDetails) {
         if (d.moveType === "receipt") {
-          const unitCostBase = round6(d.unitCostTxn * fxRate);
+          const unitCostBase = fxRate > 0 ? round6(d.unitCostTxn / fxRate) : round6(d.unitCostTxn);
           await trx`
             INSERT INTO inventory_moves (org_id, item_id, move_type, move_date, qty, unit_cost_base, unit_cost_txn, currency_code, fx_rate, status, entry_id, entry_line_no)
             VALUES (

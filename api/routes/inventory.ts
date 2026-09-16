@@ -670,7 +670,7 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
     return;
   }
 
-  const unitCostBase = round6(parsed.data.unitCostTxn * parsed.data.fxRate);
+  const unitCostBase = parsed.data.fxRate > 0 ? round6(parsed.data.unitCostTxn / parsed.data.fxRate) : round6(parsed.data.unitCostTxn);
   const totalBase = round2(unitCostBase * parsed.data.qty);
 
   const created = await sql.begin(async (trx) => {

@@ -1208,7 +1208,7 @@ export default function Journal() {
       const defaultSide: "debit" | "credit" = credit > 0 ? "credit" : "debit";
       const expectedTxn = defaultSide === "credit" ? credit : debit;
       const fx = Number(s.draft.fxRate) || 1;
-      const expectedBase = Math.round(expectedTxn * fx * 100) / 100;
+      const expectedBase = fx > 0 ? Math.round((expectedTxn / fx) * 100) / 100 : Math.round(expectedTxn * 100) / 100;
       setInvDefaultSide(defaultSide);
       setInvExpectedTxn(expectedTxn);
       setInvExpectedBase(expectedBase);

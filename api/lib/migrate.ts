@@ -20,15 +20,15 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
 
-  const MIGRATION_ID = "base_2026_09";
+  const BASE_MIGRATION_ID = "base_2026_09";
+  const FX_FIX_MIGRATION_ID = "fx_rate_txn_per_base_2026_09";
+
+  let baseApplied = false;
   try {
-    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${MIGRATION_ID} LIMIT 1`;
-    if ((applied as any[])?.length) {
-      migrated = true;
-      return;
-    }
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${BASE_MIGRATION_ID} LIMIT 1`;
+    baseApplied = Boolean((applied as any[])?.length);
   } catch {
-    void 0;
+    baseApplied = false;
   }
 
   try {
@@ -72,18 +72,24 @@ export async function ensureMigrated(): Promise<void> {
       !!s?.journals_inv_ok &&
       !!s?.journal_lines_ok &&
       !!s?.attachments_ok;
-    if (schemaReady) {
+    if (schemaReady && !baseApplied) {
       try {
-        await sql`INSERT INTO schema_migrations (id) VALUES (${MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+        await sql`INSERT INTO schema_migrations (id) VALUES (${BASE_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+        baseApplied = true;
       } catch {
         void 0;
       }
-      migrated = true;
-      return;
+    }
+    if (schemaReady && baseApplied) {
+      void 0;
+    } else {
+      void 0;
     }
   } catch {
     void 0;
   }
+
+  if (!baseApplied) {
 
   try {
     await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
@@ -563,9 +569,113 @@ export async function ensureMigrated(): Promise<void> {
   `;
 
   try {
-    await sql`INSERT INTO schema_migrations (id) VALUES (${MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+    await sql`INSERT INTO schema_migrations (id) VALUES (${BASE_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+    baseApplied = true;
   } catch {
     void 0;
+  }
+
+  }
+
+  let fxFixApplied = false;
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${FX_FIX_MIGRATION_ID} LIMIT 1`;
+    fxFixApplied = Boolean((applied as any[])?.length);
+  } catch {
+    fxFixApplied = false;
+  }
+
+  if (!fxFixApplied) {
+    try {
+      await sql`
+        UPDATE journal_lines l
+        SET
+          debit_base = ROUND(l.debit_txn / NULLIF(e.fx_rate, 0), 2),
+          credit_base = ROUND(l.credit_txn / NULLIF(e.fx_rate, 0), 2)
+        FROM journal_entries e
+        JOIN organizations o ON o.id = e.org_id
+        WHERE l.org_id = e.org_id
+          AND l.entry_id = e.id
+          AND e.org_id = o.id
+          AND UPPER(COALESCE(e.currency_code, '')) <> UPPER(COALESCE(o.base_currency, ''))
+          AND COALESCE(e.fx_rate, 0) <> 0
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`
+        UPDATE inventory_moves m
+        SET unit_cost_base = CASE
+          WHEN COALESCE(m.fx_rate, 0) = 0 THEN m.unit_cost_txn
+          ELSE m.unit_cost_txn / m.fx_rate
+        END
+        FROM organizations o
+        WHERE m.org_id = o.id
+          AND UPPER(COALESCE(m.currency_code, '')) <> UPPER(COALESCE(o.base_currency, ''))
+          AND m.unit_cost_txn IS NOT NULL
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`
+        UPDATE inventory_layers l
+        SET unit_cost_base = CASE
+          WHEN COALESCE(m.fx_rate, 0) = 0 THEN m.unit_cost_txn
+          ELSE m.unit_cost_txn / m.fx_rate
+        END
+        FROM inventory_moves m
+        JOIN organizations o ON o.id = m.org_id
+        WHERE l.org_id = m.org_id
+          AND l.source_move_id = m.id
+          AND UPPER(COALESCE(m.currency_code, '')) <> UPPER(COALESCE(o.base_currency, ''))
+          AND m.unit_cost_txn IS NOT NULL
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`
+        WITH purchase AS (
+          SELECT DISTINCT ON (l.fixed_asset_id)
+            l.org_id as org_id,
+            l.fixed_asset_id as asset_id,
+            l.debit_txn as cost_txn,
+            e.fx_rate as fx_rate,
+            e.currency_code as currency_code,
+            o.base_currency as base_currency
+          FROM journal_lines l
+          JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = l.org_id
+          JOIN organizations o ON o.id = l.org_id
+          WHERE l.fixed_asset_id IS NOT NULL
+            AND e.status = 'posted'
+            AND COALESCE(l.debit_txn, 0) > 0
+          ORDER BY l.fixed_asset_id, e.entry_date ASC, e.id ASC
+        )
+        UPDATE fixed_assets a
+        SET cost_base = CASE
+          WHEN COALESCE(p.fx_rate, 0) = 0 THEN a.cost_base
+          ELSE ROUND(p.cost_txn / p.fx_rate, 2)
+        END
+        FROM purchase p
+        WHERE a.org_id = p.org_id
+          AND a.id = p.asset_id
+          AND UPPER(COALESCE(p.currency_code, '')) <> UPPER(COALESCE(p.base_currency, ''))
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`INSERT INTO schema_migrations (id) VALUES (${FX_FIX_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      fxFixApplied = true;
+    } catch {
+      void 0;
+    }
   }
 
     migrated = true;
