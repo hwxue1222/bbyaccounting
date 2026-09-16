@@ -4863,7 +4863,7 @@ export default function Journal() {
                   <th className="px-3 py-2 text-left">{tr("状态", "Status")}</th>
                   <th className="px-3 py-2 text-left">{tr("库存", "Inventory")}</th>
                   <th className="px-3 py-2 text-left">{tr("币种", "Currency")}</th>
-                  <th className="px-3 py-2 text-right">{tr("金额", "Amount")}</th>
+                  <th className="px-3 py-2 text-right">{tr(`金额(${baseCurrency})`, `Amount (${baseCurrency})`)}</th>
                   <th className="px-3 py-2 text-right">{tr("操作", "Actions")}</th>
                 </tr>
               </thead>
@@ -4914,9 +4914,10 @@ export default function Journal() {
                       {(() => {
                         const baseAmt = Number(e.totalDebitBase);
                         const txnAmt = Number(e.totalDebitTxn);
-                        const baseText = Number.isFinite(baseAmt) ? `${baseCurrency} ${baseAmt.toFixed(2)}` : "-";
-                        const txnText = Number.isFinite(txnAmt) ? `${String(e.currency || "").toUpperCase()} ${txnAmt.toFixed(2)}` : "-";
-                        const showTxn = String(e.currency || "").toUpperCase() && String(e.currency || "").toUpperCase() !== baseCurrency;
+                        const baseText = Number.isFinite(baseAmt) ? baseAmt.toFixed(2) : "-";
+                        const txnCcy = String(e.currency || "").toUpperCase();
+                        const txnText = Number.isFinite(txnAmt) && txnCcy ? `${txnCcy} ${txnAmt.toFixed(2)}` : "-";
+                        const showTxn = txnCcy && txnCcy !== baseCurrency;
                         return (
                           <div className="flex flex-col items-end">
                             <div>{baseText}</div>
