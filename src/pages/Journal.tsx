@@ -421,6 +421,7 @@ export default function Journal() {
   const [recurringCount, setRecurringCount] = useState(1);
 
   const [faPurchaseOpen, setFaPurchaseOpen] = useState(false);
+  const [faPurchaseLinkedAssetId, setFaPurchaseLinkedAssetId] = useState<string | null>(null);
   const [faPurchaseForm, setFaPurchaseForm] = useState({
     category: "",
     assetNo: "",
@@ -843,6 +844,14 @@ export default function Journal() {
       setDraftCustomerId((d.entry as any).customerId ? String((d.entry as any).customerId) : "");
       setFaPurchaseByLineIdx({});
       setFaPurchaseLineIdx(null);
+      setFaPurchaseLinkedAssetId(null);
+
+      const nextFixedAssetIdByLineIdx: Record<number, string> = {};
+      for (let i = 0; i < d.lines.length; i++) {
+        const fid = (d.lines[i] as any)?.fixedAssetId;
+        if (fid) nextFixedAssetIdByLineIdx[i] = String(fid);
+      }
+      setFixedAssetIdByLineIdx(nextFixedAssetIdByLineIdx);
 
       const nextLines = d.lines.map((l) => {
         const debit = Number(l.debitTxn) || 0;
@@ -989,19 +998,37 @@ export default function Journal() {
       return !code.startsWith("16");
     });
     const existing = faPurchaseByLineIdx[lineIdx];
+    const linkedAssetId = fixedAssetIdByLineIdx[lineIdx] || null;
+    const linkedAsset = linkedAssetId ? fixedAssets.find((x) => String(x.id) === String(linkedAssetId)) : null;
     setFaPurchaseLineIdx(lineIdx);
+    setFaPurchaseLinkedAssetId(existing ? null : linkedAssetId);
+
+    const seeded =
+      existing ||
+      (linkedAsset
+        ? {
+            category: linkedAsset.category ? String(linkedAsset.category) : "",
+            assetNo: linkedAsset.assetNo ? String(linkedAsset.assetNo) : "",
+            name: String(linkedAsset.name || ""),
+            acquisitionDate: linkedAsset.acquisitionDate ? String(linkedAsset.acquisitionDate).slice(0, 10) : draftDate,
+            usefulLifeMonths: linkedAsset.usefulLifeMonths != null ? Number(linkedAsset.usefulLifeMonths) : 36,
+            salvageBase: linkedAsset.salvageValueBase != null ? Number(linkedAsset.salvageValueBase) : 0,
+            memo: linkedAsset.memo ? String(linkedAsset.memo) : "",
+          }
+        : null);
+
     setFaPurchaseForm({
-      category: existing?.category || "",
-      assetNo: existing?.assetNo || "",
-      name: existing?.name || "",
-      acquisitionDate: existing?.acquisitionDate || draftDate,
+      category: seeded?.category || "",
+      assetNo: seeded?.assetNo || "",
+      name: seeded?.name || "",
+      acquisitionDate: seeded?.acquisitionDate || draftDate,
       costTxn: Number.isFinite(amountTxn) && amountTxn > 0 ? amountTxn : 0,
       currency: draftCurrency,
       fxRate: Number(draftFx) || 1,
-      usefulLifeMonths: existing?.usefulLifeMonths || 36,
-      salvageBase: existing?.salvageBase || 0,
+      usefulLifeMonths: seeded?.usefulLifeMonths || 36,
+      salvageBase: seeded?.salvageBase || 0,
       offsetAccountId: other?.accountId || "",
-      memo: existing?.memo || draftMemo || "",
+      memo: seeded?.memo || draftMemo || "",
     });
     setFaPurchaseOpen(true);
   }
@@ -4231,7 +4258,11 @@ export default function Journal() {
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">{tr("新增资产（随分录过账生成记录）", "New asset (created when posting)")}</div>
+                <div className="text-sm font-semibold">
+                  {faPurchaseLinkedAssetId
+                    ? tr("固定资产信息（已关联）", "Fixed asset info (linked)")
+                    : tr("新增资产（随分录过账生成记录）", "New asset (created when posting)")}
+                </div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={busy}
@@ -4252,6 +4283,7 @@ export default function Journal() {
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                     value={faPurchaseForm.category}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, category: e.target.value })}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   >
                     <option value="">{tr("请选择", "Select")}</option>
                     <option value="Machinery and Equipment">Machinery and Equipment</option>
@@ -4268,6 +4300,7 @@ export default function Journal() {
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.assetNo}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, assetNo: e.target.value.toUpperCase() })}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                     placeholder={
                       faPurchaseForm.category
                         ? tr("例如：FA-COM00001", "e.g., FA-COM00001")
@@ -4282,6 +4315,7 @@ export default function Journal() {
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.name}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, name: e.target.value })}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4290,6 +4324,7 @@ export default function Journal() {
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.acquisitionDate}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, acquisitionDate: e.target.value })}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4300,6 +4335,7 @@ export default function Journal() {
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, costTxn: Number(e.target.value) || 0 })}
                     type="number"
                     step="0.01"
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4309,6 +4345,7 @@ export default function Journal() {
                     value={faPurchaseForm.currency}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, currency: e.target.value.toUpperCase() })}
                     maxLength={3}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4319,6 +4356,7 @@ export default function Journal() {
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, fxRate: Number(e.target.value) || 1 })}
                     type="number"
                     step="0.0001"
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4328,6 +4366,7 @@ export default function Journal() {
                     value={faPurchaseForm.usefulLifeMonths}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, usefulLifeMonths: Number(e.target.value) || 0 })}
                     type="number"
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4338,6 +4377,7 @@ export default function Journal() {
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, salvageBase: Number(e.target.value) || 0 })}
                     type="number"
                     step="0.01"
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
                 <div>
@@ -4346,6 +4386,7 @@ export default function Journal() {
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
                     value={faPurchaseForm.offsetAccountId}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, offsetAccountId: e.target.value })}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   >
                     <option value="">{tr("请选择", "Select")}</option>
                     {accounts.map((a) => (
@@ -4361,124 +4402,129 @@ export default function Journal() {
                     className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
                     value={faPurchaseForm.memo}
                     onChange={(e) => setFaPurchaseForm({ ...faPurchaseForm, memo: e.target.value })}
+                    disabled={busy || Boolean(faPurchaseLinkedAssetId)}
                   />
                 </div>
               </div>
 
               <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => {
-                    setErr(null);
-                    setFaPurchaseOpen(false);
-                  }}
-                  type="button"
-                >
-                  {tr("取消", "Cancel")}
-                </button>
-                <button
-                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-                  disabled={
-                    busy ||
-                    !faPurchaseForm.category.trim() ||
-                    !faPurchaseForm.offsetAccountId ||
-                    !faPurchaseForm.acquisitionDate.trim() ||
-                    !faPurchaseForm.currency.trim() ||
-                    !(Number(faPurchaseForm.costTxn) > 0) ||
-                    !(Number(faPurchaseForm.usefulLifeMonths) > 0)
-                  }
-                  onClick={() => {
-                    setErr(null);
-                    const lineIdx = faPurchaseLineIdx;
-                    if (lineIdx == null) {
-                      setErr(tr("保存失败：未关联分录行", "Save failed: not linked to a journal line."));
-                      return;
-                    }
-
-                    const costTxn = Number(faPurchaseForm.costTxn) || 0;
-                    if (!(costTxn > 0)) {
-                      setErr(tr("金额必须大于 0", "Amount must be greater than 0."));
-                      return;
-                    }
-
-                    const memo = String(faPurchaseForm.memo || "").trim();
-
-                    setDraftDate(faPurchaseForm.acquisitionDate);
-                    setDraftCurrency(String(faPurchaseForm.currency || "").toUpperCase());
-                    setDraftFx(Number(faPurchaseForm.fxRate) || 1);
-                    if (memo) {
-                      setDraftMemo(memo);
-                    }
-
-                    setFaPurchaseByLineIdx((prev) => {
-                      const next = { ...prev } as Record<
-                        number,
-                        {
-                          category: string;
-                          assetNo: string;
-                          name: string;
-                          acquisitionDate: string;
-                          usefulLifeMonths: number;
-                          salvageBase: number;
-                          memo: string;
+                {faPurchaseLinkedAssetId ? null : (
+                  <>
+                    <button
+                      className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => {
+                        setErr(null);
+                        setFaPurchaseOpen(false);
+                      }}
+                      type="button"
+                    >
+                      {tr("取消", "Cancel")}
+                    </button>
+                    <button
+                      className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                      disabled={
+                        busy ||
+                        !faPurchaseForm.category.trim() ||
+                        !faPurchaseForm.offsetAccountId ||
+                        !faPurchaseForm.acquisitionDate.trim() ||
+                        !faPurchaseForm.currency.trim() ||
+                        !(Number(faPurchaseForm.costTxn) > 0) ||
+                        !(Number(faPurchaseForm.usefulLifeMonths) > 0)
+                      }
+                      onClick={() => {
+                        setErr(null);
+                        const lineIdx = faPurchaseLineIdx;
+                        if (lineIdx == null) {
+                          setErr(tr("保存失败：未关联分录行", "Save failed: not linked to a journal line."));
+                          return;
                         }
-                      >;
-                      next[lineIdx] = {
-                        category: String(faPurchaseForm.category || "").trim(),
-                        assetNo: String(faPurchaseForm.assetNo || "").trim().toUpperCase(),
-                        name: faPurchaseForm.name.trim() || tr("(未命名资产)", "(Unnamed asset)"),
-                        acquisitionDate: faPurchaseForm.acquisitionDate,
-                        usefulLifeMonths: Number(faPurchaseForm.usefulLifeMonths) || 0,
-                        salvageBase: Number(faPurchaseForm.salvageBase) || 0,
-                        memo: memo,
-                      };
-                      return next;
-                    });
 
-                    const next = [...draftLines];
-                    const debitLine = next[lineIdx];
-                    if (!debitLine) {
-                      setErr(tr("保存失败：分录行不存在", "Save failed: journal line not found."));
-                      return;
-                    }
-                    next[lineIdx] = {
-                      ...debitLine,
-                      debitTxn: costTxn.toFixed(2),
-                      creditTxn: "",
-                    };
+                        const costTxn = Number(faPurchaseForm.costTxn) || 0;
+                        if (!(costTxn > 0)) {
+                          setErr(tr("金额必须大于 0", "Amount must be greater than 0."));
+                          return;
+                        }
 
-                    const targetAccountId = faPurchaseForm.offsetAccountId;
-                    const isEmptyLine = (l: { accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string }) =>
-                      !l.accountId && !l.description && !l.costCenterId && !l.debitTxn && !l.creditTxn;
+                        const memo = String(faPurchaseForm.memo || "").trim();
 
-                    let creditIdx = next.findIndex((l, i) => i !== lineIdx && l.accountId === targetAccountId);
-                    if (creditIdx < 0) {
-                      creditIdx = next.findIndex((l, i) => i !== lineIdx && isEmptyLine(l));
-                    }
-                    if (creditIdx < 0 && next.length === 2) {
-                      creditIdx = lineIdx === 0 ? 1 : 0;
-                    }
-                    if (creditIdx < 0) {
-                      creditIdx = next.length;
-                      next.push({ accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" });
-                    }
+                        setDraftDate(faPurchaseForm.acquisitionDate);
+                        setDraftCurrency(String(faPurchaseForm.currency || "").toUpperCase());
+                        setDraftFx(Number(faPurchaseForm.fxRate) || 1);
+                        if (memo) {
+                          setDraftMemo(memo);
+                        }
 
-                    const creditLine = next[creditIdx];
-                    next[creditIdx] = {
-                      ...creditLine,
-                      accountId: targetAccountId,
-                      creditTxn: costTxn.toFixed(2),
-                      debitTxn: "",
-                    };
+                        setFaPurchaseByLineIdx((prev) => {
+                          const next = { ...prev } as Record<
+                            number,
+                            {
+                              category: string;
+                              assetNo: string;
+                              name: string;
+                              acquisitionDate: string;
+                              usefulLifeMonths: number;
+                              salvageBase: number;
+                              memo: string;
+                            }
+                          >;
+                          next[lineIdx] = {
+                            category: String(faPurchaseForm.category || "").trim(),
+                            assetNo: String(faPurchaseForm.assetNo || "").trim().toUpperCase(),
+                            name: faPurchaseForm.name.trim() || tr("(未命名资产)", "(Unnamed asset)"),
+                            acquisitionDate: faPurchaseForm.acquisitionDate,
+                            usefulLifeMonths: Number(faPurchaseForm.usefulLifeMonths) || 0,
+                            salvageBase: Number(faPurchaseForm.salvageBase) || 0,
+                            memo: memo,
+                          };
+                          return next;
+                        });
 
-                    setDraftLines(next);
-                    setFaPurchaseOpen(false);
-                  }}
-                  type="button"
-                >
-                  {tr("保存草稿", "Save draft")}
-                </button>
+                        const next = [...draftLines];
+                        const debitLine = next[lineIdx];
+                        if (!debitLine) {
+                          setErr(tr("保存失败：分录行不存在", "Save failed: journal line not found."));
+                          return;
+                        }
+                        next[lineIdx] = {
+                          ...debitLine,
+                          debitTxn: costTxn.toFixed(2),
+                          creditTxn: "",
+                        };
+
+                        const targetAccountId = faPurchaseForm.offsetAccountId;
+                        const isEmptyLine = (l: { accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string }) =>
+                          !l.accountId && !l.description && !l.costCenterId && !l.debitTxn && !l.creditTxn;
+
+                        let creditIdx = next.findIndex((l, i) => i !== lineIdx && l.accountId === targetAccountId);
+                        if (creditIdx < 0) {
+                          creditIdx = next.findIndex((l, i) => i !== lineIdx && isEmptyLine(l));
+                        }
+                        if (creditIdx < 0 && next.length === 2) {
+                          creditIdx = lineIdx === 0 ? 1 : 0;
+                        }
+                        if (creditIdx < 0) {
+                          creditIdx = next.length;
+                          next.push({ accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" });
+                        }
+
+                        const creditLine = next[creditIdx];
+                        next[creditIdx] = {
+                          ...creditLine,
+                          accountId: targetAccountId,
+                          creditTxn: costTxn.toFixed(2),
+                          debitTxn: "",
+                        };
+
+                        setDraftLines(next);
+                        setFaPurchaseOpen(false);
+                      }}
+                      type="button"
+                    >
+                      {tr("保存草稿", "Save draft")}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
