@@ -32,6 +32,7 @@ export default function AppShell({ title, children }: { title: string; children:
   const { lang, setLang } = useUiStore();
   const tr = useTr();
   const inflight = useUiStore((s) => s.inflight);
+  const inflightStartedAt = useUiStore((s) => s.inflightStartedAt);
 
   const [showMask, setShowMask] = useState(false);
 
@@ -40,7 +41,7 @@ export default function AppShell({ title, children }: { title: string; children:
       setShowMask(false);
       return;
     }
-    const t = window.setTimeout(() => setShowMask(true), 300);
+    const t = window.setTimeout(() => setShowMask(true), 1200);
     return () => window.clearTimeout(t);
   }, [inflight]);
 
@@ -48,10 +49,13 @@ export default function AppShell({ title, children }: { title: string; children:
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       {showMask ? (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25">
-          <div className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-xl">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-200 border-t-blue-700" />
-            <div className="text-sm font-medium text-zinc-800">{tr("刷新中...", "Refreshing...")}</div>
+        <div className="pointer-events-none fixed bottom-4 right-4 z-[2000] flex items-center gap-3 rounded-xl bg-white/95 px-4 py-3 shadow-xl ring-1 ring-zinc-200">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-200 border-t-blue-700" />
+          <div className="text-sm font-medium text-zinc-800">
+            {tr("刷新中...", "Refreshing...")}
+            {inflightStartedAt ? (
+              <span className="ml-2 text-xs font-normal text-zinc-500">{Math.max(1, Math.round((Date.now() - inflightStartedAt) / 1000))}s</span>
+            ) : null}
           </div>
         </div>
       ) : null}
