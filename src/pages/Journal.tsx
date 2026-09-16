@@ -46,8 +46,18 @@ type EntryDetail = {
     accountId: string;
     description: string | null;
     costCenterId: string | null;
+    costCenterCode?: string | null;
+    costCenterName?: string | null;
     inventoryItemId?: string | null;
     fixedAssetId?: string | null;
+    fixedAssetNo?: string | null;
+    fixedAssetName?: string | null;
+    fixedAssetCategory?: string | null;
+    fixedAssetMemo?: string | null;
+    fixedAssetAcquisitionDate?: string | null;
+    fixedAssetUsefulLifeMonths?: number | null;
+    fixedAssetSalvageValueBase?: number | null;
+    fixedAssetStatus?: string | null;
     debitTxn: string;
     creditTxn: string;
     debitBase: string;
@@ -66,6 +76,8 @@ type EntryDetail = {
   }>;
   attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; createdAt: string }>;
 };
+
+type CachedDetail = { id: string; ts: number; value: EntryDetail };
 
 type AssistJournalSuggestion = {
   draft:
@@ -108,6 +120,9 @@ export default function Journal() {
   const detailRef = useRef<HTMLDivElement | null>(null);
   const pageAbortRef = useRef<AbortController | null>(null);
   const invQuoteAbortRef = useRef<AbortController | null>(null);
+  const detailCacheRef = useRef<Map<string, CachedDetail>>(new Map());
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const detailPrefetchAbortRef = useRef<AbortController | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -738,8 +753,11 @@ export default function Journal() {
     setBusy(true);
     setErr(null);
     try {
-      const d = await api<EntryDetail>(`/api/journals/${id}`);
-      const movesResp = await api<{ moves: any[] }>(`/api/inventory/moves?entryId=${encodeURIComponent(id)}&limit=200`);
+      const d = await api<EntryDetail>(`/api/journals/${id}`, { cache: "no-store" });
+      detailCacheRef.current.set(id, { id, ts: Date.now(), value: d });
+
+      const needsInv = d.entry.status === "posted" && d.lines.some((l: any) => (l as any).inventoryItemId);
+      const movesResp = needsInv ? await api<{ moves: any[] }>(`/api/inventory/moves?entryId=${encodeURIComponent(id)}&limit=200`) : ({ moves: [] } as any);
       const moves = Array.isArray(movesResp.moves) ? movesResp.moves : [];
 
       const entryFx = Number(d.entry.fxRate) || 1;
@@ -843,8 +861,17 @@ export default function Journal() {
       return;
     }
     setErr(null);
+    selectEntry(entryId);
+    const cached = detailCacheRef.current.get(entryId);
+    const now = Date.now();
+    if (!(cached && now - cached.ts <= 60_000)) {
+      try {
+        await loadDetail(entryId);
+      } catch {
+        // ignore
+      }
+    }
     await startEditEntry(entryId);
-    setSelectedId(entryId);
     setEditModalOpen(true);
   }
 
@@ -1549,8 +1576,40 @@ export default function Journal() {
   }
 
   async function loadDetail(id: string, signal?: AbortSignal) {
-    const d = await api<EntryDetail>(`/api/journals/${id}`, { signal });
+    const cached = detailCacheRef.current.get(id);
+    const now = Date.now();
+    if (cached && now - cached.ts <= 60_000) {
+      setDetail(cached.value);
+      return;
+    }
+    const d = await api<EntryDetail>(`/api/journals/${id}`, { signal, cache: "no-store" });
+    detailCacheRef.current.set(id, { id, ts: Date.now(), value: d });
     setDetail(d);
+  }
+
+  function prefetchDetail(id: string) {
+    const cached = detailCacheRef.current.get(id);
+    const now = Date.now();
+    if (cached && now - cached.ts <= 60_000) return;
+    detailPrefetchAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    detailPrefetchAbortRef.current = ctrl;
+    api<EntryDetail>(`/api/journals/${id}`, { signal: ctrl.signal, cache: "no-store" })
+      .then((d) => {
+        detailCacheRef.current.set(id, { id, ts: Date.now(), value: d });
+      })
+      .catch(() => null);
+  }
+
+  function selectEntry(id: string) {
+    setSelectedId(id);
+    const cached = detailCacheRef.current.get(id);
+    const now = Date.now();
+    if (cached && now - cached.ts <= 60_000) {
+      setDetail(cached.value);
+      return;
+    }
+    setDetail(null);
   }
 
   useEffect(() => {
@@ -1590,7 +1649,9 @@ export default function Journal() {
       setDetail(null);
       return;
     }
+    detailAbortRef.current?.abort();
     const ctrl = new AbortController();
+    detailAbortRef.current = ctrl;
     loadDetail(selectedId, ctrl.signal).catch((e) => {
       if (e?.name === "AbortError") return;
       setErr(e.message);
@@ -4730,7 +4791,10 @@ export default function Journal() {
                         setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
                         return;
                       }
-                      setSelectedId(e.id);
+                      selectEntry(e.id);
+                    }}
+                    onMouseEnter={() => {
+                      prefetchDetail(e.id);
                     }}
                   >
                     <td className="px-3 py-2">{e.entryDate}</td>
