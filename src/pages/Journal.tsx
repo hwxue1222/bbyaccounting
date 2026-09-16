@@ -2199,94 +2199,96 @@ export default function Journal() {
                 </div>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 {quickText.trim() ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                  <div className="min-w-[240px] flex-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
                     {tr(`将生成：${quickText}`, `Will generate: ${quickText}`)}
                   </div>
                 ) : (
-                  <div className="text-xs text-zinc-500">
+                  <div className="min-w-[240px] flex-1 text-xs text-zinc-500">
                     {tr(
                       "示例：董事代替公司，未支付，买了一把刀；用途选择“购买存货”；20 MYR。",
                       "Example: Director on behalf of company, unpaid, bought a knife; purpose: Buy inventory; 20 MYR.",
                     )}
                   </div>
                 )}
-                <button
-                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                  disabled={!canGenerate}
-                  onClick={() => {
-                    if (!canGenerate) return;
-                    if (quickMissingNewFixedAsset) {
-                      triggerQuickNewFixedAsset();
-                      return;
-                    }
-                    if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
-                      setAssistDisposalAssetId(assistQuickDisposalAssetId);
-                    }
-                    void startAssistChat(quickText);
-                  }}
-                  type="button"
-                >
-                  {tr("生成建议", "Generate")}
-                </button>
-                <button
-                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-                  disabled={readOnly || busy}
-                  onClick={() => {
-                    resetDraftEntry();
-                    setAssistQuickWho("");
-                    setAssistQuickOnBehalf("");
-                    setAssistQuickAction("");
-                    setAssistQuickAmount("");
-                    setAssistQuickCurrency("");
-                    setAssistQuickPayMethod("");
-                    setAssistQuickPurposeKind("");
-                    setAssistQuickPurpose("");
-                    setAssistQuickNewInvErr(null);
-                    setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
-                    setAssistQuickNewInvOpen(false);
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                    disabled={!canGenerate}
+                    onClick={() => {
+                      if (!canGenerate) return;
+                      if (quickMissingNewFixedAsset) {
+                        triggerQuickNewFixedAsset();
+                        return;
+                      }
+                      if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
+                        setAssistDisposalAssetId(assistQuickDisposalAssetId);
+                      }
+                      void startAssistChat(quickText);
+                    }}
+                    type="button"
+                  >
+                    {tr("生成建议", "Generate")}
+                  </button>
+                  <button
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                    disabled={readOnly || busy}
+                    onClick={() => {
+                      resetDraftEntry();
+                      setAssistQuickWho("");
+                      setAssistQuickOnBehalf("");
+                      setAssistQuickAction("");
+                      setAssistQuickAmount("");
+                      setAssistQuickCurrency("");
+                      setAssistQuickPayMethod("");
+                      setAssistQuickPurposeKind("");
+                      setAssistQuickPurpose("");
+                      setAssistQuickNewInvErr(null);
+                      setAssistQuickNewInvForm({ sku: "", name: "", uom: "EA" });
+                      setAssistQuickNewInvOpen(false);
 
-                    setAssistQuickNewVendorErr(null);
-                    setAssistQuickNewVendorForm({ code: "", name: "" });
-                    setAssistQuickNewVendorOpen(false);
+                      setAssistQuickNewVendorErr(null);
+                      setAssistQuickNewVendorForm({ code: "", name: "" });
+                      setAssistQuickNewVendorOpen(false);
 
-                    setAssistQuickNewCustomerErr(null);
-                    setAssistQuickNewCustomerForm({ code: "", name: "" });
-                    setAssistQuickNewCustomerOpen(false);
+                      setAssistQuickNewCustomerErr(null);
+                      setAssistQuickNewCustomerForm({ code: "", name: "" });
+                      setAssistQuickNewCustomerOpen(false);
 
-                    setAssistQuickExistingInventoryItemId("");
-                    setAssistQuickInvQty("");
-                    setAssistQuickDisposalAssetId("");
-                    setAssistShowDisposalPicker(false);
-                    assistDisposalSnapKeyRef.current = "";
-                    setAssistDisposalAssetId("");
-                    setAssistDisposalErr(null);
-                    setAssistExtra("");
-                    setAssistEditFaPurchase(null);
-                    setAssistEditFaInfo(null);
-                    setAssistSuggestion(null);
-                    setAssistChatMessages([]);
-                    setAssistErr(null);
-                    setAssistOpen(false);
-                  }}
-                  type="button"
-                >
-                  {tr("清空", "Clear")}
-                </button>
-                <button
-                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-                  disabled={readOnly || busy}
-                  onClick={() => {
-                    if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
-                      setAssistDisposalAssetId(assistQuickDisposalAssetId);
-                    }
-                    void startAssistChat(quickText.trim() || undefined);
-                  }}
-                  type="button"
-                >
-                  {tr("展开对话框", "Open")}
-                </button>
+                      setAssistQuickExistingInventoryItemId("");
+                      setAssistQuickInvQty("");
+                      setAssistQuickDisposalAssetId("");
+                      setAssistShowDisposalPicker(false);
+                      assistDisposalSnapKeyRef.current = "";
+                      setAssistDisposalAssetId("");
+                      setAssistDisposalErr(null);
+                      setAssistExtra("");
+                      setAssistEditFaPurchase(null);
+                      setAssistEditFaInfo(null);
+                      setAssistSuggestion(null);
+                      setAssistChatMessages([]);
+                      setAssistErr(null);
+                      setAssistOpen(false);
+                    }}
+                    type="button"
+                  >
+                    {tr("清空", "Clear")}
+                  </button>
+                  <button
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                    disabled={readOnly || busy}
+                    onClick={() => {
+                      if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
+                        setAssistDisposalAssetId(assistQuickDisposalAssetId);
+                      }
+                      void startAssistChat(quickText.trim() || undefined);
+                    }}
+                    type="button"
+                  >
+                    {tr("展开对话框", "Open")}
+                  </button>
+                </div>
               </div>
             </div>
             <div className="mt-1 text-xs text-zinc-500">{tr("仅填入草稿，需你确认后再点“过账”。", "Fills draft only. Please review then click 'Post'.")}</div>
