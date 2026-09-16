@@ -25,17 +25,32 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
   const [accounts, costCenters, currencies, fxRates, bankAccounts] = await Promise.all([
     sql`
       SELECT
-        id,
-        code,
-        name,
-        type,
-        normal_balance as "normalBalance",
-        is_active as "isActive",
-        link_inventory_fifo as "linkInventoryFifo",
-        link_fixed_assets as "linkFixedAssets"
-      FROM accounts
-      WHERE org_id = ${orgId}
-      ORDER BY code ASC
+        a.id,
+        a.code,
+        a.name,
+        a.type,
+        a.normal_balance as "normalBalance",
+        a.is_active as "isActive",
+        a.link_inventory_fifo as "linkInventoryFifo",
+        a.link_fixed_assets as "linkFixedAssets",
+        COALESCE(s.line_count, 0) as "lineCount",
+        COALESCE(s.debit_base, 0) as "debitBase",
+        COALESCE(s.credit_base, 0) as "creditBase",
+        COALESCE(s.balance_base, 0) as "balanceBase"
+      FROM accounts a
+      LEFT JOIN (
+        SELECT
+          account_id,
+          COUNT(*)::int as line_count,
+          SUM(debit_base) as debit_base,
+          SUM(credit_base) as credit_base,
+          SUM(debit_base - credit_base) as balance_base
+        FROM journal_lines
+        WHERE org_id = ${orgId}
+        GROUP BY account_id
+      ) s ON s.account_id = a.id
+      WHERE a.org_id = ${orgId}
+      ORDER BY a.code ASC
     `,
     sql`
       SELECT id, code, name, is_active as "isActive"
@@ -79,17 +94,32 @@ router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) =
   const sql = getSql();
   const rows = await sql`
     SELECT
-      id,
-      code,
-      name,
-      type,
-      normal_balance as "normalBalance",
-      is_active as "isActive",
-      link_inventory_fifo as "linkInventoryFifo",
-      link_fixed_assets as "linkFixedAssets"
-    FROM accounts
-    WHERE org_id = ${orgId}
-    ORDER BY code ASC
+      a.id,
+      a.code,
+      a.name,
+      a.type,
+      a.normal_balance as "normalBalance",
+      a.is_active as "isActive",
+      a.link_inventory_fifo as "linkInventoryFifo",
+      a.link_fixed_assets as "linkFixedAssets",
+      COALESCE(s.line_count, 0) as "lineCount",
+      COALESCE(s.debit_base, 0) as "debitBase",
+      COALESCE(s.credit_base, 0) as "creditBase",
+      COALESCE(s.balance_base, 0) as "balanceBase"
+    FROM accounts a
+    LEFT JOIN (
+      SELECT
+        account_id,
+        COUNT(*)::int as line_count,
+        SUM(debit_base) as debit_base,
+        SUM(credit_base) as credit_base,
+        SUM(debit_base - credit_base) as balance_base
+      FROM journal_lines
+      WHERE org_id = ${orgId}
+      GROUP BY account_id
+    ) s ON s.account_id = a.id
+    WHERE a.org_id = ${orgId}
+    ORDER BY a.code ASC
   `;
   res.status(200).json({ success: true, data: { accounts: rows } });
 });

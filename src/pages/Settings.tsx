@@ -13,6 +13,10 @@ type Account = {
   isActive?: boolean;
   linkInventoryFifo?: boolean;
   linkFixedAssets?: boolean;
+  lineCount?: number;
+  debitBase?: number;
+  creditBase?: number;
+  balanceBase?: number;
 };
 type CostCenter = { id: string; code: string; name: string };
 type Currency = { id: string; code: string; isEnabled: boolean };
@@ -50,6 +54,16 @@ export default function Settings() {
   const [editAccountActive, setEditAccountActive] = useState(true);
   const [editAccountLinkInventoryFifo, setEditAccountLinkInventoryFifo] = useState(false);
   const [editAccountLinkFixedAssets, setEditAccountLinkFixedAssets] = useState(false);
+
+  function accountRiskInfo(a: Account) {
+    const lineCount = Number((a as any).lineCount ?? 0) || 0;
+    const debitBase = Number((a as any).debitBase ?? 0) || 0;
+    const creditBase = Number((a as any).creditBase ?? 0) || 0;
+    const balanceBase = Number((a as any).balanceBase ?? debitBase - creditBase) || 0;
+    const hasActivity = lineCount > 0 || Math.abs(debitBase) > 0.0001 || Math.abs(creditBase) > 0.0001;
+    const hasBalance = Math.abs(balanceBase) > 0.0001;
+    return { lineCount, debitBase, creditBase, balanceBase, hasActivity, hasBalance };
+  }
 
   const [newCcCode, setNewCcCode] = useState("");
   const [newCcName, setNewCcName] = useState("");
@@ -454,6 +468,16 @@ export default function Settings() {
                           <button
                             className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
                             onClick={() => {
+                              const r = accountRiskInfo(a);
+                              if (r.hasActivity || r.hasBalance) {
+                                const ok = window.confirm(
+                                  tr(
+                                    `该科目已有变动/余额（行数 ${r.lineCount}，借 ${r.debitBase.toFixed(2)}，贷 ${r.creditBase.toFixed(2)}，余额 ${r.balanceBase.toFixed(2)}）。修改科目信息可能影响报表与历史凭证展示，确认继续编辑？`,
+                                    `This account has activity/balance (lines ${r.lineCount}, Dr ${r.debitBase.toFixed(2)}, Cr ${r.creditBase.toFixed(2)}, Bal ${r.balanceBase.toFixed(2)}). Editing may affect reports and past journals. Continue?`,
+                                  ),
+                                );
+                                if (!ok) return;
+                              }
                               setEditingAccountId(a.id);
                               setEditAccountCode(a.code);
                               setEditAccountName(a.name);
@@ -470,7 +494,18 @@ export default function Settings() {
                           <button
                             className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50"
                             onClick={async () => {
-                              if (!window.confirm(tr("确认删除该科目？历史凭证不会删除，只是不再可选。", "Delete this account? Past journals remain; it will just be inactive."))) {
+                              const r = accountRiskInfo(a);
+                              const msg = r.hasActivity || r.hasBalance
+                                ? tr(
+                                    `该科目已有变动/余额（行数 ${r.lineCount}，借 ${r.debitBase.toFixed(2)}，贷 ${r.creditBase.toFixed(2)}，余额 ${r.balanceBase.toFixed(2)}）。删除后历史凭证不会删除，但该科目将不可再选。确认继续？`,
+                                    `This account has activity/balance (lines ${r.lineCount}, Dr ${r.debitBase.toFixed(2)}, Cr ${r.creditBase.toFixed(2)}, Bal ${r.balanceBase.toFixed(2)}). Past journals remain, but this account will no longer be selectable. Continue?`,
+                                  )
+                                : tr(
+                                    "确认删除该科目？历史凭证不会删除，只是不再可选。",
+                                    "Delete this account? Past journals remain; it will just be inactive.",
+                                  );
+
+                              if (!window.confirm(msg)) {
                                 return;
                               }
                               setErr(null);
@@ -776,6 +811,27 @@ export default function Settings() {
                     onClick={async () => {
                       setErr(null);
                       try {
+                        const original = accounts.find((x) => x.id === editingAccountId) || null;
+                        if (original) {
+                          const r = accountRiskInfo(original);
+                          const hasChanges =
+                            String(original.code || "") !== String(editAccountCode.trim()) ||
+                            String(original.name || "") !== String(editAccountName.trim()) ||
+                            String(original.type || "") !== String(editAccountType) ||
+                            String(original.normalBalance || "") !== String(editAccountNormal) ||
+                            Boolean((original as any).isActive ?? true) !== Boolean(editAccountActive) ||
+                            Boolean((original as any).linkInventoryFifo) !== Boolean(editAccountLinkInventoryFifo) ||
+                            Boolean((original as any).linkFixedAssets) !== Boolean(editAccountLinkFixedAssets);
+                          if (hasChanges && (r.hasActivity || r.hasBalance)) {
+                            const ok = window.confirm(
+                              tr(
+                                `该科目已有变动/余额（行数 ${r.lineCount}，借 ${r.debitBase.toFixed(2)}，贷 ${r.creditBase.toFixed(2)}，余额 ${r.balanceBase.toFixed(2)}）。确认保存修改？`,
+                                `This account has activity/balance (lines ${r.lineCount}, Dr ${r.debitBase.toFixed(2)}, Cr ${r.creditBase.toFixed(2)}, Bal ${r.balanceBase.toFixed(2)}). Confirm save changes?`,
+                              ),
+                            );
+                            if (!ok) return;
+                          }
+                        }
                         await api(`/api/settings/accounts/${editingAccountId}` as any, {
                           method: "PATCH",
                           json: {
