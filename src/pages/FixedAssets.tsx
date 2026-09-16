@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
 
 type Account = { id: string; code: string; name: string };
+type CostCenter = { id: string; code: string; name: string; isActive?: boolean };
 type Asset = {
   id: string;
   assetNo?: string | null;
@@ -107,6 +108,8 @@ export default function FixedAssets() {
   const [params] = useSearchParams();
   const [tab, setTab] = useState<"list" | "purchase" | "depreciate" | "dispose" | "schedule">("list");
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [costCenterFilterId, setCostCenterFilterId] = useState<string>("");
   const [assets, setAssets] = useState<Asset[]>([]);
   const [scheduleRows, setScheduleRows] = useState<ScheduleRow[]>([]);
   const [scheduleTotals, setScheduleTotals] = useState<ScheduleTotals | null>(null);
@@ -211,14 +214,84 @@ export default function FixedAssets() {
 
   const assetsByCategory = useMemo(() => {
     const map = new Map<string, Asset[]>();
-    for (const a of assets) {
+    const src = costCenterFilterId
+      ? costCenterFilterId === "__none__"
+        ? assets.filter((a) => !a.purchaseCostCenterId)
+        : assets.filter((a) => String(a.purchaseCostCenterId || "") === String(costCenterFilterId))
+      : assets;
+
+    for (const a of src) {
       const c = (a.category || "Uncategorized").trim() || "Uncategorized";
       const arr = map.get(c) || [];
       arr.push(a);
       map.set(c, arr);
     }
     return map;
-  }, [assets]);
+  }, [assets, costCenterFilterId]);
+
+  const assetCostCenterSummary = useMemo(() => {
+    const src = costCenterFilterId
+      ? costCenterFilterId === "__none__"
+        ? assets.filter((a) => !a.purchaseCostCenterId)
+        : assets.filter((a) => String(a.purchaseCostCenterId || "") === String(costCenterFilterId))
+      : assets;
+    const map = new Map<
+      string,
+      { id: string | null; code: string; name: string; count: number; costBase: number; txnSum: number; currency: string | null; mixedCurrency: boolean }
+    >();
+    for (const a of src) {
+      const id = a.purchaseCostCenterId ? String(a.purchaseCostCenterId) : null;
+      const key = id || "__none__";
+      const code = a.purchaseCostCenterCode ? String(a.purchaseCostCenterCode) : "";
+      const name = a.purchaseCostCenterName ? String(a.purchaseCostCenterName) : "";
+      const costBase = Number(a.costBase || 0) || 0;
+      const txn = Number(a.purchaseCostTxn || 0) || 0;
+      const currency = a.purchaseCurrency ? String(a.purchaseCurrency).toUpperCase() : null;
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, {
+          id,
+          code,
+          name,
+          count: 1,
+          costBase,
+          txnSum: txn,
+          currency,
+          mixedCurrency: false,
+        });
+        continue;
+      }
+      const nextCurrency = prev.currency;
+      const mixed = prev.mixedCurrency || (Boolean(nextCurrency) && Boolean(currency) && nextCurrency !== currency) || (Boolean(nextCurrency) !== Boolean(currency));
+      map.set(key, {
+        ...prev,
+        count: prev.count + 1,
+        costBase: prev.costBase + costBase,
+        txnSum: prev.txnSum + txn,
+        currency: mixed ? null : nextCurrency || currency,
+        mixedCurrency: mixed,
+      });
+    }
+
+    const rows = Array.from(map.values());
+    rows.sort((a, b) => {
+      const ak = a.id ? 0 : 1;
+      const bk = b.id ? 0 : 1;
+      if (ak !== bk) return ak - bk;
+      const ac = a.code || "";
+      const bc = b.code || "";
+      return ac.localeCompare(bc);
+    });
+    const total = rows.reduce(
+      (acc, r) => {
+        acc.count += r.count;
+        acc.costBase += r.costBase;
+        return acc;
+      },
+      { count: 0, costBase: 0 },
+    );
+    return { rows, total };
+  }, [assets, costCenterFilterId]);
 
   const categoriesToRender = useMemo(() => {
     const existing = Array.from(assetsByCategory.keys());
@@ -229,14 +302,70 @@ export default function FixedAssets() {
 
   const scheduleByCategory = useMemo(() => {
     const map = new Map<string, ScheduleRow[]>();
-    for (const r of scheduleRows) {
+    const src = costCenterFilterId
+      ? costCenterFilterId === "__none__"
+        ? scheduleRows.filter((r) => !r.costCenterId)
+        : scheduleRows.filter((r) => String(r.costCenterId || "") === String(costCenterFilterId))
+      : scheduleRows;
+
+    for (const r of src) {
       const c = (r.category || "Uncategorized").trim() || "Uncategorized";
       const arr = map.get(c) || [];
       arr.push(r);
       map.set(c, arr);
     }
     return map;
-  }, [scheduleRows]);
+  }, [scheduleRows, costCenterFilterId]);
+
+  const scheduleCostCenterSummary = useMemo(() => {
+    const src = costCenterFilterId
+      ? costCenterFilterId === "__none__"
+        ? scheduleRows.filter((r) => !r.costCenterId)
+        : scheduleRows.filter((r) => String(r.costCenterId || "") === String(costCenterFilterId))
+      : scheduleRows;
+    const map = new Map<string, { id: string | null; code: string; name: string; count: number; closingCost: number; closingAccumDep: number; netBookValue: number }>();
+    for (const r of src) {
+      const id = r.costCenterId ? String(r.costCenterId) : null;
+      const key = id || "__none__";
+      const code = r.costCenterCode ? String(r.costCenterCode) : "";
+      const name = r.costCenterName ? String(r.costCenterName) : "";
+      const closingCost = Number(r.closingCost || 0) || 0;
+      const closingAccumDep = Number(r.closingAccumDep || 0) || 0;
+      const netBookValue = Number(r.netBookValue || 0) || 0;
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, { id, code, name, count: 1, closingCost, closingAccumDep, netBookValue });
+        continue;
+      }
+      map.set(key, {
+        ...prev,
+        count: prev.count + 1,
+        closingCost: prev.closingCost + closingCost,
+        closingAccumDep: prev.closingAccumDep + closingAccumDep,
+        netBookValue: prev.netBookValue + netBookValue,
+      });
+    }
+    const rows = Array.from(map.values());
+    rows.sort((a, b) => {
+      const ak = a.id ? 0 : 1;
+      const bk = b.id ? 0 : 1;
+      if (ak !== bk) return ak - bk;
+      const ac = a.code || "";
+      const bc = b.code || "";
+      return ac.localeCompare(bc);
+    });
+    const total = rows.reduce(
+      (acc, r) => {
+        acc.count += r.count;
+        acc.closingCost += r.closingCost;
+        acc.closingAccumDep += r.closingAccumDep;
+        acc.netBookValue += r.netBookValue;
+        return acc;
+      },
+      { count: 0, closingCost: 0, closingAccumDep: 0, netBookValue: 0 },
+    );
+    return { rows, total };
+  }, [scheduleRows, costCenterFilterId]);
 
   const scheduleCategoriesToRender = useMemo(() => {
     const existing = Array.from(scheduleByCategory.keys());
@@ -279,12 +408,18 @@ export default function FixedAssets() {
   }
 
   async function refresh() {
-    const [{ accounts }, { assets }] = await Promise.all([
+    const [{ accounts }, { assets }, { costCenters }] = await Promise.all([
       api<{ accounts: any[] }>("/api/settings/accounts"),
       api<{ assets: any[] }>("/api/fixed-assets"),
+      api<{ costCenters: any[] }>("/api/settings/cost-centers"),
     ]);
     setAccounts(accounts as any);
     setAssets(assets as any);
+    setCostCenters(
+      (costCenters as any[])
+        .map((c: any) => ({ id: String(c.id), code: String(c.code || ""), name: String(c.name || ""), isActive: (c as any).isActive }))
+        .sort((a, b) => String(a.code || "").localeCompare(String(b.code || ""))),
+    );
   }
 
   async function refreshSchedule(start: string, end: string) {
@@ -473,6 +608,66 @@ export default function FixedAssets() {
 
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "list" ? "" : "hidden")}>
           <div className="text-sm font-semibold">资产列表</div>
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <div>
+              <label className="text-xs text-zinc-600">Cost Center</label>
+              <select
+                className="mt-1 w-56 rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                value={costCenterFilterId}
+                onChange={(e) => setCostCenterFilterId(e.target.value)}
+              >
+                <option value="">{tr("全部", "All")}</option>
+                <option value="__none__">{tr("(无)", "(None)")}</option>
+                {costCenters.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="text-xs text-zinc-600">
+              {tr("本位合计", "Base total")}: {assetCostCenterSummary.total.costBase.toFixed(2)} {baseCurrency} · {tr("项数", "Count")}: {assetCostCenterSummary.total.count}
+            </div>
+          </div>
+
+          {assetCostCenterSummary.rows.length ? (
+            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs text-zinc-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Cost Center</th>
+                    <th className="px-3 py-2 text-right">项数</th>
+                    <th className="px-3 py-2 text-right">金额（交易币）</th>
+                    <th className="px-3 py-2 text-left">币种</th>
+                    <th className="px-3 py-2 text-right">成本（本位 {baseCurrency}）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assetCostCenterSummary.rows.map((r) => {
+                    const label = `${r.code || ""} ${r.name || ""}`.trim() || tr("(无)", "(None)");
+                    const txnText = r.mixedCurrency ? "-" : r.txnSum.toFixed(2);
+                    const curr = r.mixedCurrency ? "-" : r.currency || "-";
+                    return (
+                      <tr key={r.id || "__none__"} className="border-t border-zinc-100">
+                        <td className="px-3 py-2">{label}</td>
+                        <td className="px-3 py-2 text-right">{r.count}</td>
+                        <td className="px-3 py-2 text-right">{txnText}</td>
+                        <td className="px-3 py-2">{curr}</td>
+                        <td className="px-3 py-2 text-right">{r.costBase.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t border-zinc-200 bg-zinc-50">
+                    <td className="px-3 py-2 font-medium">{tr("合计", "Total")}</td>
+                    <td className="px-3 py-2 text-right font-medium">{assetCostCenterSummary.total.count}</td>
+                    <td className="px-3 py-2 text-right font-medium">-</td>
+                    <td className="px-3 py-2 font-medium">-</td>
+                    <td className="px-3 py-2 text-right font-medium">{assetCostCenterSummary.total.costBase.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : null}
           <div className="mt-3 space-y-4">
             {categoriesToRender.map((cat) => {
               const rows = assetsByCategory.get(cat) || [];
@@ -929,6 +1124,65 @@ export default function FixedAssets() {
           <div className="text-sm font-semibold">Fixed Assets Schedule（固定资产变动表）</div>
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <div>
+              <label className="text-xs text-zinc-600">Cost Center</label>
+              <select
+                className="mt-1 w-56 rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                value={costCenterFilterId}
+                onChange={(e) => setCostCenterFilterId(e.target.value)}
+              >
+                <option value="">{tr("全部", "All")}</option>
+                <option value="__none__">{tr("(无)", "(None)")}</option>
+                {costCenters.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="text-xs text-zinc-600">
+              {tr("净值合计", "NBV total")}: {scheduleCostCenterSummary.total.netBookValue.toFixed(2)} {baseCurrency} · {tr("项数", "Count")}: {scheduleCostCenterSummary.total.count}
+            </div>
+          </div>
+
+          {scheduleCostCenterSummary.rows.length ? (
+            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs text-zinc-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Cost Center</th>
+                    <th className="px-3 py-2 text-right">项数</th>
+                    <th className="px-3 py-2 text-right">成本期末</th>
+                    <th className="px-3 py-2 text-right">折旧期末</th>
+                    <th className="px-3 py-2 text-right">净值</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scheduleCostCenterSummary.rows.map((r) => {
+                    const label = `${r.code || ""} ${r.name || ""}`.trim() || tr("(无)", "(None)");
+                    return (
+                      <tr key={r.id || "__none__"} className="border-t border-zinc-100">
+                        <td className="px-3 py-2">{label}</td>
+                        <td className="px-3 py-2 text-right">{r.count}</td>
+                        <td className="px-3 py-2 text-right">{r.closingCost.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{r.closingAccumDep.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">{r.netBookValue.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t border-zinc-200 bg-zinc-50">
+                    <td className="px-3 py-2 font-medium">{tr("合计", "Total")}</td>
+                    <td className="px-3 py-2 text-right font-medium">{scheduleCostCenterSummary.total.count}</td>
+                    <td className="px-3 py-2 text-right font-medium">{scheduleCostCenterSummary.total.closingCost.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{scheduleCostCenterSummary.total.closingAccumDep.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{scheduleCostCenterSummary.total.netBookValue.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <div>
               <label className="text-xs text-zinc-600">开始日期</label>
               <input className="mt-1 w-40 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={scheduleStart} onChange={(e) => setScheduleStart(e.target.value)} />
             </div>
@@ -1032,15 +1286,27 @@ export default function FixedAssets() {
                   <tbody>
                     <tr className="bg-zinc-50">
                       <td className="px-3 py-2 font-medium">合计（本位 {baseCurrency}）</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingCost.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.additions.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{fmtDisposal(scheduleTotals.disposals)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingCost.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.openingAccumDep.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.depExpense.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{fmtDisposal(scheduleTotals.accumDepDisposed)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.closingAccumDep.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{scheduleTotals.netBookValue.toFixed(2)}</td>
+                      {(() => {
+                        const effectiveRows = costCenterFilterId
+                          ? costCenterFilterId === "__none__"
+                            ? scheduleRows.filter((r) => !r.costCenterId)
+                            : scheduleRows.filter((r) => String(r.costCenterId || "") === String(costCenterFilterId))
+                          : scheduleRows;
+                        const totals = sumScheduleRows(effectiveRows);
+                        return (
+                          <>
+                            <td className="px-3 py-2 text-right font-medium">{totals.openingCost.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{totals.additions.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{fmtDisposal(totals.disposals)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{totals.closingCost.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{totals.openingAccumDep.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{totals.depExpense.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{fmtDisposal(totals.accumDepDisposed)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{totals.closingAccumDep.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-medium">{totals.netBookValue.toFixed(2)}</td>
+                          </>
+                        );
+                      })()}
                     </tr>
                   </tbody>
                 </table>
