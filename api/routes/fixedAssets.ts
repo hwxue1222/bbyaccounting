@@ -42,7 +42,8 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
         e.fx_rate,
         e.memo,
         l1.debit_txn as cost_txn,
-        l2.account_id as offset_account_id
+        l2.account_id as offset_account_id,
+        l1.cost_center_id as cost_center_id
       FROM journal_lines l1
       JOIN journal_entries e ON e.id = l1.entry_id AND e.org_id = ${orgId} AND e.status = 'posted'
       LEFT JOIN LATERAL (
@@ -81,9 +82,13 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       p.fx_rate as "purchaseFxRate",
       p.memo as "purchaseMemo",
       p.cost_txn as "purchaseCostTxn",
-      p.offset_account_id as "purchaseOffsetAccountId"
+      p.offset_account_id as "purchaseOffsetAccountId",
+      p.cost_center_id as "purchaseCostCenterId",
+      cc.code as "purchaseCostCenterCode",
+      cc.name as "purchaseCostCenterName"
     FROM fixed_assets a
     LEFT JOIN purchase p ON p.fixed_asset_id = a.id
+    LEFT JOIN cost_centers cc ON cc.id = p.cost_center_id AND cc.org_id = ${orgId}
     WHERE a.org_id = ${orgId}
       AND a.status <> 'draft'
     ORDER BY a.acquisition_date DESC

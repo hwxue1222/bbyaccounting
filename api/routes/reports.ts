@@ -307,6 +307,17 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
         AND acquisition_date <= ${q.data.end}
         AND (disposed_at IS NULL OR disposed_at >= ${q.data.start})
     ),
+    purchase AS (
+      SELECT DISTINCT ON (l1.fixed_asset_id)
+        l1.fixed_asset_id,
+        l1.cost_center_id
+      FROM journal_lines l1
+      JOIN journal_entries e ON e.id = l1.entry_id AND e.org_id = ${orgId} AND e.status = 'posted'
+      WHERE l1.org_id = ${orgId}
+        AND l1.fixed_asset_id IS NOT NULL
+        AND COALESCE(l1.debit_base, 0) > 0
+      ORDER BY l1.fixed_asset_id, e.entry_date ASC, e.id ASC
+    ),
     cost_open AS (
       SELECT
         l.fixed_asset_id as asset_id,
@@ -383,6 +394,9 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
       a.name,
       to_char(a.acquisition_date, 'YYYY-MM-DD') as "acquisitionDate",
       a.status,
+      p.cost_center_id as "costCenterId",
+      cc.code as "costCenterCode",
+      cc.name as "costCenterName",
       COALESCE(co.amount, 0) as "openingCost",
       COALESCE(cp.debit, 0) as "additions",
       COALESCE(cp.credit, 0) as "disposals",
@@ -393,6 +407,8 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
       (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0)) as "closingAccumDep",
       ((COALESCE(co.amount, 0) + COALESCE(cp.debit, 0) - COALESCE(cp.credit, 0)) - (COALESCE(ao.amount, 0) + COALESCE(dp.amount, 0) - COALESCE(adp.amount, 0))) as "netBookValue"
     FROM assets a
+    LEFT JOIN purchase p ON p.fixed_asset_id = a.id
+    LEFT JOIN cost_centers cc ON cc.id = p.cost_center_id AND cc.org_id = ${orgId}
     LEFT JOIN cost_open co ON co.asset_id = a.id
     LEFT JOIN cost_period cp ON cp.asset_id = a.id
     LEFT JOIN ad_open ao ON ao.asset_id = a.id
@@ -408,6 +424,9 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
     name: String(r.name || ""),
     acquisitionDate: String(r.acquisitionDate || ""),
     status: String(r.status || ""),
+    costCenterId: r.costCenterId ? String(r.costCenterId) : null,
+    costCenterCode: r.costCenterCode ? String(r.costCenterCode) : null,
+    costCenterName: r.costCenterName ? String(r.costCenterName) : null,
     openingCost: Number(r.openingCost || 0),
     additions: Number(r.additions || 0),
     disposals: Number(r.disposals || 0),
@@ -440,6 +459,9 @@ router.get("/fixed-assets-schedule", requireAuth, async (req: AuthedRequest, res
           name: "折旧（未关联 61xx）",
           acquisitionDate: "",
           status: "unassigned",
+          costCenterId: null,
+          costCenterCode: null,
+          costCenterName: null,
           openingCost: 0,
           additions: 0,
           disposals: 0,

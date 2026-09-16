@@ -18,6 +18,9 @@ type Asset = {
   purchaseMemo?: string | null;
   purchaseCostTxn?: string | null;
   purchaseOffsetAccountId?: string | null;
+  purchaseCostCenterId?: string | null;
+  purchaseCostCenterCode?: string | null;
+  purchaseCostCenterName?: string | null;
   usefulLifeMonths: number;
   salvageValueBase: string;
   status: string;
@@ -50,6 +53,9 @@ type ScheduleRow = {
   name: string;
   acquisitionDate: string;
   status: string;
+  costCenterId?: string | null;
+  costCenterCode?: string | null;
+  costCenterName?: string | null;
   openingCost: number;
   additions: number;
   disposals: number;
@@ -484,6 +490,7 @@ export default function FixedAssets() {
                           <th className="px-3 py-2 text-left">编号</th>
                           <th className="px-3 py-2 text-left">名称</th>
                           <th className="px-3 py-2 text-left">购置日</th>
+                          <th className="px-3 py-2 text-left">Cost Center</th>
                           <th className="px-3 py-2 text-left">分录号</th>
                           <th className="px-3 py-2 text-right">金额（交易币）</th>
                           <th className="px-3 py-2 text-left">币种</th>
@@ -500,6 +507,14 @@ export default function FixedAssets() {
                             <td className="px-3 py-2 whitespace-nowrap">{a.assetNo || "-"}</td>
                             <td className="px-3 py-2">{a.name}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{String(a.acquisitionDate || "").slice(0, 10)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {(() => {
+                                const code = a.purchaseCostCenterCode ? String(a.purchaseCostCenterCode) : "";
+                                const name = a.purchaseCostCenterName ? String(a.purchaseCostCenterName) : "";
+                                const label = `${code} ${name}`.trim();
+                                return label ? label : "-";
+                              })()}
+                            </td>
                             <td className="px-3 py-2 whitespace-nowrap">
                               {a.purchaseEntryId ? (
                                 <button
@@ -973,7 +988,12 @@ export default function FixedAssets() {
                             <td className="px-3 py-2">
                               <div className="font-medium">{r.assetNo ? `${r.assetNo} · ${r.name}` : r.name}</div>
                               <div className="text-xs text-zinc-500">
-                                {r.acquisitionDate} · {r.status}
+                                {(() => {
+                                  const code = r.costCenterCode ? String(r.costCenterCode) : "";
+                                  const name = r.costCenterName ? String(r.costCenterName) : "";
+                                  const cc = `${code} ${name}`.trim();
+                                  return `${r.acquisitionDate} · ${r.status}${cc ? ` · ${cc}` : ""}`;
+                                })()}
                               </div>
                             </td>
                             <td className="px-3 py-2 text-right">{r.openingCost.toFixed(2)}</td>
