@@ -587,17 +587,23 @@ export default function Journal() {
   }
 
   async function refreshCore(signal?: AbortSignal) {
-    const [{ accounts }, { costCenters }, { currencies }, { entries }] = await Promise.all([
-      api<{ accounts: any[] }>("/api/settings/accounts", { signal }),
-      api<{ costCenters: any[] }>("/api/settings/cost-centers", { signal }),
-      api<{ currencies: any[] }>("/api/settings/currencies", { signal }),
-      api<{ entries: any[] }>("/api/journals", { signal }),
+    const [{ accounts, costCenters, currencies, bankAccounts }, { entries }] = await Promise.all([
+      api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[] }>("/api/settings/bootstrap?limit=50", {
+        signal,
+      }),
+      api<{ entries: any[] }>("/api/journals?limit=50", { signal }),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
+    setBankAccounts(bankAccounts as any);
     setEntries(entries as any);
     void refreshNextVoucherNo(undefined, signal);
+  }
+
+  async function refreshEntriesOnly(signal?: AbortSignal) {
+    const r = await api<{ entries: any[] }>("/api/journals?limit=50", { signal });
+    setEntries(r.entries as any);
   }
 
   async function refreshVendorsOnly(signal?: AbortSignal) {
@@ -625,7 +631,7 @@ export default function Journal() {
     if (selectedId === id) {
       setSelectedId(null);
     }
-    await refreshCore();
+    await refreshEntriesOnly();
   }
 
   async function startEditEntry(id: string) {
@@ -1453,7 +1459,6 @@ export default function Journal() {
     const ctrl = new AbortController();
     pageAbortRef.current = ctrl;
     setErr(null);
-    setEntries([]);
     setSelectedId(null);
     setDetail(null);
     refreshCore(ctrl.signal).catch((e) => {
@@ -2572,7 +2577,7 @@ export default function Journal() {
                       json: fixedAssetPurchases ? { fixedAssetPurchases } : undefined,
                     });
                     resetDraftEntry();
-                    await refreshCore();
+                    await refreshEntriesOnly();
                     setSelectedId(id);
                     return;
                   }
@@ -2675,7 +2680,7 @@ export default function Journal() {
                     : await api<{ entry?: { id: string }; entries?: Array<{ id: string; entryDate: string; voucherNo: string | null }> }>("/api/journals/post", { method: "POST", json: reqBody });
 
                   resetDraftEntry();
-                  await refreshCore();
+                  await refreshEntriesOnly();
                   const firstId = (resp as any)?.entry?.id || (resp as any)?.entries?.[0]?.id;
                   if (firstId) {
                     setSelectedId(firstId);
@@ -4536,7 +4541,7 @@ export default function Journal() {
             <div className="text-sm font-semibold">{tr("凭证列表", "Journals")}</div>
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-              onClick={() => refreshCore()}
+                  onClick={() => refreshEntriesOnly()}
               type="button"
             >
               {tr("刷新", "Refresh")}

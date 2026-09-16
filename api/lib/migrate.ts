@@ -163,6 +163,7 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date_created ON journal_entries(org_id, entry_date DESC, created_at DESC)`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS inventory_impact BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS voucher_no TEXT`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS parent_entry_id UUID`;
@@ -275,6 +276,7 @@ export async function ensureMigrated(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(org_id, account_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_entry ON journal_lines(org_id, entry_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_entry_debit ON journal_lines(org_id, entry_id) INCLUDE (debit_txn, debit_base)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_fixed_asset ON journal_lines(org_id, fixed_asset_id)`;
 
   await sql`
