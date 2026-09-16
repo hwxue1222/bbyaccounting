@@ -4912,8 +4912,17 @@ export default function Journal() {
                     <td className="px-3 py-2 text-sm">{e.currency}</td>
                     <td className="px-3 py-2 text-right">
                       {(() => {
-                        const amt = Number(e.totalDebitTxn);
-                        return Number.isFinite(amt) ? amt.toFixed(2) : "-";
+                        const baseAmt = Number(e.totalDebitBase);
+                        const txnAmt = Number(e.totalDebitTxn);
+                        const baseText = Number.isFinite(baseAmt) ? `${baseCurrency} ${baseAmt.toFixed(2)}` : "-";
+                        const txnText = Number.isFinite(txnAmt) ? `${String(e.currency || "").toUpperCase()} ${txnAmt.toFixed(2)}` : "-";
+                        const showTxn = String(e.currency || "").toUpperCase() && String(e.currency || "").toUpperCase() !== baseCurrency;
+                        return (
+                          <div className="flex flex-col items-end">
+                            <div>{baseText}</div>
+                            {showTxn ? <div className="text-xs text-zinc-500">{txnText}</div> : null}
+                          </div>
+                        );
                       })()}
                     </td>
                     <td className="px-3 py-2 text-right">
