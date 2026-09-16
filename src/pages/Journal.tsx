@@ -4792,6 +4792,7 @@ export default function Journal() {
                         return;
                       }
                       selectEntry(e.id);
+                      setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
                     }}
                     onMouseEnter={() => {
                       prefetchDetail(e.id);
@@ -4886,6 +4887,7 @@ export default function Journal() {
 
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm" ref={detailRef}>
             <div className="text-sm font-semibold">凭证详情</div>
+            {!detail && selectedId ? <div className="mt-2 text-sm text-zinc-500">{tr("加载中...", "Loading...")}</div> : null}
             {detail ? (
               <div className="mt-3 space-y-3">
                 <div className="flex items-center justify-between">
