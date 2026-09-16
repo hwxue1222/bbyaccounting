@@ -1173,6 +1173,22 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const recurring = parsed.data.recurring;
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
+  const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`;
+  const baseCurrency = String((orgRows as any[])[0]?.baseCurrency || "BASE").toUpperCase();
+
+  const upsertFxRate = async (trx: any, rateDate: string) => {
+    const ccy = String(currency || "").toUpperCase();
+    const fx = Number(fxRate) || 1;
+    if (!ccy || ccy === baseCurrency) return;
+    if (!Number.isFinite(fx) || fx <= 0) return;
+    await trx`
+      INSERT INTO fx_rates (org_id, rate_date, currency_code, fx_rate)
+      VALUES (${orgId}, ${rateDate}, ${ccy}, ${fx})
+      ON CONFLICT (org_id, rate_date, currency_code)
+      DO UPDATE SET fx_rate = EXCLUDED.fx_rate
+    `;
+  };
+
   const addMonthsYmd = (ymd: string, monthsToAdd: number) => {
     const m = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(ymd);
     if (!m) throw new Error("Invalid entryDate");
@@ -1398,6 +1414,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
+          await upsertFxRate(trx, entryDate);
           break;
         } catch (e: any) {
           if (String(e?.code || "") === "23505" && vn === providedVoucherNo && candidates.length > 1) {
@@ -1417,6 +1434,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
               RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
+          await upsertFxRate(trx, entryDate);
           break;
         } catch (e: any) {
           if (String(e?.code || "") === "23505") continue;
@@ -1456,6 +1474,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
                   RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
                 `
               )[0] as any;
+              await upsertFxRate(trx, nextDate);
               break;
             } catch (e: any) {
               if (String(e?.code || "") === "23505") continue;
@@ -2103,6 +2122,22 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
   }
   const fixedAssetPurchases = parsedBody.data.fixedAssetPurchases;
 
+  const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`;
+  const baseCurrency = String((orgRows as any[])[0]?.baseCurrency || "BASE").toUpperCase();
+
+  const upsertFxRate = async (trx: any) => {
+    const ccy = String(entry.currency || "").toUpperCase();
+    const fx = Number(entry.fxRate) || 1;
+    if (!ccy || ccy === baseCurrency) return;
+    if (!Number.isFinite(fx) || fx <= 0) return;
+    await trx`
+      INSERT INTO fx_rates (org_id, rate_date, currency_code, fx_rate)
+      VALUES (${orgId}, ${String(entry.entryDate)}, ${ccy}, ${fx})
+      ON CONFLICT (org_id, rate_date, currency_code)
+      DO UPDATE SET fx_rate = EXCLUDED.fx_rate
+    `;
+  };
+
   const entryRows = await sql`
     SELECT id, status, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", currency_code as "currency", fx_rate as "fxRate", inventory_impact as "inventoryImpact"
     FROM journal_entries
@@ -2198,6 +2233,7 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
 
   try {
     await sql.begin(async (trx) => {
+      await upsertFxRate(trx);
       const vRows = await trx`SELECT voucher_no as "voucherNo" FROM journal_entries WHERE id = ${id} AND org_id = ${orgId} LIMIT 1`;
       const currentVoucherNo = (vRows[0] as any)?.voucherNo as string | null | undefined;
       if (!currentVoucherNo) {

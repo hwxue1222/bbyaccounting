@@ -99,6 +99,8 @@ export default function Journal() {
   const detailRef = useRef<HTMLDivElement | null>(null);
   const pageAbortRef = useRef<AbortController | null>(null);
   const invQuoteAbortRef = useRef<AbortController | null>(null);
+  const fxAutoAbortRef = useRef<AbortController | null>(null);
+  const fxTouchedRef = useRef(false);
   const detailCacheRef = useRef<Map<string, CachedDetail>>(new Map());
   const detailInflightRef = useRef<Map<string, Promise<EntryDetail>>>(new Map());
   const detailAbortRef = useRef<AbortController | null>(null);
@@ -1662,6 +1664,46 @@ export default function Journal() {
     setDraftFx(Number(fx));
   }
 
+  useEffect(() => {
+    if (!activeOrgId || orgSwitching) return;
+
+    const cc = draftCurrency.toUpperCase();
+    if (!draftDate.trim() || !cc.trim()) return;
+    if (cc === baseCurrency) {
+      fxTouchedRef.current = false;
+      setDraftFx(1);
+      return;
+    }
+
+    if (fxTouchedRef.current) return;
+    if (Number(draftFx) !== 1) return;
+
+    fxAutoAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    fxAutoAbortRef.current = ctrl;
+    const id = window.setTimeout(() => {
+      api<{ fxRates: Array<{ fxRate: number }> }>(`/api/settings/fx-rates?rateDate=${draftDate}&currencyCode=${encodeURIComponent(cc)}`, {
+        signal: ctrl.signal,
+      })
+        .then((r) => {
+          if (ctrl.signal.aborted) return;
+          const fx = r.fxRates?.[0]?.fxRate;
+          if (!fx) return;
+          setDraftFx(Number(fx));
+        })
+        .catch(() => null);
+    }, 250);
+
+    return () => {
+      window.clearTimeout(id);
+      ctrl.abort();
+    };
+  }, [activeOrgId, orgSwitching, draftDate, draftCurrency, draftFx, baseCurrency]);
+
+  useEffect(() => {
+    fxTouchedRef.current = false;
+  }, [draftDate, draftCurrency]);
+
   async function loadDetail(id: string, signal?: AbortSignal, opts?: { force?: boolean }) {
     const d = await fetchDetailCore(id, { signal, force: opts?.force });
     if (signal?.aborted) return;
@@ -2341,7 +2383,10 @@ export default function Journal() {
             <input
               className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
               value={String(draftFx)}
-              onChange={(e) => setDraftFx(e.target.value === "" ? 1 : Number(e.target.value) || 1)}
+              onChange={(e) => {
+                fxTouchedRef.current = true;
+                setDraftFx(e.target.value === "" ? 1 : Number(e.target.value) || 1);
+              }}
               type="number"
               step="0.0001"
               disabled={readOnly}
