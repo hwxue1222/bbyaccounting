@@ -7,6 +7,23 @@ import { requireOrgAccess, requireOrgRole } from "../lib/orgAccess.js";
 
 const router = Router();
 
+const ALLOWED_ROLE_PERMS = new Set([
+  "settings.view",
+  "settings.edit",
+  "journal.view",
+  "journal.edit",
+  "inventory.view",
+  "inventory.edit",
+  "fixedAssets.view",
+  "fixedAssets.edit",
+  "vendors.view",
+  "vendors.edit",
+  "customers.view",
+  "customers.edit",
+  "reports.view",
+  "users.manage",
+]);
+
 async function getMyMembershipRole(sql: ReturnType<typeof getSql>, orgId: string, userId: string): Promise<string | null> {
   const rows = await sql`
     SELECT role
@@ -50,6 +67,69 @@ router.get("/members", requireAuth, async (req: AuthedRequest, res: Response) =>
     ORDER BY m.created_at ASC
   `;
   res.status(200).json({ success: true, data: { members: rows } });
+});
+
+router.get("/role-permissions", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const guard = await requireOrgRole(req, res, orgId, "admin");
+  if (guard === null) return;
+
+  const sql = getSql();
+  const rows = await sql`
+    SELECT role, permissions
+    FROM role_permissions
+    WHERE org_id = ${orgId}
+    ORDER BY role ASC
+  `;
+  res.status(200).json({ success: true, data: { roles: rows } });
+});
+
+router.patch("/role-permissions", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const guard = await requireOrgRole(req, res, orgId, "admin");
+  if (guard === null) return;
+
+  const bodySchema = z.object({
+    role: z.enum(["owner", "admin", "accountant", "viewer", "auditor"]),
+    permissions: z
+      .array(z.string())
+      .refine((arr) => arr.every((p) => ALLOWED_ROLE_PERMS.has(p)), { message: "Invalid permissions" }),
+  });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+  const globalAdmin = await isGlobalAdmin(sql, req.auth!.userId);
+  const myRole = globalAdmin ? "admin" : await getMyMembershipRole(sql, orgId, req.auth!.userId);
+  if (!myRole) {
+    res.status(403).json({ success: false, error: "Forbidden" });
+    return;
+  }
+  if (myRole !== "owner") {
+    res.status(403).json({ success: false, error: "Only owner can change role permissions" });
+    return;
+  }
+
+  const updated = (
+    await sql`
+      INSERT INTO role_permissions (org_id, role, permissions, updated_at)
+      VALUES (${orgId}, ${parsed.data.role}, ${sql.array(parsed.data.permissions)}, now())
+      ON CONFLICT (org_id, role)
+      DO UPDATE SET permissions = EXCLUDED.permissions, updated_at = now()
+      RETURNING role, permissions
+    `
+  )[0];
+
+  res.status(200).json({ success: true, data: { role: updated } });
 });
 
 router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, res: Response) => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -10,6 +11,7 @@ type CostCenter = { id: string; code: string; name: string };
 export default function Reports() {
   const { activeOrgId, orgSwitching, orgs } = useAuthStore();
   const tr = useTr();
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [tab, setTab] = useState<"tb" | "pl" | "bs" | "gl">("tb");
@@ -71,6 +73,25 @@ export default function Reports() {
         const r = await api<{ sections: any[] }>(`/api/reports/gl?${accountParam}start=${start}&end=${end}${ccParam}`);
         setRows(r.sections);
       }
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function drillToGL(nextAccountId: string, nextStart: string, nextEnd: string) {
+    setBusy(true);
+    setErr(null);
+    setTab("gl");
+    setAccountId(nextAccountId);
+    setStart(nextStart);
+    setEnd(nextEnd);
+    try {
+      const ccParam = costCenterId ? `&costCenterId=${encodeURIComponent(costCenterId)}` : "";
+      const accountParam = nextAccountId ? `accountId=${encodeURIComponent(nextAccountId)}&` : "";
+      const r = await api<{ sections: any[] }>(`/api/reports/gl?${accountParam}start=${nextStart}&end=${nextEnd}${ccParam}`);
+      setRows(r.sections);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -250,6 +271,7 @@ export default function Reports() {
                 <tr>
                   <th className="px-3 py-2 text-left">科目</th>
                   <th className="px-3 py-2 text-left">日期</th>
+                  <th className="px-3 py-2 text-left">分录号</th>
                   <th className="px-3 py-2 text-left">摘要</th>
                   <th className="px-3 py-2 text-left">成本中心</th>
                   <th className="px-3 py-2 text-right">借（{baseCurrency}）</th>
@@ -285,7 +307,7 @@ export default function Reports() {
                     if (r.kind === "section") {
                       return (
                         <tr key={idx} className="border-t border-zinc-100 bg-zinc-50 font-semibold">
-                          <td className="px-3 py-2" colSpan={7}>
+                          <td className="px-3 py-2" colSpan={8}>
                             {r.label}
                           </td>
                         </tr>
@@ -294,7 +316,7 @@ export default function Reports() {
                     if (r.kind === "account") {
                       return (
                         <tr key={idx} className="border-t border-zinc-100 bg-white font-semibold">
-                          <td className="px-3 py-2" colSpan={7}>
+                          <td className="px-3 py-2" colSpan={8}>
                             {`${r.accountCode} ${r.accountName}`.trim()}
                           </td>
                         </tr>
@@ -303,6 +325,7 @@ export default function Reports() {
                     if (r.kind === "opening") {
                       return (
                         <tr key={idx} className="border-t border-zinc-100 bg-white">
+                          <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2 text-zinc-600">Opening Balance</td>
@@ -318,6 +341,7 @@ export default function Reports() {
                         <tr key={idx} className="border-t border-zinc-100 bg-zinc-50 font-medium">
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
                           <td className="px-3 py-2 text-zinc-700">Closing Balance</td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2 text-right"></td>
@@ -331,6 +355,17 @@ export default function Reports() {
                       <tr key={idx} className="border-t border-zinc-100">
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2">{r.entryDate}</td>
+                        <td className="px-3 py-2">
+                          {r.entryId ? (
+                            <button
+                              className="text-blue-700 hover:underline"
+                              type="button"
+                              onClick={() => navigate(`/journal?entryId=${encodeURIComponent(String(r.entryId))}`)}
+                            >
+                              {String(r.voucherNo || "").trim() || String(r.entryId).slice(0, 8)}
+                            </button>
+                          ) : null}
+                        </td>
                         <td className="px-3 py-2">{r.memo || r.description || ""}</td>
                         <td className="px-3 py-2">{cc}</td>
                         <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
@@ -344,12 +379,66 @@ export default function Reports() {
                       <tr key={idx} className="border-t border-zinc-100">
                         <td className="px-3 py-2">{r.code}</td>
                         <td className="px-3 py-2">{r.name}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.openingDebit ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.openingCredit ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.periodDebit ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.periodCredit ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.closingDebit ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.closingCredit ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-blue-700 hover:underline"
+                            type="button"
+                            disabled={!r.accountId}
+                            onClick={() => drillToGL(String(r.accountId), start, end)}
+                          >
+                            {Number(r.openingDebit ?? 0).toFixed(2)}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-blue-700 hover:underline"
+                            type="button"
+                            disabled={!r.accountId}
+                            onClick={() => drillToGL(String(r.accountId), start, end)}
+                          >
+                            {Number(r.openingCredit ?? 0).toFixed(2)}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-blue-700 hover:underline"
+                            type="button"
+                            disabled={!r.accountId}
+                            onClick={() => drillToGL(String(r.accountId), start, end)}
+                          >
+                            {Number(r.periodDebit ?? 0).toFixed(2)}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-blue-700 hover:underline"
+                            type="button"
+                            disabled={!r.accountId}
+                            onClick={() => drillToGL(String(r.accountId), start, end)}
+                          >
+                            {Number(r.periodCredit ?? 0).toFixed(2)}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-blue-700 hover:underline"
+                            type="button"
+                            disabled={!r.accountId}
+                            onClick={() => drillToGL(String(r.accountId), start, end)}
+                          >
+                            {Number(r.closingDebit ?? 0).toFixed(2)}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="text-blue-700 hover:underline"
+                            type="button"
+                            disabled={!r.accountId}
+                            onClick={() => drillToGL(String(r.accountId), start, end)}
+                          >
+                            {Number(r.closingCredit ?? 0).toFixed(2)}
+                          </button>
+                        </td>
                       </tr>
                     ) : tab === "pl" ? (
                       <tr
@@ -360,7 +449,17 @@ export default function Reports() {
                         }
                       >
                         <td className={"px-3 py-2 " + (r.isHeader ? "text-zinc-900" : "")}>{r.isHeader ? r.name : `${r.code ? `${r.code} ` : ""}${r.name || ""}`.trim()}</td>
-                        <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">
+                          {r.amount === null || r.amount === undefined ? (
+                            ""
+                          ) : r.accountId ? (
+                            <button className="text-blue-700 hover:underline" type="button" onClick={() => drillToGL(String(r.accountId), start, end)}>
+                              {Number(r.amount).toFixed(2)}
+                            </button>
+                          ) : (
+                            Number(r.amount).toFixed(2)
+                          )}
+                        </td>
                       </tr>
                     ) : (
                       <tr
@@ -373,7 +472,21 @@ export default function Reports() {
                         <td className="px-3 py-2" style={{ paddingLeft: `${8 + Number(r.indent || 0) * 16}px` }}>
                           {r.label || r.name || ""}
                         </td>
-                        <td className="px-3 py-2 text-right">{r.amount === null || r.amount === undefined ? "" : Number(r.amount).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right">
+                          {r.amount === null || r.amount === undefined ? (
+                            ""
+                          ) : r.accountId ? (
+                            <button
+                              className="text-blue-700 hover:underline"
+                              type="button"
+                              onClick={() => drillToGL(String(r.accountId), `${asOf.slice(0, 4)}-01-01`, asOf)}
+                            >
+                              {Number(r.amount).toFixed(2)}
+                            </button>
+                          ) : (
+                            Number(r.amount).toFixed(2)
+                          )}
+                        </td>
                       </tr>
                     ),
                   )}

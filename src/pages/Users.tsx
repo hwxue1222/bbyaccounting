@@ -13,6 +13,22 @@ type MemberRow = {
   createdAt: string;
 };
 
+type RolePermRow = {
+  role: string;
+  permissions: string[];
+};
+
+const PERM_GROUPS: Array<{ key: string; label: string; actions: string[] }> = [
+  { key: "settings", label: "Settings", actions: ["view", "edit"] },
+  { key: "journal", label: "Journals", actions: ["view", "edit"] },
+  { key: "inventory", label: "Inventory FIFO", actions: ["view", "edit"] },
+  { key: "fixedAssets", label: "Fixed Assets", actions: ["view", "edit"] },
+  { key: "vendors", label: "Vendors", actions: ["view", "edit"] },
+  { key: "customers", label: "Customers", actions: ["view", "edit"] },
+  { key: "reports", label: "Reports", actions: ["view"] },
+  { key: "users", label: "Users", actions: ["manage"] },
+];
+
 export default function Users() {
   const { orgs, activeOrgId, orgSwitching, createInvite } = useAuthStore();
   const tr = useTr();
@@ -25,17 +41,29 @@ export default function Users() {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [rolePerms, setRolePerms] = useState<RolePermRow[]>([]);
+
+  const rolePermByRole = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const r of rolePerms) m.set(String(r.role), Array.isArray(r.permissions) ? r.permissions : []);
+    return m;
+  }, [rolePerms]);
 
   async function refresh() {
     const r = await api<{ members: any[] }>("/api/users/members");
     setMembers(r.members as any);
   }
 
+  async function refreshRolePerms() {
+    const r = await api<{ roles: any[] }>("/api/users/role-permissions");
+    setRolePerms(r.roles as any);
+  }
+
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     setErr(null);
     setInviteUrl(null);
-    refresh().catch((e) => setErr(e.message));
+    Promise.all([refresh(), refreshRolePerms()]).catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
 
   return (
@@ -44,6 +72,90 @@ export default function Users() {
         <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm">只有 Owner/Admin 可以管理用户。</div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold">角色权限</div>
+            <div className="mt-3 max-h-[520px] overflow-auto rounded-lg border border-zinc-100">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Role</th>
+                    <th className="px-3 py-2 text-left">Permissions</th>
+                    <th className="px-3 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(["owner", "admin", "accountant", "viewer", "auditor"] as const).map((role) => {
+                    const perms = rolePermByRole.get(role) ?? [];
+                    const permSet = new Set(perms);
+                    return (
+                      <tr key={role} className="border-t border-zinc-100 align-top">
+                        <td className="px-3 py-2 font-medium">{role}</td>
+                        <td className="px-3 py-2">
+                          <div className="grid gap-2">
+                            {PERM_GROUPS.map((g) => (
+                              <div key={g.key} className="grid gap-1">
+                                <div className="text-xs font-semibold text-zinc-700">{g.label}</div>
+                                <div className="flex flex-wrap gap-3">
+                                  {g.actions.map((a) => {
+                                    const p = `${g.key}.${a}`;
+                                    const checked = permSet.has(p);
+                                    const disabled = busy || active?.role !== "owner";
+                                    return (
+                                      <label key={p} className="inline-flex items-center gap-2 text-xs text-zinc-700">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          disabled={disabled}
+                                          onChange={async (e) => {
+                                            const next = e.target.checked
+                                              ? Array.from(new Set([...perms, p]))
+                                              : perms.filter((x) => x !== p);
+                                            setBusy(true);
+                                            setErr(null);
+                                            try {
+                                              await api("/api/users/role-permissions", { method: "PATCH", json: { role, permissions: next } });
+                                              await refreshRolePerms();
+                                            } catch (err: any) {
+                                              setErr(err.message);
+                                            } finally {
+                                              setBusy(false);
+                                            }
+                                          }}
+                                        />
+                                        {a}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                            disabled={busy || active?.role !== "owner"}
+                            onClick={async () => {
+                              setErr(null);
+                              try {
+                                await refreshRolePerms();
+                              } catch (err: any) {
+                                setErr(err.message);
+                              }
+                            }}
+                          >
+                            刷新
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {active?.role !== "owner" ? <div className="mt-2 text-xs text-zinc-500">只有 Owner 可以修改角色权限。</div> : null}
+          </div>
+
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold">邀请用户</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">

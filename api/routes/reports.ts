@@ -536,6 +536,7 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
       ? await sql`
           SELECT
             a.type,
+            a.id as "accountId",
             a.code,
             a.name,
             COALESCE(SUM(l.debit_base), 0) as debit,
@@ -548,13 +549,14 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
             AND e.entry_date >= ${q.data.start}
             AND e.entry_date <= ${q.data.end}
             AND a.type IN ('income', 'cogs', 'expense')
-          GROUP BY a.type, a.code, a.name
+          GROUP BY a.type, a.id, a.code, a.name
           ORDER BY a.type ASC, a.code ASC
         `
       : costCenterId === "__none__"
         ? await sql`
             SELECT
               a.type,
+              a.id as "accountId",
               a.code,
               a.name,
               COALESCE(SUM(l.debit_base), 0) as debit,
@@ -568,12 +570,13 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
               AND e.entry_date <= ${q.data.end}
               AND a.type IN ('income', 'cogs', 'expense')
               AND l.cost_center_id IS NULL
-            GROUP BY a.type, a.code, a.name
+            GROUP BY a.type, a.id, a.code, a.name
             ORDER BY a.type ASC, a.code ASC
           `
         : await sql`
             SELECT
               a.type,
+              a.id as "accountId",
               a.code,
               a.name,
               COALESCE(SUM(l.debit_base), 0) as debit,
@@ -587,7 +590,7 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
               AND e.entry_date <= ${q.data.end}
               AND a.type IN ('income', 'cogs', 'expense')
               AND l.cost_center_id = ${costCenterId}
-            GROUP BY a.type, a.code, a.name
+            GROUP BY a.type, a.id, a.code, a.name
             ORDER BY a.type ASC, a.code ASC
           `;
 
@@ -612,14 +615,14 @@ router.get("/profit-loss", requireAuth, async (req: AuthedRequest, res: Response
 
   const rows = [
     { section: "Trading Income", code: "", name: "Trading Income", amount: null, isHeader: true },
-    ...income.map((r) => ({ section: "Trading Income", code: r.code, name: r.name, amount: r.amount })),
+    ...income.map((r) => ({ section: "Trading Income", accountId: r.accountId, code: r.code, name: r.name, amount: r.amount })),
     { section: "Trading Income", code: "", name: "Total Trading Income", amount: totalIncome, isTotal: true },
     { section: "Cost of Sales", code: "", name: "Cost of Sales", amount: null, isHeader: true },
-    ...cogs.map((r) => ({ section: "Cost of Sales", code: r.code, name: r.name, amount: r.amount })),
+    ...cogs.map((r) => ({ section: "Cost of Sales", accountId: r.accountId, code: r.code, name: r.name, amount: r.amount })),
     { section: "Cost of Sales", code: "", name: "Total Cost of Sales", amount: totalCogs, isTotal: true },
     { section: "Summary", code: "", name: "Gross Profit", amount: grossProfit, isTotal: true },
     { section: "Operating Expenses", code: "", name: "Operating Expenses", amount: null, isHeader: true },
-    ...expenses.map((r) => ({ section: "Operating Expenses", code: r.code, name: r.name, amount: r.amount })),
+    ...expenses.map((r) => ({ section: "Operating Expenses", accountId: r.accountId, code: r.code, name: r.name, amount: r.amount })),
     { section: "Operating Expenses", code: "", name: "Total Operating Expenses", amount: totalExpenses, isTotal: true },
     { section: "Summary", code: "", name: "Net Profit", amount: netProfit, isTotal: true },
   ];
@@ -675,24 +678,24 @@ router.get("/balance-sheet", requireAuth, async (req: AuthedRequest, res: Respon
   const rows: any[] = [];
   rows.push({ section: "Assets", label: "Assets", amount: null, isHeader: true });
   rows.push({ section: "Assets", label: "Bank", amount: null, indent: 1, isHeader: true });
-  for (const a of bank) rows.push({ section: "Assets", code: a.code, name: a.name, label: a.name, amount: amtAsset(a), indent: 1 });
+  for (const a of bank) rows.push({ section: "Assets", accountId: a.id, code: a.code, name: a.name, label: a.name, amount: amtAsset(a), indent: 1 });
   rows.push({ section: "Assets", label: "Total Bank", amount: totalBank, indent: 1, isTotal: true });
   rows.push({ section: "Assets", label: "Current Assets", amount: null, indent: 1, isHeader: true });
-  for (const a of currentAssets) rows.push({ section: "Assets", code: a.code, name: a.name, label: a.name, amount: amtAsset(a), indent: 1 });
+  for (const a of currentAssets) rows.push({ section: "Assets", accountId: a.id, code: a.code, name: a.name, label: a.name, amount: amtAsset(a), indent: 1 });
   rows.push({ section: "Assets", label: "Total Current Assets", amount: totalCurrentAssets, indent: 1, isTotal: true });
   rows.push({ section: "Assets", label: "Fixed Assets", amount: null, indent: 1, isHeader: true });
-  for (const a of fixed) rows.push({ section: "Assets", code: a.code, name: a.name, label: a.name, amount: amtAsset(a), indent: 1 });
+  for (const a of fixed) rows.push({ section: "Assets", accountId: a.id, code: a.code, name: a.name, label: a.name, amount: amtAsset(a), indent: 1 });
   rows.push({ section: "Assets", label: "Total Fixed Assets", amount: totalFixed, indent: 1, isTotal: true });
   rows.push({ section: "Assets", label: "Total Assets", amount: totalAssets, isTotal: true });
   rows.push({ section: "Liabilities", label: "Liabilities", amount: null, isHeader: true });
   rows.push({ section: "Liabilities", label: "Current Liabilities", amount: null, indent: 1, isHeader: true });
-  for (const a of liabilities) rows.push({ section: "Liabilities", code: a.code, name: a.name, label: a.name, amount: amtLiabEq(a), indent: 1 });
+  for (const a of liabilities) rows.push({ section: "Liabilities", accountId: a.id, code: a.code, name: a.name, label: a.name, amount: amtLiabEq(a), indent: 1 });
   rows.push({ section: "Liabilities", label: "Total Current Liabilities", amount: totalCurrentLiab, indent: 1, isTotal: true });
   rows.push({ section: "Liabilities", label: "Total Liabilities", amount: totalLiab, isTotal: true });
   rows.push({ section: "Summary", label: "Net Assets", amount: netAssets, indent: 1, isTotal: true });
   rows.push({ section: "Equity", label: "Equity", amount: null, isHeader: true });
   rows.push({ section: "Equity", label: "Current Year Earnings", amount: netProfitYtd, indent: 1 });
-  for (const a of equity) rows.push({ section: "Equity", code: a.code, name: a.name, label: a.name, amount: amtLiabEq(a), indent: 1 });
+  for (const a of equity) rows.push({ section: "Equity", accountId: a.id, code: a.code, name: a.name, label: a.name, amount: amtLiabEq(a), indent: 1 });
   rows.push({ section: "Equity", label: "Total Equity", amount: totalEquity, isTotal: true });
   rows.push({ section: "Summary", label: "Net Assets - Total Equity", amount: variance, isTotal: true });
 
@@ -1035,6 +1038,7 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
       l.account_id as "accountId",
       to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
       e.id as "entryId",
+      e.voucher_no as "voucherNo",
       e.memo,
       l.description,
       l.cost_center_id as "costCenterId",
@@ -1108,6 +1112,7 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
         kind: "txn",
         entryDate: String(x.entryDate),
         entryId: String(x.entryId),
+        voucherNo: x.voucherNo == null ? null : String(x.voucherNo),
         memo: x.memo == null ? null : String(x.memo),
         description: x.description == null ? null : String(x.description),
         costCenterId: x.costCenterId == null ? null : String(x.costCenterId),

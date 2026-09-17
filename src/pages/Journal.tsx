@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
+import SearchableSelect from "@/components/SearchableSelect";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
@@ -2506,31 +2507,29 @@ export default function Journal() {
                 <tr key={idx} className="border-t border-zinc-100">
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
-                      <select
-                        className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                      <SearchableSelect
                         value={l.accountId}
-                        onChange={(e) => {
-                          if (e.target.value === "__new_account__") {
+                        placeholder={tr("请选择", "Select")}
+                        disabled={readOnly}
+                        options={[
+                          { value: "__new_account__", label: tr("+ 新建", "+ New") },
+                          ...accounts
+                            .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
+                            .map((a) => ({
+                              value: a.id,
+                              label: `${a.code} ${a.name}${(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}`,
+                            })),
+                        ]}
+                        onChange={(nextId) => {
+                          if (nextId === "__new_account__") {
                             openInlineNewAccount(idx);
                             return;
                           }
                           const next = [...draftLines];
-                          next[idx] = { ...l, accountId: e.target.value };
+                          next[idx] = { ...l, accountId: nextId };
                           setDraftLines(next);
                         }}
-                        disabled={readOnly}
-                      >
-                        <option value="">{tr("请选择", "Select")}</option>
-                        <option value="__new_account__">{tr("+ 新建", "+ New")}</option>
-                        {accounts
-                          .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.code} {a.name}
-                              {(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
-                            </option>
-                          ))}
-                      </select>
+                      />
                     </div>
                   </td>
                   <td className="px-3 py-2">
@@ -3293,11 +3292,19 @@ export default function Journal() {
                             {assistEditLines.map((l, i) => (
                               <tr key={i} className="border-t border-zinc-100">
                                 <td className="px-3 py-2">
-                                  <select
-                                    className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                                  <SearchableSelect
                                     value={l.accountId}
-                                    onChange={(e) => {
-                                      const nextId = e.target.value;
+                                    placeholder={tr("请选择", "Select")}
+                                    disabled={assistBusy || assistDisposalBusy}
+                                    options={(() => {
+                                      const sel = accountById.get(l.accountId) as any;
+                                      const list = sel && sel.isActive === false ? [sel, ...activeAccounts.filter((a) => a.id !== sel.id)] : activeAccounts;
+                                      return list.map((a) => ({
+                                        value: a.id,
+                                        label: `${a.code} ${a.name}${(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}`,
+                                      }));
+                                    })()}
+                                    onChange={(nextId) => {
                                       setAssistEditLines((prev) => prev.map((x, idx) => (idx === i ? { ...x, accountId: nextId } : x)));
                                       const acc = accountById.get(nextId);
                                       if ((acc as any)?.linkFixedAssets) {
@@ -3316,18 +3323,7 @@ export default function Journal() {
                                         );
                                       }
                                     }}
-                                  >
-                                    <option value="">{tr("请选择", "Select")}</option>
-                                    {(() => {
-                                      const sel = accountById.get(l.accountId);
-                                      const list = sel && (sel as any).isActive === false ? [sel, ...activeAccounts.filter((a) => a.id !== sel.id)] : activeAccounts;
-                                      return list.map((a) => (
-                                        <option key={a.id} value={a.id}>
-                                          {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
-                                        </option>
-                                      ));
-                                    })()}
-                                  </select>
+                                  />
                                 </td>
                                 <td className="px-3 py-2">
                                   <input

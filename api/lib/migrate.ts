@@ -145,6 +145,77 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE memberships ADD COLUMN IF NOT EXISTS is_global BOOLEAN NOT NULL DEFAULT false`;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS role_permissions (
+      org_id UUID NOT NULL,
+      role TEXT NOT NULL,
+      permissions TEXT[] NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (org_id, role)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_role_permissions_org ON role_permissions(org_id)`;
+
+  try {
+    const roles = ["owner", "admin", "accountant", "viewer", "auditor"];
+    const allPerms = [
+      "settings.view",
+      "settings.edit",
+      "journal.view",
+      "journal.edit",
+      "inventory.view",
+      "inventory.edit",
+      "fixedAssets.view",
+      "fixedAssets.edit",
+      "vendors.view",
+      "vendors.edit",
+      "customers.view",
+      "customers.edit",
+      "reports.view",
+      "users.manage",
+    ];
+
+    const accountantPerms = [
+      "settings.view",
+      "journal.view",
+      "journal.edit",
+      "inventory.view",
+      "inventory.edit",
+      "fixedAssets.view",
+      "fixedAssets.edit",
+      "vendors.view",
+      "vendors.edit",
+      "customers.view",
+      "customers.edit",
+      "reports.view",
+    ];
+
+    const viewerPerms = ["journal.view", "vendors.view", "customers.view", "reports.view"];
+
+    await sql`
+      INSERT INTO role_permissions (org_id, role, permissions)
+      SELECT
+        o.id,
+        r.role,
+        CASE
+          WHEN r.role = 'owner' THEN ${sql.array(allPerms)}::text[]
+          WHEN r.role = 'admin' THEN ${sql.array(allPerms)}::text[]
+          WHEN r.role = 'accountant' THEN ${sql.array(accountantPerms)}::text[]
+          WHEN r.role = 'viewer' THEN ${sql.array(viewerPerms)}::text[]
+          WHEN r.role = 'auditor' THEN ${sql.array(viewerPerms)}::text[]
+          ELSE ${sql.array(viewerPerms)}::text[]
+        END
+      FROM organizations o
+      CROSS JOIN LATERAL (
+        SELECT unnest(${sql.array(roles)}::text[]) AS role
+      ) r
+      WHERE o.deleted_at IS NULL
+      ON CONFLICT (org_id, role) DO NOTHING
+    `;
+  } catch {
+    void 0;
+  }
+
+  await sql`
     CREATE TABLE IF NOT EXISTS invitations (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID NOT NULL,
