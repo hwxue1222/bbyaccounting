@@ -17,13 +17,17 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   const defRows = await sql`SELECT org_id as "orgId" FROM user_default_org WHERE user_id = ${req.auth!.userId} LIMIT 1`;
   const defaultOrgId = defRows.length ? String((defRows[0] as any).orgId) : null;
 
-  const globalAdminRows = await sql`
-    SELECT id
-    FROM memberships
-    WHERE user_id = ${req.auth!.userId} AND status = 'active' AND role = 'admin' AND is_global = true
-    LIMIT 1
-  `;
-  const isGlobalAdmin = globalAdminRows.length > 0;
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  const isSuperAdmin = superRows.length > 0;
+  const globalAdminRows = isSuperAdmin
+    ? ([] as any[])
+    : await sql`
+        SELECT id
+        FROM memberships
+        WHERE user_id = ${req.auth!.userId} AND status = 'active' AND role = 'admin' AND is_global = true
+        LIMIT 1
+      `;
+  const isGlobalAdmin = isSuperAdmin || globalAdminRows.length > 0;
 
   const rows = isGlobalAdmin
     ? await sql`
@@ -74,8 +78,13 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
     res.status(400).json({ success: false, error: "Invalid input" });
     return;
   }
-
   const sql = getSql();
+
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  if (!superRows.length) {
+    res.status(403).json({ success: false, error: "Only superadmin can create organizations" });
+    return;
+  }
   const created = await sql.begin(async (trx) => {
     const org = (
       await trx`
@@ -91,7 +100,7 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
     )[0] as any;
     await trx`
       INSERT INTO memberships (org_id, user_id, role, status)
-      VALUES (${org.id}, ${req.auth!.userId}, 'owner', 'active')
+      VALUES (${org.id}, ${req.auth!.userId}, 'admin', 'active')
       ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
     `;
     await trx`
@@ -122,6 +131,8 @@ router.post("/update", requireAuth, async (req: AuthedRequest, res: Response) =>
   }
 
   const sql = getSql();
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  const isSuperAdmin = superRows.length > 0;
 
   const globalAdminRows = await sql`
     SELECT id
@@ -131,7 +142,7 @@ router.post("/update", requireAuth, async (req: AuthedRequest, res: Response) =>
   `;
   const isGlobalAdmin = globalAdminRows.length > 0;
 
-  if (!isGlobalAdmin) {
+  if (!isGlobalAdmin && !isSuperAdmin) {
     const m = await sql`
       SELECT role
       FROM memberships
@@ -182,6 +193,9 @@ router.post("/switch", requireAuth, async (req: AuthedRequest, res: Response) =>
   }
   const sql = getSql();
 
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  const isSuperAdmin = superRows.length > 0;
+
   const orgRows = await sql`SELECT id FROM organizations WHERE id = ${parsed.data.orgId} AND deleted_at IS NULL LIMIT 1`;
   if (!orgRows.length) {
     res.status(404).json({ success: false, error: "Organization not found" });
@@ -194,15 +208,17 @@ router.post("/switch", requireAuth, async (req: AuthedRequest, res: Response) =>
     LIMIT 1
   `;
   if (!ok.length) {
-    const globalAdminRows = await sql`
-      SELECT id
-      FROM memberships
-      WHERE user_id = ${req.auth!.userId} AND status = 'active' AND role = 'admin' AND is_global = true
-      LIMIT 1
-    `;
-    if (!globalAdminRows.length) {
-      res.status(403).json({ success: false, error: "Forbidden" });
-      return;
+    if (!isSuperAdmin) {
+      const globalAdminRows = await sql`
+        SELECT id
+        FROM memberships
+        WHERE user_id = ${req.auth!.userId} AND status = 'active' AND role = 'admin' AND is_global = true
+        LIMIT 1
+      `;
+      if (!globalAdminRows.length) {
+        res.status(403).json({ success: false, error: "Forbidden" });
+        return;
+      }
     }
   }
   await sql`

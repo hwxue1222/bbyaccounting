@@ -106,6 +106,10 @@ export async function ensureMigrated(): Promise<void> {
     )
   `;
 
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_superadmin BOOLEAN NOT NULL DEFAULT false`;
+  await sql`UPDATE users SET status = 'active' WHERE status IS NULL`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS organizations (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -144,6 +148,8 @@ export async function ensureMigrated(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id)`;
   await sql`ALTER TABLE memberships ADD COLUMN IF NOT EXISTS is_global BOOLEAN NOT NULL DEFAULT false`;
 
+  await sql`UPDATE memberships SET role = 'admin' WHERE role = 'owner'`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS role_permissions (
       org_id UUID NOT NULL,
@@ -156,7 +162,7 @@ export async function ensureMigrated(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_role_permissions_org ON role_permissions(org_id)`;
 
   try {
-    const roles = ["owner", "admin", "accountant", "viewer", "auditor"];
+    const roles = ["admin", "accountant", "viewer", "auditor"];
     const allPerms = [
       "settings.view",
       "settings.edit",
@@ -197,7 +203,6 @@ export async function ensureMigrated(): Promise<void> {
         o.id,
         r.role,
         CASE
-          WHEN r.role = 'owner' THEN ${sql.array(allPerms)}::text[]
           WHEN r.role = 'admin' THEN ${sql.array(allPerms)}::text[]
           WHEN r.role = 'accountant' THEN ${sql.array(accountantPerms)}::text[]
           WHEN r.role = 'viewer' THEN ${sql.array(viewerPerms)}::text[]
@@ -211,6 +216,36 @@ export async function ensureMigrated(): Promise<void> {
       WHERE o.deleted_at IS NULL
       ON CONFLICT (org_id, role) DO NOTHING
     `;
+  } catch {
+    void 0;
+  }
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS signup_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email TEXT NOT NULL,
+      org_name TEXT NOT NULL,
+      base_currency TEXT NOT NULL,
+      industry TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      user_id UUID,
+      reviewed_by UUID,
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_signup_requests_status ON signup_requests(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_signup_requests_user ON signup_requests(user_id)`;
+
+  try {
+    const raw = String(process.env.SUPERADMIN_EMAILS || process.env.SUPERADMIN_EMAIL || "").trim();
+    const emails = raw
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+    if (emails.length) {
+      await sql`UPDATE users SET is_superadmin = true, status = 'active' WHERE email = ANY(${sql.array(emails)}::text[])`;
+    }
   } catch {
     void 0;
   }

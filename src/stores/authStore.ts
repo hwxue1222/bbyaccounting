@@ -11,7 +11,7 @@ export type OrgRow = {
 
 type AuthState = {
   status: "idle" | "loading" | "authed" | "anon";
-  user: { id: string; email: string } | null;
+  user: { id: string; email: string; status?: string; isSuperAdmin?: boolean } | null;
   orgs: OrgRow[];
   activeOrgId: string | null;
   pendingOrgId: string | null;
@@ -41,7 +41,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ status: "loading", error: null });
     try {
       const [me, orgsResp] = await Promise.all([
-        api<{ user: { id: string; email: string }; orgId: string | null }>("/api/auth/me"),
+        api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/me"),
         api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs"),
       ]);
 
@@ -59,7 +59,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   login: async (email, password) => {
     set({ status: "loading", error: null });
     try {
-      const resp = await api<{ user: { id: string; email: string }; orgId: string | null }>("/api/auth/login", {
+      const resp = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/login", {
         method: "POST",
         json: { email, password },
       });
@@ -72,12 +72,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   register: async (email, password, orgName, baseCurrency, industry) => {
     set({ status: "loading", error: null });
     try {
-      const resp = await api<{ user: { id: string; email: string }; org: { id: string } }>("/api/auth/register", {
+      const resp = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; requestId: string }>("/api/auth/register", {
         method: "POST",
         json: { email, password, orgName, baseCurrency, industry },
       });
       const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
-      set({ status: "authed", user: resp.user, activeOrgId: resp.org.id, orgs: orgsResp.orgs, error: null });
+      set({ status: "authed", user: resp.user, activeOrgId: null, orgs: orgsResp.orgs, error: null });
     } catch (e: any) {
       set({ status: "anon", error: e?.message || "注册失败" });
     }

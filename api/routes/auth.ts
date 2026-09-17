@@ -47,37 +47,27 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
 
   const created = await sql.begin(async (trx) => {
     const userRows = await trx`
-      INSERT INTO users (email, password_hash)
-      VALUES (${emailNorm}, ${passwordHash})
+      INSERT INTO users (email, password_hash, status)
+      VALUES (${emailNorm}, ${passwordHash}, 'pending')
       RETURNING id, email
     `;
-    const user = userRows[0];
-    const orgRows = await trx`
-      INSERT INTO organizations (name, base_currency, industry)
-      VALUES (${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry})
-      RETURNING id, name, base_currency, industry
-    `;
-    const org = orgRows[0];
-    await trx`
-      INSERT INTO memberships (org_id, user_id, role, status)
-      VALUES (${org.id}, ${user.id}, 'owner', 'active')
-    `;
-    await trx`
-      INSERT INTO user_default_org (user_id, org_id)
-      VALUES (${user.id}, ${org.id})
-      ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
-    `;
-    return { user, org };
+    const user = userRows[0] as any;
+    const reqRow = (
+      await trx`
+        INSERT INTO signup_requests (email, org_name, base_currency, industry, status, user_id)
+        VALUES (${emailNorm}, ${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry}, 'pending', ${user.id})
+        RETURNING id
+      `
+    )[0] as any;
+    return { user, requestId: String(reqRow.id) };
   });
 
-  await seedOrgDefaults(sql, created.org.id, created.org.base_currency, (created.org as any).industry);
-
-  setSessionCookie(res, signSession({ userId: created.user.id, orgId: created.org.id }));
+  setSessionCookie(res, signSession({ userId: created.user.id, orgId: null }));
   res.status(200).json({
     success: true,
     data: {
-      user: { id: created.user.id, email: created.user.email },
-      org: { id: created.org.id, name: created.org.name, baseCurrency: created.org.base_currency },
+      user: { id: created.user.id, email: created.user.email, status: "pending" },
+      requestId: created.requestId,
     },
   });
 });
@@ -96,7 +86,7 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
   const sql = getSql();
   const emailNorm = normalizeEmail(parsed.data.email);
 
-  const rows = await sql`SELECT id, email, password_hash FROM users WHERE email = ${emailNorm}`;
+  const rows = await sql`SELECT id, email, password_hash, status, is_superadmin FROM users WHERE email = ${emailNorm}`;
   const user = rows[0];
   if (!user) {
     res.status(401).json({ success: false, error: "Invalid credentials" });
@@ -105,6 +95,13 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
   const ok = await verifyPassword(parsed.data.password, user.password_hash);
   if (!ok) {
     res.status(401).json({ success: false, error: "Invalid credentials" });
+    return;
+  }
+
+  const status = String((user as any).status || "active");
+  if (status !== "active") {
+    setSessionCookie(res, signSession({ userId: user.id, orgId: null }));
+    res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, status }, orgId: null } });
     return;
   }
 
@@ -117,7 +114,7 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
   const orgId = memberships.length ? (memberships[0] as any).orgId : null;
 
   setSessionCookie(res, signSession({ userId: user.id, orgId }));
-  res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email }, orgId } });
+  res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email, status }, orgId } });
 });
 
 router.post("/logout", async (req: Request, res: Response): Promise<void> => {
@@ -128,13 +125,19 @@ router.post("/logout", async (req: Request, res: Response): Promise<void> => {
 router.get("/me", requireAuth, async (req: AuthedRequest, res: Response): Promise<void> => {
   await ensureMigrated();
   const sql = getSql();
-  const userRows = await sql`SELECT id, email FROM users WHERE id = ${req.auth!.userId}`;
+  const userRows = await sql`SELECT id, email, status, is_superadmin FROM users WHERE id = ${req.auth!.userId}`;
   const user = userRows[0];
   if (!user) {
     res.status(401).json({ success: false, error: "Unauthorized" });
     return;
   }
-  res.status(200).json({ success: true, data: { user: { id: user.id, email: user.email }, orgId: req.auth!.orgId } });
+  res.status(200).json({
+    success: true,
+    data: {
+      user: { id: user.id, email: user.email, status: String((user as any).status || "active"), isSuperAdmin: Boolean((user as any).is_superadmin) },
+      orgId: req.auth!.orgId,
+    },
+  });
 });
 
 router.post(
@@ -227,12 +230,15 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
         `
       )[0];
 
+  const invRoleRaw = String(inv.role || "");
+  const invRole = invRoleRaw === "admin" || invRoleRaw === "accountant" || invRoleRaw === "viewer" || invRoleRaw === "auditor" ? invRoleRaw : "admin";
+
   await sql.begin(async (trx) => {
     await trx`
       INSERT INTO memberships (org_id, user_id, role, status)
-      VALUES (${inv.orgId}, ${user.id}, ${inv.role}, 'active')
+      VALUES (${inv.orgId}, ${user.id}, ${invRole}, 'active')
       ON CONFLICT (org_id, user_id)
-      DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = (EXCLUDED.role = 'admin')
+      DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = false
     `;
     await trx`
       INSERT INTO user_default_org (user_id, org_id)
@@ -250,7 +256,7 @@ router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Respo
   await ensureMigrated();
   const bodySchema = z.object({
     email: z.string().email(),
-    role: z.enum(["owner", "admin", "accountant", "viewer", "auditor"]),
+    role: z.enum(["admin", "accountant", "viewer", "auditor"]),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -263,6 +269,26 @@ router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Respo
     return;
   }
   const sql = getSql();
+
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  const isSuperAdmin = superRows.length > 0;
+  if (!isSuperAdmin) {
+    const m = await sql`
+      SELECT role
+      FROM memberships
+      WHERE org_id = ${orgId} AND user_id = ${req.auth!.userId} AND status = 'active'
+      LIMIT 1
+    `;
+    const role = (m[0] as any)?.role;
+    if (String(role) !== "admin") {
+      res.status(403).json({ success: false, error: "Forbidden" });
+      return;
+    }
+  }
+  if (parsed.data.role === "admin" && !isSuperAdmin) {
+    res.status(403).json({ success: false, error: "Only superadmin can invite admins" });
+    return;
+  }
 
   const orgRows = await sql`SELECT id FROM organizations WHERE id = ${orgId} AND deleted_at IS NULL LIMIT 1`;
   if (!orgRows.length) {

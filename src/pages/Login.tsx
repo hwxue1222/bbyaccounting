@@ -188,7 +188,7 @@ export default function Login() {
                 }
               }}
             >
-              {status === "loading" ? tr("处理中...", "Working...") : mode === "login" ? tr("登录", "Sign in") : tr("创建公司并注册", "Create company & sign up")}
+              {status === "loading" ? tr("处理中...", "Working...") : mode === "login" ? tr("登录", "Sign in") : tr("提交注册申请", "Submit sign up request")}
             </button>
           </div>
 

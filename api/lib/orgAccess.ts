@@ -5,6 +5,8 @@ import { roleAtLeast, type Role } from "./roles.js";
 
 async function isGlobalAdmin(userId: string): Promise<boolean> {
   const sql = getSql();
+  const superRows = await sql`SELECT id FROM users WHERE id = ${userId} AND is_superadmin = true LIMIT 1`;
+  if (superRows.length) return true;
   const rows = await sql`
     SELECT id
     FROM memberships
@@ -80,4 +82,3 @@ export async function requireOrgRole(req: AuthedRequest, res: Response, orgId: s
     return null;
   }
 }
-

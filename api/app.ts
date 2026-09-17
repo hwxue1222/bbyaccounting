@@ -22,6 +22,7 @@ import reportRoutes from './routes/reports.js'
 import usersRoutes from './routes/users.js'
 import assistRoutes from './routes/assist.js'
 import debugRoutes from './routes/debug.js'
+import superadminRoutes from './routes/superadmin.js'
 import vendorsRoutes from './routes/vendors.js'
 import customersRoutes from './routes/customers.js'
 
@@ -218,6 +219,7 @@ app.use('/api/customers', customersRoutes)
 app.use('/api/users', usersRoutes)
 app.use('/api/assist', assistRoutes)
 app.use('/api/debug', debugRoutes)
+app.use('/api/superadmin', superadminRoutes)
 
 /**
  * error handler middleware

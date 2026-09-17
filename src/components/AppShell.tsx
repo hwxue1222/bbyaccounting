@@ -93,6 +93,7 @@ export default function AppShell({ title, children }: { title: string; children:
               <button
                 className="mt-2 w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm hover:bg-zinc-50"
                 onClick={async () => {
+                  if (!(user as any)?.isSuperAdmin) return;
                   const name = window.prompt(tr("公司名称", "Company name"));
                   if (!name || !name.trim()) return;
                   const industry =
@@ -105,6 +106,7 @@ export default function AppShell({ title, children }: { title: string; children:
               >
                 {tr("新增公司", "New company")}
               </button>
+              {!(user as any)?.isSuperAdmin ? <div className="mt-1 text-xs text-zinc-500">Only SuperAdmin can create companies.</div> : null}
               {active ? (
                 <div className="mt-1 text-xs text-zinc-500">
                   Base: {active.baseCurrency} · Role: {active.role}
@@ -114,6 +116,7 @@ export default function AppShell({ title, children }: { title: string; children:
           </div>
 
           <nav className="flex-1 space-y-1 p-3">
+            {(user as any)?.isSuperAdmin ? <SideLink to="/superadmin" label="SuperAdmin" icon={<UserRound className="h-4 w-4" />} /> : null}
             <SideLink to="/settings" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} />
             <SideLink to="/journal" label={tr("分录", "Journals")} icon={<FileText className="h-4 w-4" />} />
             <SideLink to="/inventory" label={tr("库存 FIFO", "Inventory FIFO")} icon={<Package className="h-4 w-4" />} />

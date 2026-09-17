@@ -13,8 +13,10 @@ import Settings from "@/pages/Settings";
 import Users from "@/pages/Users";
 import Vendors from "@/pages/Vendors";
 import Customers from "@/pages/Customers";
+import PendingApproval from "@/pages/PendingApproval";
+import SuperAdmin from "@/pages/SuperAdmin";
 
-function RequireAuth({ children }: { children: React.ReactNode }) {
+function RequireSession({ children }: { children: React.ReactNode }) {
   const { status, bootstrap } = useAuthStore();
   useEffect(() => {
     if (status === "idle") {
@@ -31,12 +33,33 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { activeOrgId } = useAuthStore();
+  return <RequireSession>{activeOrgId ? children : <Navigate to="/pending" replace />}</RequireSession>;
+}
+
 export default function App() {
   return (
     <Router>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/auth/invite" element={<InviteAccept />} />
+        <Route
+          path="/pending"
+          element={
+            <RequireSession>
+              <PendingApproval />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/superadmin"
+          element={
+            <RequireSession>
+              <SuperAdmin />
+            </RequireSession>
+          }
+        />
         <Route
           path="/"
           element={

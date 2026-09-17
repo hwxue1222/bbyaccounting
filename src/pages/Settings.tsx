@@ -224,7 +224,7 @@ export default function Settings() {
               <div className="mt-2 text-sm text-zinc-600">删除公司会移除该公司的所有数据，并且无法恢复。</div>
               <button
                 className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
-                disabled={busy || !activeOrgId || !(activeRole === "owner" || activeRole === "admin")}
+                disabled={busy || !activeOrgId || !(activeRole === "admin")}
                 onClick={async () => {
                   if (!activeOrgId) return;
                   const confirmName = window.prompt("请输入公司名称以确认删除", "");
@@ -251,8 +251,8 @@ export default function Settings() {
               >
                 删除公司
               </button>
-              {!(activeRole === "owner" || activeRole === "admin") ? (
-                <div className="mt-2 text-xs text-zinc-500">仅 owner/admin 可删除公司</div>
+              {!(activeRole === "admin") ? (
+                <div className="mt-2 text-xs text-zinc-500">仅 admin 可删除公司</div>
               ) : null}
             </div>
           </div>
@@ -268,7 +268,7 @@ export default function Settings() {
               <div>
                 <label className="text-xs text-zinc-600">角色</label>
                 <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-                  {['owner','admin','accountant','viewer','auditor'].map((r) => (
+                  {['admin','accountant','viewer','auditor'].map((r) => (
                     <option key={r} value={r}>
                       {r}
                     </option>

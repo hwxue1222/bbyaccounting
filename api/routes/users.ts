@@ -24,7 +24,7 @@ const ALLOWED_ROLE_PERMS = new Set([
   "users.manage",
 ]);
 
-const ROLE_ORDER = ["owner", "admin", "accountant", "viewer", "auditor"] as const;
+const ROLE_ORDER = ["admin", "accountant", "viewer", "auditor"] as const;
 
 function defaultPermissionsForRole(role: string): string[] {
   const all = [
@@ -59,7 +59,7 @@ function defaultPermissionsForRole(role: string): string[] {
   ];
   const viewer = ["journal.view", "vendors.view", "customers.view", "reports.view"];
 
-  if (role === "owner" || role === "admin") return all;
+  if (role === "admin") return all;
   if (role === "accountant") return accountant;
   if (role === "viewer" || role === "auditor") return viewer;
   return viewer;
@@ -90,10 +90,12 @@ router.get("/members", requireAuth, async (req: AuthedRequest, res: Response) =>
   const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
-  const guard = await requireOrgRole(req, res, orgId, "admin");
-  if (guard === null) return;
-
   const sql = getSql();
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  if (!superRows.length) {
+    const guard = await requireOrgRole(req, res, orgId, "admin");
+    if (guard === null) return;
+  }
   const rows = await sql`
     SELECT
       m.id,
@@ -164,7 +166,7 @@ router.patch("/role-permissions", requireAuth, async (req: AuthedRequest, res: R
   if (guard === null) return;
 
   const bodySchema = z.object({
-    role: z.enum(["owner", "admin", "accountant", "viewer", "auditor"]),
+    role: z.enum(["admin", "accountant", "viewer", "auditor"]),
     permissions: z
       .array(z.string())
       .refine((arr) => arr.every((p) => ALLOWED_ROLE_PERMS.has(p)), { message: "Invalid permissions" }),
@@ -182,8 +184,17 @@ router.patch("/role-permissions", requireAuth, async (req: AuthedRequest, res: R
     res.status(403).json({ success: false, error: "Forbidden" });
     return;
   }
-  if (myRole !== "owner") {
-    res.status(403).json({ success: false, error: "Only owner can change role permissions" });
+
+  if (parsed.data.role) {
+    const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+    if (!superRows.length) {
+      res.status(403).json({ success: false, error: "Only superadmin can change roles" });
+      return;
+    }
+  }
+  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
+  if (!superRows.length) {
+    res.status(403).json({ success: false, error: "Only superadmin can change role permissions" });
     return;
   }
 
@@ -209,7 +220,7 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
   if (guard === null) return;
 
   const bodySchema = z.object({
-    role: z.enum(["owner", "admin", "accountant", "viewer", "auditor"]).optional(),
+    role: z.enum(["admin", "accountant", "viewer", "auditor"]).optional(),
     status: z.enum(["active", "disabled"]).optional(),
   });
   const parsed = bodySchema.safeParse(req.body);
@@ -230,10 +241,7 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
     return;
   }
 
-  if (myRole !== "owner" && parsed.data.role) {
-    res.status(403).json({ success: false, error: "Only owner can change roles" });
-    return;
-  }
+  void 0;
 
   const membershipId = req.params.membershipId;
   const rows = await sql`
@@ -256,15 +264,7 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
   const nextRole = parsed.data.role ?? String(target.role);
   const nextStatus = parsed.data.status ?? String(target.status);
 
-  if (String(target.role) === "owner") {
-    res.status(400).json({ success: false, error: "Cannot modify owner membership" });
-    return;
-  }
-
-  if (nextRole === "owner") {
-    res.status(400).json({ success: false, error: "Cannot promote to owner in MVP" });
-    return;
-  }
+  void 0;
 
   const updated = (
     await sql`
@@ -272,7 +272,7 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
       SET
         role = ${nextRole},
         status = ${nextStatus},
-        is_global = (${nextRole} = 'admin')
+        is_global = false
       WHERE id = ${membershipId} AND org_id = ${orgId}
       RETURNING id, user_id as "userId", role, status, created_at as "createdAt"
     `

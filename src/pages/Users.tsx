@@ -30,10 +30,10 @@ const PERM_GROUPS: Array<{ key: string; label: string; actions: string[] }> = [
 ];
 
 export default function Users() {
-  const { orgs, activeOrgId, orgSwitching, createInvite } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching, createInvite, user } = useAuthStore();
   const tr = useTr();
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
-  const canManage = active?.role === "owner" || active?.role === "admin";
+  const canManage = active?.role === "admin";
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -69,7 +69,7 @@ export default function Users() {
   return (
     <AppShell title={tr("用户管理", "User Management")}>
       {!canManage ? (
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm">只有 Owner/Admin 可以管理用户。</div>
+        <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm">只有 Admin 可以管理用户。</div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -84,7 +84,7 @@ export default function Users() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(["owner", "admin", "accountant", "viewer", "auditor"] as const).map((role) => {
+                  {(["admin", "accountant", "viewer", "auditor"] as const).map((role) => {
                     const perms = rolePermByRole.get(role) ?? [];
                     const permSet = new Set(perms);
                     return (
@@ -99,7 +99,7 @@ export default function Users() {
                                   {g.actions.map((a) => {
                                     const p = `${g.key}.${a}`;
                                     const checked = permSet.has(p);
-                                    const disabled = busy || active?.role !== "owner";
+                                    const disabled = busy || !(user as any)?.isSuperAdmin;
                                     return (
                                       <label key={p} className="inline-flex items-center gap-2 text-xs text-zinc-700">
                                         <input
@@ -134,7 +134,7 @@ export default function Users() {
                         <td className="px-3 py-2 text-right">
                           <button
                             className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                            disabled={busy || active?.role !== "owner"}
+                            disabled={busy || !(user as any)?.isSuperAdmin}
                             onClick={async () => {
                               setErr(null);
                               try {
@@ -153,7 +153,7 @@ export default function Users() {
                 </tbody>
               </table>
             </div>
-            {active?.role !== "owner" ? <div className="mt-2 text-xs text-zinc-500">只有 Owner 可以修改角色权限。</div> : null}
+            {!(user as any)?.isSuperAdmin ? <div className="mt-2 text-xs text-zinc-500">只有 SuperAdmin 可以修改角色权限。</div> : null}
           </div>
 
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -227,7 +227,7 @@ export default function Users() {
                         <select
                           className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
                           value={m.role}
-                          disabled={active?.role !== "owner"}
+                          disabled={!((user as any)?.isSuperAdmin)}
                           onChange={async (e) => {
                             setErr(null);
                             try {
