@@ -24,6 +24,47 @@ const ALLOWED_ROLE_PERMS = new Set([
   "users.manage",
 ]);
 
+const ROLE_ORDER = ["owner", "admin", "accountant", "viewer", "auditor"] as const;
+
+function defaultPermissionsForRole(role: string): string[] {
+  const all = [
+    "settings.view",
+    "settings.edit",
+    "journal.view",
+    "journal.edit",
+    "inventory.view",
+    "inventory.edit",
+    "fixedAssets.view",
+    "fixedAssets.edit",
+    "vendors.view",
+    "vendors.edit",
+    "customers.view",
+    "customers.edit",
+    "reports.view",
+    "users.manage",
+  ];
+  const accountant = [
+    "settings.view",
+    "journal.view",
+    "journal.edit",
+    "inventory.view",
+    "inventory.edit",
+    "fixedAssets.view",
+    "fixedAssets.edit",
+    "vendors.view",
+    "vendors.edit",
+    "customers.view",
+    "customers.edit",
+    "reports.view",
+  ];
+  const viewer = ["journal.view", "vendors.view", "customers.view", "reports.view"];
+
+  if (role === "owner" || role === "admin") return all;
+  if (role === "accountant") return accountant;
+  if (role === "viewer" || role === "auditor") return viewer;
+  return viewer;
+}
+
 async function getMyMembershipRole(sql: ReturnType<typeof getSql>, orgId: string, userId: string): Promise<string | null> {
   const rows = await sql`
     SELECT role
@@ -84,7 +125,34 @@ router.get("/role-permissions", requireAuth, async (req: AuthedRequest, res: Res
     WHERE org_id = ${orgId}
     ORDER BY role ASC
   `;
-  res.status(200).json({ success: true, data: { roles: rows } });
+
+  const byRole = new Map<string, any>();
+  for (const r of rows as any[]) byRole.set(String((r as any).role), r);
+
+  const missing = ROLE_ORDER.filter((r) => !byRole.has(r));
+  if (missing.length) {
+    try {
+      await sql.begin(async (trx) => {
+        for (const r of missing) {
+          await trx`
+            INSERT INTO role_permissions (org_id, role, permissions, updated_at)
+            VALUES (${orgId}, ${r}, ${trx.array(defaultPermissionsForRole(r))}, now())
+            ON CONFLICT (org_id, role) DO NOTHING
+          `;
+        }
+      });
+    } catch {
+      void 0;
+    }
+  }
+
+  const out = ROLE_ORDER.map((r) => {
+    const row = byRole.get(r);
+    if (row) return row;
+    return { role: r, permissions: defaultPermissionsForRole(r) };
+  });
+
+  res.status(200).json({ success: true, data: { roles: out } });
 });
 
 router.patch("/role-permissions", requireAuth, async (req: AuthedRequest, res: Response) => {
