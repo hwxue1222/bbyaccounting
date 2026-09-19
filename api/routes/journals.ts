@@ -487,6 +487,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!orgId) return;
   const sql = getSql();
   const id = req.params.id;
+  const withAttachments = !(String((req.query as any)?.withAttachments || "").toLowerCase() === "0" || String((req.query as any)?.withAttachments || "").toLowerCase() === "false");
   const entries = await sql`
     SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
     FROM journal_entries
@@ -499,9 +500,10 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     return;
   }
   const isSystem = Boolean((entry as any).isSystem);
-  const lines =
+
+  const linesPromise =
     isSystem
-      ? await sql`
+      ? sql`
           SELECT
             id,
             line_no as "lineNo",
@@ -518,7 +520,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
           WHERE entry_id = ${id} AND org_id = ${orgId}
           ORDER BY line_no ASC
         `
-      : await sql`
+      : sql`
           SELECT
             id,
             line_no as "lineNo",
@@ -536,12 +538,16 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
           ORDER BY line_no ASC
         `;
 
-  const atts = await sql`
-    SELECT id, file_name as "fileName", mime_type as "mimeType", size_bytes as "sizeBytes", created_at as "createdAt"
-    FROM attachments
-    WHERE entry_id = ${id} AND org_id = ${orgId}
-    ORDER BY created_at DESC
-  `;
+  const attsPromise = withAttachments
+    ? sql`
+        SELECT id, file_name as "fileName", mime_type as "mimeType", size_bytes as "sizeBytes", created_at as "createdAt"
+        FROM attachments
+        WHERE entry_id = ${id} AND org_id = ${orgId}
+        ORDER BY created_at DESC
+      `
+    : Promise.resolve([] as any[]);
+
+  const [lines, atts] = await Promise.all([linesPromise, attsPromise]);
   res.status(200).json({ success: true, data: { entry, lines, attachments: atts } });
 });
 

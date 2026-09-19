@@ -106,6 +106,8 @@ export default function Journal() {
   const detailInflightRef = useRef<Map<string, Promise<EntryDetail>>>(new Map());
   const detailAbortRef = useRef<AbortController | null>(null);
   const detailPrefetchAbortRef = useRef<AbortController | null>(null);
+  const detailPrefetchTimerRef = useRef<number | null>(null);
+  const detailPrefetchIdRef = useRef<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -1713,12 +1715,20 @@ export default function Journal() {
   }
 
   function prefetchDetail(id: string) {
-    const cached = detailCacheRef.current.get(detailCacheKey(id));
-    if (isDetailCacheFresh(cached)) return;
-    detailPrefetchAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    detailPrefetchAbortRef.current = ctrl;
-    fetchDetailCore(id, { signal: ctrl.signal }).catch(() => null);
+    detailPrefetchIdRef.current = id;
+    if (detailPrefetchTimerRef.current) {
+      window.clearTimeout(detailPrefetchTimerRef.current);
+      detailPrefetchTimerRef.current = null;
+    }
+    detailPrefetchTimerRef.current = window.setTimeout(() => {
+      if (detailPrefetchIdRef.current !== id) return;
+      const cached = detailCacheRef.current.get(detailCacheKey(id));
+      if (isDetailCacheFresh(cached)) return;
+      detailPrefetchAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      detailPrefetchAbortRef.current = ctrl;
+      fetchDetailCore(id, { signal: ctrl.signal }).catch(() => null);
+    }, 200);
   }
 
   function selectEntry(id: string) {
@@ -1736,6 +1746,11 @@ export default function Journal() {
     pageAbortRef.current?.abort();
     detailAbortRef.current?.abort();
     detailPrefetchAbortRef.current?.abort();
+    if (detailPrefetchTimerRef.current) {
+      window.clearTimeout(detailPrefetchTimerRef.current);
+      detailPrefetchTimerRef.current = null;
+    }
+    detailPrefetchIdRef.current = null;
     const ctrl = new AbortController();
     pageAbortRef.current = ctrl;
     setErr(null);

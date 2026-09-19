@@ -22,6 +22,7 @@ export async function ensureMigrated(): Promise<void> {
 
   const BASE_MIGRATION_ID = "base_2026_09";
   const FX_FIX_MIGRATION_ID = "fx_rate_txn_per_base_2026_09";
+  const PERF_INDEXES_MIGRATION_ID = "perf_indexes_2026_09";
 
   let baseApplied = false;
   try {
@@ -779,6 +780,41 @@ export async function ensureMigrated(): Promise<void> {
     try {
       await sql`INSERT INTO schema_migrations (id) VALUES (${FX_FIX_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
       fxFixApplied = true;
+    } catch {
+      void 0;
+    }
+  }
+
+  let perfIndexesApplied = false;
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${PERF_INDEXES_MIGRATION_ID} LIMIT 1`;
+    perfIndexesApplied = Boolean((applied as any[])?.length);
+  } catch {
+    perfIndexesApplied = false;
+  }
+
+  if (!perfIndexesApplied) {
+    try {
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_attachments_org_entry_created
+        ON attachments(org_id, entry_id, created_at DESC)
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_journal_lines_org_entry_line
+        ON journal_lines(org_id, entry_id, line_no)
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`INSERT INTO schema_migrations (id) VALUES (${PERF_INDEXES_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      perfIndexesApplied = true;
     } catch {
       void 0;
     }
