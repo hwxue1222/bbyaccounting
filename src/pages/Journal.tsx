@@ -2523,20 +2523,12 @@ export default function Journal() {
                 <tr key={idx} className="border-t border-zinc-100">
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
-                      <SearchableSelect
+                      <select
+                        className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
                         value={l.accountId}
-                        placeholder={tr("请选择", "Select")}
                         disabled={readOnly}
-                        options={[
-                          { value: "__new_account__", label: tr("+ 新建", "+ New") },
-                          ...accounts
-                            .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
-                            .map((a) => ({
-                              value: a.id,
-                              label: `${a.code} ${a.name}${(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}`,
-                            })),
-                        ]}
-                        onChange={(nextId) => {
+                        onChange={(e) => {
+                          const nextId = e.target.value;
                           if (nextId === "__new_account__") {
                             openInlineNewAccount(idx);
                             return;
@@ -2545,7 +2537,17 @@ export default function Journal() {
                           next[idx] = { ...l, accountId: nextId };
                           setDraftLines(next);
                         }}
-                      />
+                      >
+                        <option value="">{tr("请选择", "Select")}</option>
+                        <option value="__new_account__">{tr("+ 新建", "+ New")}</option>
+                        {accounts
+                          .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {`${a.code} ${a.name}${(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}`}
+                            </option>
+                          ))}
+                      </select>
                     </div>
                   </td>
                   <td className="px-3 py-2">
