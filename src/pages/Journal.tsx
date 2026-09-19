@@ -743,8 +743,9 @@ export default function Journal() {
     const [{ accounts, costCenters, currencies, bankAccounts }, { entries }] = await Promise.all([
       api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[] }>("/api/settings/bootstrap?limit=50", {
         signal,
+        cache: "no-store",
       }),
-      api<{ entries: any[] }>("/api/journals?limit=50", { signal }),
+      api<{ entries: any[] }>("/api/journals?limit=50", { signal, cache: "no-store" }),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
@@ -755,7 +756,7 @@ export default function Journal() {
   }
 
   async function refreshEntriesOnly(signal?: AbortSignal) {
-    const r = await api<{ entries: any[] }>("/api/journals?limit=50", { signal });
+    const r = await api<{ entries: any[] }>("/api/journals?limit=50", { signal, cache: "no-store" });
     setEntries(r.entries as any);
   }
 
