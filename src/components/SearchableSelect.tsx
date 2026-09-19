@@ -71,7 +71,7 @@ export default function SearchableSelect({
       </button>
 
       {open ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-[2000] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl">
+        <div className="absolute left-0 top-[calc(100%+6px)] z-[2000] w-[28rem] min-w-full max-w-[90vw] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl">
           <div className="border-b border-zinc-100 p-2">
             <input
               ref={inputRef}
@@ -97,7 +97,9 @@ export default function SearchableSelect({
               }}
             >
               <div className="w-4">{!value ? <Check className="h-4 w-4" /> : null}</div>
-              <div className="truncate">{placeholder}</div>
+              <div className="whitespace-normal break-words" title={placeholder}>
+                {placeholder}
+              </div>
             </button>
             {filtered.map((o) => {
               const isSelected = o.value === value;
@@ -115,7 +117,9 @@ export default function SearchableSelect({
                   }}
                 >
                   <div className="w-4">{isSelected ? <Check className="h-4 w-4" /> : null}</div>
-                  <div className="truncate">{o.label}</div>
+                  <div className="whitespace-normal break-words" title={o.label}>
+                    {o.label}
+                  </div>
                 </button>
               );
             })}
@@ -125,4 +129,3 @@ export default function SearchableSelect({
     </div>
   );
 }
-
