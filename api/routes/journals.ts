@@ -405,58 +405,114 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   }
   const limit = q.data.limit ?? 200;
 
-  const rows = await sql`
-    WITH latest_entries AS (
+  let rows: any[];
+  try {
+    rows = await sql`
+      WITH latest_entries AS (
+        SELECT
+          e.id,
+          e.entry_date,
+          e.status,
+          e.posted_source,
+          e.voucher_no,
+          e.parent_entry_id,
+          e.is_system,
+          e.currency_code,
+          e.fx_rate,
+          e.memo,
+          e.vendor_id,
+          e.customer_id,
+          e.inventory_impact,
+          e.created_at
+        FROM journal_entries e
+        WHERE e.org_id = ${orgId}
+        ORDER BY e.entry_date DESC, e.created_at DESC
+        LIMIT ${limit}
+      ),
+      sums AS (
+        SELECT
+          l.entry_id,
+          COALESCE(SUM(l.debit_txn), 0) as "totalDebitTxn",
+          COALESCE(SUM(l.debit_base), 0) as "totalDebitBase"
+        FROM journal_lines l
+        WHERE l.org_id = ${orgId} AND l.entry_id = ANY(ARRAY(SELECT id FROM latest_entries))
+        GROUP BY l.entry_id
+      )
       SELECT
         e.id,
-        e.entry_date,
+        to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
         e.status,
-        e.posted_source,
-        e.voucher_no,
-        e.parent_entry_id,
-        e.is_system,
-        e.currency_code,
-        e.fx_rate,
+        e.posted_source as "postedSource",
+        e.voucher_no as "voucherNo",
+        e.parent_entry_id as "parentEntryId",
+        e.is_system as "isSystem",
+        e.currency_code as "currency",
+        e.fx_rate as "fxRate",
         e.memo,
-        e.vendor_id,
-        e.customer_id,
-        e.inventory_impact,
-        e.created_at
-      FROM journal_entries e
-      WHERE e.org_id = ${orgId}
+        e.vendor_id as "vendorId",
+        e.customer_id as "customerId",
+        e.inventory_impact as "inventoryImpact",
+        e.created_at as "createdAt",
+        COALESCE(s."totalDebitTxn", 0) as "totalDebitTxn",
+        COALESCE(s."totalDebitBase", 0) as "totalDebitBase"
+      FROM latest_entries e
+      LEFT JOIN sums s ON s.entry_id = e.id
       ORDER BY e.entry_date DESC, e.created_at DESC
-      LIMIT ${limit}
-    ),
-    sums AS (
+    `;
+  } catch (e: any) {
+    if (String(e?.code || "") !== "42703") throw e;
+    rows = await sql`
+      WITH latest_entries AS (
+        SELECT
+          e.id,
+          e.entry_date,
+          e.status,
+          e.voucher_no,
+          e.parent_entry_id,
+          e.is_system,
+          e.currency_code,
+          e.fx_rate,
+          e.memo,
+          e.vendor_id,
+          e.customer_id,
+          e.inventory_impact,
+          e.created_at
+        FROM journal_entries e
+        WHERE e.org_id = ${orgId}
+        ORDER BY e.entry_date DESC, e.created_at DESC
+        LIMIT ${limit}
+      ),
+      sums AS (
+        SELECT
+          l.entry_id,
+          COALESCE(SUM(l.debit_txn), 0) as "totalDebitTxn",
+          COALESCE(SUM(l.debit_base), 0) as "totalDebitBase"
+        FROM journal_lines l
+        WHERE l.org_id = ${orgId} AND l.entry_id = ANY(ARRAY(SELECT id FROM latest_entries))
+        GROUP BY l.entry_id
+      )
       SELECT
-        l.entry_id,
-        COALESCE(SUM(l.debit_txn), 0) as "totalDebitTxn",
-        COALESCE(SUM(l.debit_base), 0) as "totalDebitBase"
-      FROM journal_lines l
-      WHERE l.org_id = ${orgId} AND l.entry_id = ANY(ARRAY(SELECT id FROM latest_entries))
-      GROUP BY l.entry_id
-    )
-    SELECT
-      e.id,
-      to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
-      e.status,
-      e.posted_source as "postedSource",
-      e.voucher_no as "voucherNo",
-      e.parent_entry_id as "parentEntryId",
-      e.is_system as "isSystem",
-      e.currency_code as "currency",
-      e.fx_rate as "fxRate",
-      e.memo,
-      e.vendor_id as "vendorId",
-      e.customer_id as "customerId",
-      e.inventory_impact as "inventoryImpact",
-      e.created_at as "createdAt",
-      COALESCE(s."totalDebitTxn", 0) as "totalDebitTxn",
-      COALESCE(s."totalDebitBase", 0) as "totalDebitBase"
-    FROM latest_entries e
-    LEFT JOIN sums s ON s.entry_id = e.id
-    ORDER BY e.entry_date DESC, e.created_at DESC
-  `;
+        e.id,
+        to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
+        e.status,
+        NULL::text as "postedSource",
+        e.voucher_no as "voucherNo",
+        e.parent_entry_id as "parentEntryId",
+        e.is_system as "isSystem",
+        e.currency_code as "currency",
+        e.fx_rate as "fxRate",
+        e.memo,
+        e.vendor_id as "vendorId",
+        e.customer_id as "customerId",
+        e.inventory_impact as "inventoryImpact",
+        e.created_at as "createdAt",
+        COALESCE(s."totalDebitTxn", 0) as "totalDebitTxn",
+        COALESCE(s."totalDebitBase", 0) as "totalDebitBase"
+      FROM latest_entries e
+      LEFT JOIN sums s ON s.entry_id = e.id
+      ORDER BY e.entry_date DESC, e.created_at DESC
+    `;
+  }
   res.status(200).json({ success: true, data: { entries: rows } });
 });
 
@@ -485,12 +541,23 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sql = getSql();
   const id = req.params.id;
   const withAttachments = !(String((req.query as any)?.withAttachments || "").toLowerCase() === "0" || String((req.query as any)?.withAttachments || "").toLowerCase() === "false");
-  const entries = await sql`
-    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
-    FROM journal_entries
-    WHERE id = ${id} AND org_id = ${orgId}
-    LIMIT 1
-  `;
+  let entries: any[];
+  try {
+    entries = await sql`
+      SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
+      FROM journal_entries
+      WHERE id = ${id} AND org_id = ${orgId}
+      LIMIT 1
+    `;
+  } catch (e: any) {
+    if (String(e?.code || "") !== "42703") throw e;
+    entries = await sql`
+      SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, NULL::text as "postedSource", voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
+      FROM journal_entries
+      WHERE id = ${id} AND org_id = ${orgId}
+      LIMIT 1
+    `;
+  }
   const entry = entries[0];
   if (!entry) {
     res.status(404).json({ success: false, error: "Not found" });
@@ -1413,20 +1480,38 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       const candidates = Array.from(new Set([providedVoucherNo, issuedVoucherNo].filter(Boolean)));
       let entry: any = null;
 
-      for (const vn of candidates) {
-        try {
-          entry = (
+      const insertEntry = async (vn: string, withPostedSource: boolean): Promise<any> => {
+        if (withPostedSource) {
+          return (
             await trx`
               INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
               VALUES (${orgId}, ${entryDate}, 'posted', ${postedSource}, ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
               RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
+        }
+        return (
+          await trx`
+            INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
+            VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
+            RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, NULL::text as "postedSource", voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
+          `
+        )[0] as any;
+      };
+
+      for (const vn of candidates) {
+        try {
+          entry = await insertEntry(vn, true);
           await upsertFxRate(trx, entryDate);
           break;
         } catch (e: any) {
           if (String(e?.code || "") === "23505" && vn === providedVoucherNo && candidates.length > 1) {
             continue;
+          }
+          if (String(e?.code || "") === "42703") {
+            entry = await insertEntry(vn, false);
+            await upsertFxRate(trx, entryDate);
+            break;
           }
           throw e;
         }
@@ -1435,17 +1520,16 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
       while (!entry) {
         const vn = await issueVoucherNo(trx, orgId);
         try {
-          entry = (
-            await trx`
-              INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
-              VALUES (${orgId}, ${entryDate}, 'posted', ${postedSource}, ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
-              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
-            `
-          )[0] as any;
+          entry = await insertEntry(vn, true);
           await upsertFxRate(trx, entryDate);
           break;
         } catch (e: any) {
           if (String(e?.code || "") === "23505") continue;
+          if (String(e?.code || "") === "42703") {
+            entry = await insertEntry(vn, false);
+            await upsertFxRate(trx, entryDate);
+            break;
+          }
           throw e;
         }
       }
@@ -2422,7 +2506,12 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
         }
       }
 
-      await trx`UPDATE journal_entries SET status = 'posted', posted_source = ${postedSource}, posted_at = now() WHERE id = ${id} AND org_id = ${orgId}`;
+      try {
+        await trx`UPDATE journal_entries SET status = 'posted', posted_source = ${postedSource}, posted_at = now() WHERE id = ${id} AND org_id = ${orgId}`;
+      } catch (e: any) {
+        if (String(e?.code || "") !== "42703") throw e;
+        await trx`UPDATE journal_entries SET status = 'posted', posted_at = now() WHERE id = ${id} AND org_id = ${orgId}`;
+      }
 
       const faIds = await trx`
         SELECT DISTINCT fixed_asset_id as id
