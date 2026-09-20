@@ -91,17 +91,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 /**
  * liveness
  */
-app.use(
-  '/api/health',
-  (_req: Request, res: Response, _next: NextFunction): void => {
-    res.status(200).json({
-      success: true,
-      message: 'ok',
-    })
-  },
-)
-
-app.use('/api/health/db', async (_req: Request, res: Response): Promise<void> => {
+app.get('/api/health/db', async (_req: Request, res: Response): Promise<void> => {
   try {
     await ensureMigrated()
     const sql = getSql()
@@ -133,6 +123,13 @@ app.use('/api/health/db', async (_req: Request, res: Response): Promise<void> =>
       pgCode,
     })
   }
+})
+
+app.get('/api/health', (_req: Request, res: Response): void => {
+  res.status(200).json({
+    success: true,
+    message: 'ok',
+  })
 })
 
 app.use('/api/version', (_req: Request, res: Response): void => {
