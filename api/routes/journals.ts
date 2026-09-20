@@ -36,14 +36,22 @@ function mapPgError(e: any): { status: number; message: string; errorId: string 
   if (!code) return null;
 
   const id = makeErrorId();
+  const column = typeof e?.column === "string" && e.column.trim() ? e.column.trim() : null;
+  const table = typeof e?.table === "string" && e.table.trim() ? e.table.trim() : null;
 
   if (code === "22P02") return { status: 400, message: `字段格式不正确（ID ${id}）`, errorId: id };
   if (code === "22023") return { status: 400, message: `参数不合法（ID ${id}）`, errorId: id };
   if (code === "23502") return { status: 400, message: `缺少必填字段（ID ${id}）`, errorId: id };
   if (code === "23505") return { status: 409, message: `数据重复（唯一约束冲突，ID ${id}）`, errorId: id };
   if (code === "40001") return { status: 409, message: `并发冲突，请重试（ID ${id}）`, errorId: id };
-  if (code === "42P01") return { status: 500, message: `数据库表缺失（可能迁移未完成，ID ${id}）`, errorId: id };
-  if (code === "42703") return { status: 500, message: `数据库字段缺失（可能迁移未完成，ID ${id}）`, errorId: id };
+  if (code === "42P01") {
+    const hint = table ? `（缺少表 ${table}）` : "";
+    return { status: 500, message: `数据库表缺失${hint}（可能迁移未完成，ID ${id}）`, errorId: id };
+  }
+  if (code === "42703") {
+    const hint = column ? `（缺少字段 ${column}）` : "";
+    return { status: 500, message: `数据库字段缺失${hint}（可能迁移未完成，ID ${id}）`, errorId: id };
+  }
   return { status: 500, message: `数据库错误 ${code}（ID ${id}）`, errorId: id };
 }
 

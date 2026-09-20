@@ -123,8 +123,9 @@ export async function ensureMigrated(): Promise<void> {
       }
       await sql`INSERT INTO schema_migrations (id) VALUES (${JOURNAL_POSTED_SOURCE_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
       postedSourceApplied = true;
-    } catch {
-      void 0;
+    } catch (e) {
+      const msg = typeof (e as any)?.message === "string" ? (e as any).message : String(e);
+      console.error("[migrate] journal_posted_source failed", msg);
     }
   }
 
