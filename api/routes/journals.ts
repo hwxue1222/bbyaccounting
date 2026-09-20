@@ -458,27 +458,14 @@ router.get("/voucher/next", requireAuth, async (req: AuthedRequest, res: Respons
   if (!orgId) return;
   const sql = getSql();
 
-  const counterRows = await sql`
-    SELECT next_int as "nextInt"
-    FROM org_counters
-    WHERE org_id = ${orgId} AND key = 'JV'
-    LIMIT 1
+  const rows = await sql`
+    SELECT
+      COALESCE(MAX(CASE WHEN voucher_no ~ '^JV[0-9]+$' THEN substring(voucher_no from 3)::bigint ELSE 0 END), 0) as "maxInt"
+    FROM journal_entries
+    WHERE org_id = ${orgId}
   `;
-  const counterNextInt = counterRows.length ? Number((counterRows[0] as any).nextInt) : NaN;
-  let nextInt: number;
-  if (Number.isFinite(counterNextInt) && counterNextInt > 0) {
-    nextInt = counterNextInt;
-  } else {
-    const rows = await sql`
-      SELECT
-        COALESCE(MAX(CASE WHEN voucher_no ~ '^JV[0-9]+$' THEN substring(voucher_no from 3)::bigint ELSE 0 END), 0) as "maxInt"
-      FROM journal_entries
-      WHERE org_id = ${orgId}
-    `;
-    const maxInt = Number((rows[0] as any).maxInt) || 0;
-    nextInt = maxInt + 1;
-  }
-
+  const maxInt = Number((rows[0] as any).maxInt) || 0;
+  const nextInt = maxInt + 1;
   const voucherNo = `JV${String(nextInt).padStart(5, "0")}`;
   res.status(200).json({ success: true, data: { voucherNo, nextInt } });
 });
