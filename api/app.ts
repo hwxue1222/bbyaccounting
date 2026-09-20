@@ -13,6 +13,7 @@ import crypto from 'crypto'
 import authRoutes from './routes/auth.js'
 import cookieParser from 'cookie-parser'
 import { ensureMigrated } from './lib/migrate.js'
+import { getSql } from './lib/db.js'
 import orgRoutes from './routes/orgs.js'
 import settingsRoutes from './routes/settings.js'
 import journalRoutes from './routes/journals.js'
@@ -99,6 +100,40 @@ app.use(
     })
   },
 )
+
+app.use('/api/health/db', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    await ensureMigrated()
+    const sql = getSql()
+    const rows = await sql`
+      SELECT
+        to_regclass('public.journal_entries') IS NOT NULL AS journals_ok,
+        EXISTS(
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'posted_source'
+        ) AS posted_source_ok
+    `
+    const s: any = (rows as any[])?.[0]
+    res.status(200).json({
+      success: true,
+      build: buildInfo(),
+      checks: {
+        journalsOk: Boolean(s?.journals_ok),
+        postedSourceOk: Boolean(s?.posted_source_ok),
+      },
+    })
+  } catch (e: any) {
+    const msg = typeof e?.message === 'string' ? e.message : String(e)
+    const pgCode = typeof e?.code === 'string' ? e.code : null
+    res.status(503).json({
+      success: false,
+      build: buildInfo(),
+      error: 'DB not ready',
+      message: msg,
+      pgCode,
+    })
+  }
+})
 
 app.use('/api/version', (_req: Request, res: Response): void => {
   const appOriginRaw = typeof process.env.APP_ORIGIN === 'string' ? process.env.APP_ORIGIN : null
