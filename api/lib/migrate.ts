@@ -23,6 +23,7 @@ export async function ensureMigrated(): Promise<void> {
   const BASE_MIGRATION_ID = "base_2026_09";
   const FX_FIX_MIGRATION_ID = "fx_rate_txn_per_base_2026_09";
   const PERF_INDEXES_MIGRATION_ID = "perf_indexes_2026_09";
+  const JOURNAL_POSTED_SOURCE_MIGRATION_ID = "journal_posted_source_2026_09";
 
   let baseApplied = false;
   try {
@@ -30,6 +31,14 @@ export async function ensureMigrated(): Promise<void> {
     baseApplied = Boolean((applied as any[])?.length);
   } catch {
     baseApplied = false;
+  }
+
+  let postedSourceApplied = false;
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${JOURNAL_POSTED_SOURCE_MIGRATION_ID} LIMIT 1`;
+    postedSourceApplied = Boolean((applied as any[])?.length);
+  } catch {
+    postedSourceApplied = false;
   }
 
   try {
@@ -96,6 +105,27 @@ export async function ensureMigrated(): Promise<void> {
     await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`;
   } catch {
     void 0;
+  }
+
+  if (!postedSourceApplied) {
+    try {
+      const rows = await sql`
+        SELECT
+          to_regclass('public.journal_entries') IS NOT NULL AS journals_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'posted_source'
+          ) AS posted_source_ok
+      `;
+      const s: any = (rows as any[])?.[0];
+      if (s?.journals_ok && !s?.posted_source_ok) {
+        await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_source TEXT NOT NULL DEFAULT 'user'`;
+      }
+      await sql`INSERT INTO schema_migrations (id) VALUES (${JOURNAL_POSTED_SOURCE_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      postedSourceApplied = true;
+    } catch {
+      void 0;
+    }
   }
 
   await sql`
