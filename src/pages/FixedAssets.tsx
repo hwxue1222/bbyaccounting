@@ -39,6 +39,7 @@ type JournalDetail = {
     entryDate: string;
     voucherNo: string | null;
     status: string;
+    postedSource?: string | null;
     currency: string;
     fxRate: number;
     memo: string | null;
@@ -1436,7 +1437,7 @@ export default function FixedAssets() {
               ) : journalDetail ? (
                 <div className="space-y-3">
                   <div className="text-sm text-zinc-700">
-                    {journalDetail.entry.entryDate} · {journalDetail.entry.voucherNo || "-"} · {journalDetail.entry.status} · {journalDetail.entry.currency} @ {journalDetail.entry.fxRate}
+                    {journalDetail.entry.entryDate} · {journalDetail.entry.voucherNo || "-"} · {journalDetail.entry.status === "posted" && journalDetail.entry.postedSource === "bot" ? "bot posted" : journalDetail.entry.status} · {journalDetail.entry.currency} @ {journalDetail.entry.fxRate}
                   </div>
                   {journalDetail.entry.memo ? <div className="text-sm text-zinc-700">{journalDetail.entry.memo}</div> : null}
 

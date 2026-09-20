@@ -401,6 +401,7 @@ export async function ensureMigrated(): Promise<void> {
       org_id UUID NOT NULL,
       entry_date DATE NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft',
+      posted_source TEXT NOT NULL DEFAULT 'user',
       voucher_no TEXT,
       parent_entry_id UUID,
       is_system BOOLEAN NOT NULL DEFAULT false,
@@ -417,6 +418,7 @@ export async function ensureMigrated(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries(org_id, entry_date)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date_created ON journal_entries(org_id, entry_date DESC, created_at DESC)`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS inventory_impact BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS posted_source TEXT NOT NULL DEFAULT 'user'`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS voucher_no TEXT`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS parent_entry_id UUID`;
   await sql`ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false`;

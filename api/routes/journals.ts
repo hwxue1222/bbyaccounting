@@ -403,6 +403,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
         e.id,
         e.entry_date,
         e.status,
+        e.posted_source,
         e.voucher_no,
         e.parent_entry_id,
         e.is_system,
@@ -431,6 +432,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
       e.id,
       to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
       e.status,
+      e.posted_source as "postedSource",
       e.voucher_no as "voucherNo",
       e.parent_entry_id as "parentEntryId",
       e.is_system as "isSystem",
@@ -489,7 +491,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const id = req.params.id;
   const withAttachments = !(String((req.query as any)?.withAttachments || "").toLowerCase() === "0" || String((req.query as any)?.withAttachments || "").toLowerCase() === "false");
   const entries = await sql`
-    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
+    SELECT id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", parent_entry_id as "parentEntryId", is_system as "isSystem", currency_code as "currency", fx_rate as "fxRate", memo, inventory_impact as "inventoryImpact", vendor_id as "vendorId", customer_id as "customerId"
     FROM journal_entries
     WHERE id = ${id} AND org_id = ${orgId}
     LIMIT 1
@@ -1177,6 +1179,11 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
   const fixedAssetPurchases = parsed.data.fixedAssetPurchases;
   const fixedAssetDisposal = parsed.data.fixedAssetDisposal;
   const recurring = parsed.data.recurring;
+
+  const postedSourceRaw = String(req.header("x-posted-source") || "")
+    .trim()
+    .toLowerCase();
+  const postedSource = postedSourceRaw === "bot" ? "bot" : "user";
   const effectiveInventoryImpact = Boolean(inventoryDetails && inventoryDetails.length);
 
   const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`;
@@ -1415,9 +1422,9 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         try {
           entry = (
             await trx`
-              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
-              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
-              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
+              INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
+              VALUES (${orgId}, ${entryDate}, 'posted', ${postedSource}, ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
+              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
           await upsertFxRate(trx, entryDate);
@@ -1435,9 +1442,9 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         try {
           entry = (
             await trx`
-              INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
-              VALUES (${orgId}, ${entryDate}, 'posted', ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
-              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
+              INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at, vendor_id, customer_id)
+              VALUES (${orgId}, ${entryDate}, 'posted', ${postedSource}, ${vn}, NULL, false, ${currency.toUpperCase()}, ${fxRate}, ${memo || null}, ${req.auth!.userId}, ${effectiveInventoryImpact}, now(), ${vendorId}, ${customerId})
+              RETURNING id, to_char(entry_date, 'YYYY-MM-DD') as "entryDate", status, posted_source as "postedSource", voucher_no as "voucherNo", currency_code as "currency", fx_rate as "fxRate", memo
             `
           )[0] as any;
           await upsertFxRate(trx, entryDate);
@@ -2095,6 +2102,11 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
   const sql = getSql();
   const id = req.params.id;
 
+  const postedSourceRaw = String(req.header("x-posted-source") || "")
+    .trim()
+    .toLowerCase();
+  const postedSource = postedSourceRaw === "bot" ? "bot" : "user";
+
   const fixedAssetPurchaseSchema = z.object({
     lineNo: z.number().int().positive(),
     category: z.preprocess(
@@ -2415,7 +2427,7 @@ router.post("/:id/post", requireAuth, async (req: AuthedRequest, res: Response) 
         }
       }
 
-      await trx`UPDATE journal_entries SET status = 'posted', posted_at = now() WHERE id = ${id} AND org_id = ${orgId}`;
+      await trx`UPDATE journal_entries SET status = 'posted', posted_source = ${postedSource}, posted_at = now() WHERE id = ${id} AND org_id = ${orgId}`;
 
       const faIds = await trx`
         SELECT DISTINCT fixed_asset_id as id

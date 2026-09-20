@@ -16,6 +16,7 @@ type EntryListRow = {
   id: string;
   entryDate: string;
   status: string;
+  postedSource?: string | null;
   voucherNo?: string | null;
   isSystem?: boolean;
   parentEntryId?: string | null;
@@ -34,6 +35,7 @@ type EntryDetail = {
     id: string;
     entryDate: string;
     status: string;
+    postedSource?: string | null;
     voucherNo?: string | null;
     currency: string;
     fxRate: number;
@@ -4964,7 +4966,7 @@ export default function Journal() {
                           (e.status === "posted" ? "bg-green-50 text-green-700" : "bg-zinc-100 text-zinc-700")
                         }
                       >
-                        {e.status}
+                        {e.status === "posted" && e.postedSource === "bot" ? "bot posted" : e.status}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-sm">{e.inventoryImpact ? tr("是", "Yes") : ""}</td>
@@ -5052,7 +5054,7 @@ export default function Journal() {
               <div className="mt-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-zinc-600">
-                    {detail.entry.entryDate} · {detail.entry.voucherNo || "-"} · {detail.entry.status} · {detail.entry.currency} @ {detail.entry.fxRate}
+                    {detail.entry.entryDate} · {detail.entry.voucherNo || "-"} · {detail.entry.status === "posted" && detail.entry.postedSource === "bot" ? "bot posted" : detail.entry.status} · {detail.entry.currency} @ {detail.entry.fxRate}
                   </div>
                   <div className="flex items-center gap-2">
                     <button
