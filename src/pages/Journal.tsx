@@ -110,6 +110,7 @@ export default function Journal() {
   const detailPrefetchAbortRef = useRef<AbortController | null>(null);
   const detailPrefetchTimerRef = useRef<number | null>(null);
   const detailPrefetchIdRef = useRef<string | null>(null);
+  const detailWarmIdRef = useRef<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -755,6 +756,12 @@ export default function Journal() {
     setBankAccounts(bankAccounts as any);
     setEntries(entries as any);
     void refreshNextVoucherNo(undefined, signal);
+
+    const firstId = (entries as any[])?.[0]?.id ? String((entries as any[])[0].id) : "";
+    if (firstId && !selectedId && detailWarmIdRef.current !== firstId) {
+      detailWarmIdRef.current = firstId;
+      fetchDetailCore(firstId, { signal }).catch(() => null);
+    }
   }
 
   async function refreshEntriesOnly(signal?: AbortSignal) {
@@ -1754,6 +1761,7 @@ export default function Journal() {
       detailPrefetchTimerRef.current = null;
     }
     detailPrefetchIdRef.current = null;
+    detailWarmIdRef.current = null;
     const ctrl = new AbortController();
     pageAbortRef.current = ctrl;
     setErr(null);
