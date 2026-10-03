@@ -1203,23 +1203,12 @@ export default function Settings() {
                   </div>
                   <div className="md:col-span-2">
                     <label className="text-xs text-zinc-600">GST Payable 科目</label>
-                    <select
-                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                      value={tax.gstPayableAccountId}
-                      disabled={!(activeRole === "admin")}
-                      onChange={(e) => setTax((prev) => ({ ...prev, gstPayableAccountId: e.target.value }))}
-                    >
-                      <option value="">请选择</option>
-                      {accounts
-                        .filter((a) => ((a as any).isActive ?? true) || a.id === tax.gstPayableAccountId)
-                        .slice()
-                        .sort((a, b) => String(a.code).localeCompare(String(b.code)))
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.code} {a.name}
-                          </option>
-                        ))}
-                    </select>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+                      value={(accounts.find((a) => a.id === tax.gstPayableAccountId)?.name || "GST payable") as any}
+                      readOnly
+                    />
+                    <div className="mt-1 text-xs text-zinc-500">系统固定使用 GST payable（无需手动设置）</div>
                   </div>
                 </div>
               </div>
@@ -1254,23 +1243,12 @@ export default function Settings() {
                   </div>
                   <div className="md:col-span-2">
                     <label className="text-xs text-zinc-600">SST Payable 科目</label>
-                    <select
-                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                      value={tax.sstPayableAccountId}
-                      disabled={!(activeRole === "admin")}
-                      onChange={(e) => setTax((prev) => ({ ...prev, sstPayableAccountId: e.target.value }))}
-                    >
-                      <option value="">请选择</option>
-                      {accounts
-                        .filter((a) => ((a as any).isActive ?? true) || a.id === tax.sstPayableAccountId)
-                        .slice()
-                        .sort((a, b) => String(a.code).localeCompare(String(b.code)))
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.code} {a.name}
-                          </option>
-                        ))}
-                    </select>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+                      value={(accounts.find((a) => a.id === tax.sstPayableAccountId)?.name || "SST payable") as any}
+                      readOnly
+                    />
+                    <div className="mt-1 text-xs text-zinc-500">系统固定使用 SST payable（无需手动设置）</div>
                   </div>
                 </div>
               </div>

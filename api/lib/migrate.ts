@@ -22,6 +22,7 @@ export async function ensureMigrated(): Promise<void> {
 
   const BASE_MIGRATION_ID = "base_2026_09";
   const FX_FIX_MIGRATION_ID = "fx_rate_txn_per_base_2026_09";
+  const TAX_PAYABLE_SEED_MIGRATION_ID = "seed_tax_payables_2026_10";
   const PERF_INDEXES_MIGRATION_ID = "perf_indexes_2026_09";
   const TAX_SETTINGS_MIGRATION_ID = "tax_settings_2026_10";
   const JOURNAL_POSTED_SOURCE_MIGRATION_ID = "journal_posted_source_2026_09";
@@ -883,6 +884,60 @@ export async function ensureMigrated(): Promise<void> {
     try {
       await sql`INSERT INTO schema_migrations (id) VALUES (${TAX_SETTINGS_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
       taxSettingsApplied = true;
+    } catch {
+      void 0;
+    }
+  }
+
+  let taxPayablesApplied = false;
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${TAX_PAYABLE_SEED_MIGRATION_ID} LIMIT 1`;
+    taxPayablesApplied = Boolean((applied as any[])?.length);
+  } catch {
+    taxPayablesApplied = false;
+  }
+
+  if (!taxPayablesApplied) {
+    try {
+      const orgs = await sql`SELECT id FROM organizations WHERE deleted_at IS NULL`;
+      for (const o of orgs as any[]) {
+        const orgId = String((o as any).id);
+        if (!orgId) continue;
+
+        const ensureOne = async (name: string, codeBase: number) => {
+          const existing = await sql`
+            SELECT id
+            FROM accounts
+            WHERE org_id = ${orgId} AND name ILIKE ${name + "%"}
+            ORDER BY code ASC
+            LIMIT 1
+          `;
+          if (existing.length) return;
+
+          let code = String(codeBase);
+          for (let i = 0; i < 50; i++) {
+            const check = await sql`SELECT 1 FROM accounts WHERE org_id = ${orgId} AND code = ${code} LIMIT 1`;
+            if (!check.length) break;
+            code = String(codeBase + i + 1);
+          }
+
+          await sql`
+            INSERT INTO accounts (org_id, code, name, type, normal_balance, is_active, link_inventory_fifo, link_fixed_assets)
+            VALUES (${orgId}, ${code}, ${name}, 'liability', 'credit', true, false, false)
+            ON CONFLICT (org_id, code) DO NOTHING
+          `;
+        };
+
+        await ensureOne("GST payable", 2100);
+        await ensureOne("SST payable", 2110);
+      }
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`INSERT INTO schema_migrations (id) VALUES (${TAX_PAYABLE_SEED_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      taxPayablesApplied = true;
     } catch {
       void 0;
     }

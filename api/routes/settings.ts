@@ -7,9 +7,7 @@ import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
 
-async function resolvePayableAccountId(sql: any, orgId: string, currentId: string, namePrefix: string): Promise<string> {
-  const id = (currentId || "").trim();
-  if (id) return id;
+async function resolvePayableAccountId(sql: any, orgId: string, namePrefix: string): Promise<string> {
   const rows = await sql`
     SELECT id
     FROM accounts
@@ -165,13 +163,11 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
   const gstPayableAccountId = await resolvePayableAccountId(
     sql,
     orgId,
-    taxRow?.gstPayableAccountId ? String(taxRow.gstPayableAccountId) : "",
     "GST payable",
   );
   const sstPayableAccountId = await resolvePayableAccountId(
     sql,
     orgId,
-    taxRow?.sstPayableAccountId ? String(taxRow.sstPayableAccountId) : "",
     "SST payable",
   );
   const tax = {
@@ -248,13 +244,11 @@ router.get("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
   const gstPayableAccountId = await resolvePayableAccountId(
     sql,
     orgId,
-    row?.gstPayableAccountId ? String(row.gstPayableAccountId) : "",
     "GST payable",
   );
   const sstPayableAccountId = await resolvePayableAccountId(
     sql,
     orgId,
-    row?.sstPayableAccountId ? String(row.sstPayableAccountId) : "",
     "SST payable",
   );
   const out = {
