@@ -27,9 +27,11 @@ type TaxSettings = {
   gstEnabled: boolean;
   gstRate: number;
   gstPayableAccountId: string;
+  gstReceivableAccountId: string;
   sstEnabled: boolean;
   sstRate: number;
   sstPayableAccountId: string;
+  sstReceivableAccountId: string;
   updatedAt: string | null;
 };
 
@@ -47,9 +49,11 @@ export default function Settings() {
     gstEnabled: false,
     gstRate: 0,
     gstPayableAccountId: "",
+    gstReceivableAccountId: "",
     sstEnabled: false,
     sstRate: 0,
     sstPayableAccountId: "",
+    sstReceivableAccountId: "",
     updatedAt: null,
   });
   const [err, setErr] = useState<string | null>(null);
@@ -145,9 +149,11 @@ export default function Settings() {
           gstEnabled: tax.gstEnabled,
           gstRate: Number(tax.gstRate) || 0,
           gstPayableAccountId: tax.gstPayableAccountId || "",
+          gstReceivableAccountId: tax.gstReceivableAccountId || "",
           sstEnabled: tax.sstEnabled,
           sstRate: Number(tax.sstRate) || 0,
           sstPayableAccountId: tax.sstPayableAccountId || "",
+          sstReceivableAccountId: tax.sstReceivableAccountId || "",
         },
       });
       await refresh();
@@ -1210,6 +1216,15 @@ export default function Settings() {
                     />
                     <div className="mt-1 text-xs text-zinc-500">系统固定使用 GST payable（无需手动设置）</div>
                   </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">GST Receivable 科目</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+                      value={(accounts.find((a) => a.id === tax.gstReceivableAccountId)?.name || "GST receivable") as any}
+                      readOnly
+                    />
+                    <div className="mt-1 text-xs text-zinc-500">系统固定使用 GST receivable（无需手动设置）</div>
+                  </div>
                 </div>
               </div>
 
@@ -1249,6 +1264,15 @@ export default function Settings() {
                       readOnly
                     />
                     <div className="mt-1 text-xs text-zinc-500">系统固定使用 SST payable（无需手动设置）</div>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">SST Receivable 科目</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+                      value={(accounts.find((a) => a.id === tax.sstReceivableAccountId)?.name || "SST receivable") as any}
+                      readOnly
+                    />
+                    <div className="mt-1 text-xs text-zinc-500">系统固定使用 SST receivable（无需手动设置）</div>
                   </div>
                 </div>
               </div>

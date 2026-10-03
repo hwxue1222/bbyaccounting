@@ -1250,7 +1250,7 @@ router.get("/tax/gst-form5", requireAuth, async (req: AuthedRequest, res: Respon
   const sql = getSql();
 
   const settingsRows = await sql`
-    SELECT gst_enabled as "gstEnabled", gst_rate as "gstRate", gst_payable_account_id as "gstPayableAccountId"
+    SELECT gst_enabled as "gstEnabled", gst_rate as "gstRate"
     FROM tax_settings
     WHERE org_id = ${orgId}
     LIMIT 1
@@ -1259,9 +1259,24 @@ router.get("/tax/gst-form5", requireAuth, async (req: AuthedRequest, res: Respon
   const s: any = settingsRows[0] || null;
   const gstEnabled = Boolean(s?.gstEnabled ?? false);
   const gstRate = Number(s?.gstRate ?? 0) || 0;
-  const gstPayableAccountId = s?.gstPayableAccountId ? String(s.gstPayableAccountId) : "";
+  const gstPayableRows = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE 'GST payable%'
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  const gstRecvRows = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE 'GST receivable%'
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  const gstPayableAccountId = gstPayableRows.length ? String((gstPayableRows[0] as any).id) : "";
+  const gstReceivableAccountId = gstRecvRows.length ? String((gstRecvRows[0] as any).id) : "";
 
-  if (!gstEnabled || !gstPayableAccountId || !(gstRate > 0)) {
+  if (!gstEnabled || !gstPayableAccountId || !gstReceivableAccountId || !(gstRate > 0)) {
     res.status(200).json({ success: true, data: { start: q.data.start, end: q.data.end, enabled: false, rows: [] } });
     return;
   }
@@ -1271,7 +1286,7 @@ router.get("/tax/gst-form5", requireAuth, async (req: AuthedRequest, res: Respon
 
   const outRows = await sql`
     SELECT
-      COALESCE(SUM(l.credit_base - l.debit_base), 0) as "netTaxBase"
+      COALESCE(SUM(l.credit_base - l.debit_base), 0) as "outputTax"
     FROM journal_lines l
     JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = l.org_id
     WHERE l.org_id = ${orgId}
@@ -1281,9 +1296,20 @@ router.get("/tax/gst-form5", requireAuth, async (req: AuthedRequest, res: Respon
       AND l.account_id = ${gstPayableAccountId}::uuid
   `;
 
-  const netTaxBase = Number((outRows[0] as any)?.netTaxBase ?? 0) || 0;
-  const outputTax = Math.round(Math.max(0, netTaxBase) * 100) / 100;
-  const inputTax = Math.round(Math.max(0, -netTaxBase) * 100) / 100;
+  const inRows = await sql`
+    SELECT
+      COALESCE(SUM(l.debit_base - l.credit_base), 0) as "inputTax"
+    FROM journal_lines l
+    JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = l.org_id
+    WHERE l.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date >= ${start}::date
+      AND e.entry_date <= ${end}::date
+      AND l.account_id = ${gstReceivableAccountId}::uuid
+  `;
+
+  const outputTax = Math.round(Math.max(0, Number((outRows[0] as any)?.outputTax ?? 0) || 0) * 100) / 100;
+  const inputTax = Math.round(Math.max(0, Number((inRows[0] as any)?.inputTax ?? 0) || 0) * 100) / 100;
 
   const rateFrac = gstRate / 100;
   const standardRatedSales = rateFrac > 0 ? Math.round((outputTax / rateFrac) * 100) / 100 : 0;
@@ -1317,7 +1343,7 @@ router.get("/tax/sst-summary", requireAuth, async (req: AuthedRequest, res: Resp
   const sql = getSql();
 
   const settingsRows = await sql`
-    SELECT sst_enabled as "sstEnabled", sst_rate as "sstRate", sst_payable_account_id as "sstPayableAccountId"
+    SELECT sst_enabled as "sstEnabled", sst_rate as "sstRate"
     FROM tax_settings
     WHERE org_id = ${orgId}
     LIMIT 1
@@ -1326,7 +1352,22 @@ router.get("/tax/sst-summary", requireAuth, async (req: AuthedRequest, res: Resp
   const s: any = settingsRows[0] || null;
   const sstEnabled = Boolean(s?.sstEnabled ?? false);
   const sstRate = Number(s?.sstRate ?? 0) || 0;
-  const sstPayableAccountId = s?.sstPayableAccountId ? String(s.sstPayableAccountId) : "";
+  const sstPayableRows = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE 'SST payable%'
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  const sstRecvRows = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE 'SST receivable%'
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  const sstPayableAccountId = sstPayableRows.length ? String((sstPayableRows[0] as any).id) : "";
+  const sstReceivableAccountId = sstRecvRows.length ? String((sstRecvRows[0] as any).id) : "";
 
   if (!sstEnabled || !sstPayableAccountId || !(sstRate > 0)) {
     res.status(200).json({ success: true, data: { start: q.data.start, end: q.data.end, enabled: false, rows: [] } });
@@ -1350,12 +1391,32 @@ router.get("/tax/sst-summary", requireAuth, async (req: AuthedRequest, res: Resp
 
   const netTaxBase = Number((outRows[0] as any)?.netTaxBase ?? 0) || 0;
   const taxPayable = Math.round(Math.max(0, netTaxBase) * 100) / 100;
+  let taxReceivable = 0;
+  if (sstReceivableAccountId) {
+    const inRows = await sql`
+      SELECT
+        COALESCE(SUM(l.debit_base - l.credit_base), 0) as "inputTax"
+      FROM journal_lines l
+      JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = l.org_id
+      WHERE l.org_id = ${orgId}
+        AND e.status = 'posted'
+        AND e.entry_date >= ${start}::date
+        AND e.entry_date <= ${end}::date
+        AND l.account_id = ${sstReceivableAccountId}::uuid
+    `;
+    taxReceivable = Math.round(Math.max(0, Number((inRows[0] as any)?.inputTax ?? 0) || 0) * 100) / 100;
+  }
   const rateFrac = sstRate / 100;
   const taxableSales = rateFrac > 0 ? Math.round((taxPayable / rateFrac) * 100) / 100 : 0;
+  const taxablePurchases = rateFrac > 0 ? Math.round((taxReceivable / rateFrac) * 100) / 100 : 0;
+  const netSst = Math.round((taxPayable - taxReceivable) * 100) / 100;
 
   const rows = [
     { code: "SST1", label: "Taxable sales", amount: taxableSales },
     { code: "SST2", label: "SST payable", amount: taxPayable },
+    { code: "SST3", label: "Taxable purchases", amount: taxablePurchases },
+    { code: "SST4", label: "SST receivable", amount: taxReceivable },
+    { code: "SSTN", label: "Net SST payable / (claimable)", amount: netSst },
   ];
 
   res.status(200).json({ success: true, data: { start, end, enabled: true, sstRate, rows } });

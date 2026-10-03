@@ -422,10 +422,21 @@ export default function Journal() {
     gstEnabled: boolean;
     gstRate: number;
     gstPayableAccountId: string;
+    gstReceivableAccountId: string;
     sstEnabled: boolean;
     sstRate: number;
     sstPayableAccountId: string;
-  }>({ gstEnabled: false, gstRate: 0, gstPayableAccountId: "", sstEnabled: false, sstRate: 0, sstPayableAccountId: "" });
+    sstReceivableAccountId: string;
+  }>({
+    gstEnabled: false,
+    gstRate: 0,
+    gstPayableAccountId: "",
+    gstReceivableAccountId: "",
+    sstEnabled: false,
+    sstRate: 0,
+    sstPayableAccountId: "",
+    sstReceivableAccountId: "",
+  });
   const [draftTaxMode, setDraftTaxMode] = useState<"none" | "gst" | "sst">("none");
   const [draftTaxErr, setDraftTaxErr] = useState<string | null>(null);
 
@@ -571,14 +582,21 @@ export default function Journal() {
     return Math.round((debit - credit) * 100) / 100;
   }, [draftLines]);
 
-  const autoDebitIdx = useMemo(() => {
-    if (draftTaxMode === "none") return null;
+  const autoAdjust = useMemo(() => {
+    if (draftTaxMode === "none") return null as null | { idx: number; side: "debit" | "credit" };
     const base = draftLines.filter((l: any) => !Boolean(l.isTaxLine));
-    const idxs = base
+    const debitIdxs = base
       .map((l: any, idx: number) => ({ idx, debit: Math.max(0, Number(l.debitTxn) || 0) }))
       .filter((x) => x.debit > 0.0001)
       .map((x) => x.idx);
-    return idxs.length === 1 ? idxs[0] : null;
+    const creditIdxs = base
+      .map((l: any, idx: number) => ({ idx, credit: Math.max(0, Number(l.creditTxn) || 0) }))
+      .filter((x) => x.credit > 0.0001)
+      .map((x) => x.idx);
+
+    if (debitIdxs.length === 1 && creditIdxs.length >= 1) return { idx: debitIdxs[0], side: "debit" };
+    if (creditIdxs.length === 1 && debitIdxs.length >= 1) return { idx: creditIdxs[0], side: "credit" };
+    return null;
   }, [draftLines, draftTaxMode]);
 
   const costCenterLabelById = useMemo(() => {
@@ -783,9 +801,11 @@ export default function Journal() {
         gstEnabled: Boolean((tax as any).gstEnabled ?? false),
         gstRate: Number((tax as any).gstRate ?? 0) || 0,
         gstPayableAccountId: String((tax as any).gstPayableAccountId || ""),
+        gstReceivableAccountId: String((tax as any).gstReceivableAccountId || ""),
         sstEnabled: Boolean((tax as any).sstEnabled ?? false),
         sstRate: Number((tax as any).sstRate ?? 0) || 0,
         sstPayableAccountId: String((tax as any).sstPayableAccountId || ""),
+        sstReceivableAccountId: String((tax as any).sstReceivableAccountId || ""),
       });
     }
     setEntries(entries as any);
@@ -881,8 +901,18 @@ export default function Journal() {
 
     const cfg =
       mode === "gst"
-        ? { enabled: taxSettings.gstEnabled, rate: taxSettings.gstRate, payableAccountId: taxSettings.gstPayableAccountId }
-        : { enabled: taxSettings.sstEnabled, rate: taxSettings.sstRate, payableAccountId: taxSettings.sstPayableAccountId };
+        ? {
+            enabled: taxSettings.gstEnabled,
+            rate: taxSettings.gstRate,
+            payableAccountId: taxSettings.gstPayableAccountId,
+            receivableAccountId: taxSettings.gstReceivableAccountId,
+          }
+        : {
+            enabled: taxSettings.sstEnabled,
+            rate: taxSettings.sstRate,
+            payableAccountId: taxSettings.sstPayableAccountId,
+            receivableAccountId: taxSettings.sstReceivableAccountId,
+          };
 
     if (!cfg.enabled) {
       return { lines: base, err: `${mode.toUpperCase()} 未启用，请先在设置里开启` };
@@ -890,39 +920,68 @@ export default function Journal() {
     if (!(Number(cfg.rate) > 0)) {
       return { lines: base, err: `${mode.toUpperCase()} 税率未设置` };
     }
-    if (!cfg.payableAccountId) {
-      return { lines: base, err: `${mode.toUpperCase()} Payable 科目未设置` };
-    }
-
     const creditSum = base.reduce((acc, l) => acc + Math.max(0, parseAmt(String((l as any).creditTxn || ""))), 0);
-    if (!(creditSum > 0)) {
-      return { lines: base, err: `${mode.toUpperCase()} 需至少一条贷方金额` };
-    }
+    const debitSum = base.reduce((acc, l) => acc + Math.max(0, parseAmt(String((l as any).debitTxn || ""))), 0);
 
     const debitIdxs = base
       .map((l, idx) => ({ idx, debit: Math.max(0, parseAmt(String((l as any).debitTxn || ""))) }))
       .filter((x) => x.debit > 0.0001)
       .map((x) => x.idx);
+    const creditIdxs = base
+      .map((l, idx) => ({ idx, credit: Math.max(0, parseAmt(String((l as any).creditTxn || ""))) }))
+      .filter((x) => x.credit > 0.0001)
+      .map((x) => x.idx);
 
-    if (debitIdxs.length !== 1) {
-      return { lines: base, err: `${mode.toUpperCase()} 自动生成需要且仅需要 1 条借方行（用于自动回填总额）` };
+    const isSales = debitIdxs.length === 1 && creditIdxs.length >= 1;
+    const isPurchase = creditIdxs.length === 1 && debitIdxs.length >= 1;
+    if (!isSales && !isPurchase) {
+      return {
+        lines: base,
+        err: `${mode.toUpperCase()} 自动生成需要：销售=且仅 1 条借方行；或采购=且仅 1 条贷方行（用于自动回填含税总额）`,
+      };
     }
 
     const rateFrac = Number(cfg.rate) / 100;
-    const taxAmt = round2(creditSum * rateFrac);
-    const debitIdx = debitIdxs[0];
+    const taxAmt = round2((isSales ? creditSum : debitSum) * rateFrac);
+    const label = `${mode.toUpperCase()} ${Number(cfg.rate).toFixed(2)}%`;
 
+    if (isSales) {
+      if (!cfg.payableAccountId) {
+        return { lines: base, err: `${mode.toUpperCase()} Payable 科目未就绪（请稍后再试）` };
+      }
+      const debitIdx = debitIdxs[0];
+      const next = base.map((l, idx) => {
+        if (idx !== debitIdx) return { ...l, isTaxLine: false, taxKind: "" };
+        return { ...l, debitTxn: round2(creditSum + taxAmt).toFixed(2), isTaxLine: false, taxKind: "" };
+      });
+      next.push({
+        accountId: cfg.payableAccountId,
+        description: label,
+        costCenterId: "",
+        debitTxn: "",
+        creditTxn: taxAmt > 0 ? taxAmt.toFixed(2) : "",
+        isTaxLine: true,
+        taxKind: mode,
+      });
+      return { lines: next, err: null };
+    }
+
+    if (!cfg.receivableAccountId) {
+      return { lines: base, err: `${mode.toUpperCase()} Receivable 科目未就绪（请稍后再试）` };
+    }
+
+    const creditIdx = creditIdxs[0];
     const next = base.map((l, idx) => {
-      if (idx !== debitIdx) return { ...l, isTaxLine: false, taxKind: "" };
-      return { ...l, debitTxn: round2(creditSum + taxAmt).toFixed(2), isTaxLine: false, taxKind: "" };
+      if (idx !== creditIdx) return { ...l, isTaxLine: false, taxKind: "" };
+      return { ...l, creditTxn: round2(debitSum + taxAmt).toFixed(2), isTaxLine: false, taxKind: "" };
     });
 
     next.push({
-      accountId: cfg.payableAccountId,
-      description: `${mode.toUpperCase()} ${Number(cfg.rate).toFixed(2)}%`,
+      accountId: cfg.receivableAccountId,
+      description: label,
       costCenterId: "",
-      debitTxn: "",
-      creditTxn: taxAmt > 0 ? taxAmt.toFixed(2) : "",
+      debitTxn: taxAmt > 0 ? taxAmt.toFixed(2) : "",
+      creditTxn: "",
       isTaxLine: true,
       taxKind: mode,
     });
@@ -936,7 +995,18 @@ export default function Journal() {
     if (!linesEqual(draftLines as any[], next)) {
       setDraftLines(next as any);
     }
-  }, [draftLines, draftTaxMode, taxSettings.gstEnabled, taxSettings.gstRate, taxSettings.gstPayableAccountId, taxSettings.sstEnabled, taxSettings.sstRate, taxSettings.sstPayableAccountId]);
+  }, [
+    draftLines,
+    draftTaxMode,
+    taxSettings.gstEnabled,
+    taxSettings.gstRate,
+    taxSettings.gstPayableAccountId,
+    taxSettings.gstReceivableAccountId,
+    taxSettings.sstEnabled,
+    taxSettings.sstRate,
+    taxSettings.sstPayableAccountId,
+    taxSettings.sstReceivableAccountId,
+  ]);
 
   async function fetchDetailCore(entryId: string, opts?: { signal?: AbortSignal; force?: boolean }): Promise<EntryDetail> {
     const key = detailCacheKey(entryId);
@@ -2773,7 +2843,11 @@ export default function Journal() {
                         }}
                         type="number"
                         step="0.01"
-                        disabled={readOnly || Boolean((l as any).isTaxLine) || (draftTaxMode !== "none" && autoDebitIdx === idx)}
+                        disabled={
+                          readOnly ||
+                          Boolean((l as any).isTaxLine) ||
+                          (draftTaxMode !== "none" && autoAdjust?.side === "debit" && autoAdjust.idx === idx)
+                        }
                       />
                       {(() => {
                         const acc = accounts.find((a) => a.id === l.accountId);
@@ -2858,7 +2932,11 @@ export default function Journal() {
                         }}
                         type="number"
                         step="0.01"
-                        disabled={readOnly || Boolean((l as any).isTaxLine)}
+                        disabled={
+                          readOnly ||
+                          Boolean((l as any).isTaxLine) ||
+                          (draftTaxMode !== "none" && autoAdjust?.side === "credit" && autoAdjust.idx === idx)
+                        }
                       />
                       {(() => {
                         const acc = accounts.find((a) => a.id === l.accountId);

@@ -7,7 +7,7 @@ import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
 
-async function resolvePayableAccountId(sql: any, orgId: string, namePrefix: string): Promise<string> {
+async function resolveAccountIdByNamePrefix(sql: any, orgId: string, namePrefix: string): Promise<string> {
   const rows = await sql`
     SELECT id
     FROM accounts
@@ -31,7 +31,14 @@ async function accountNameMatches(sql: any, orgId: string, accountId: string, re
   return re.test(name);
 }
 
-async function ensurePayableAccount(sql: any, orgId: string, desiredName: string, codeBase: number): Promise<string> {
+async function ensureTaxAccount(
+  sql: any,
+  orgId: string,
+  desiredName: string,
+  codeBase: number,
+  type: "asset" | "liability",
+  normalBalance: "debit" | "credit",
+): Promise<string> {
   const existing = await sql`
     SELECT id
     FROM accounts
@@ -51,7 +58,7 @@ async function ensurePayableAccount(sql: any, orgId: string, desiredName: string
   const row = (
     await sql`
       INSERT INTO accounts (org_id, code, name, type, normal_balance, is_active, link_inventory_fifo, link_fixed_assets)
-      VALUES (${orgId}, ${code}, ${desiredName}, 'liability', 'credit', true, false, false)
+      VALUES (${orgId}, ${code}, ${desiredName}, ${type}, ${normalBalance}, true, false, false)
       ON CONFLICT (org_id, code) DO NOTHING
       RETURNING id
     `
@@ -149,9 +156,11 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
         gst_enabled as "gstEnabled",
         gst_rate as "gstRate",
         gst_payable_account_id as "gstPayableAccountId",
+        gst_receivable_account_id as "gstReceivableAccountId",
         sst_enabled as "sstEnabled",
         sst_rate as "sstRate",
         sst_payable_account_id as "sstPayableAccountId",
+        sst_receivable_account_id as "sstReceivableAccountId",
         updated_at as "updatedAt"
       FROM tax_settings
       WHERE org_id = ${orgId}
@@ -160,23 +169,35 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
   ]);
 
   const taxRow = (taxRows as any[])?.[0] as any;
-  const gstPayableAccountId = await resolvePayableAccountId(
+  const gstPayableAccountId = await resolveAccountIdByNamePrefix(
     sql,
     orgId,
     "GST payable",
   );
-  const sstPayableAccountId = await resolvePayableAccountId(
+  const gstReceivableAccountId = await resolveAccountIdByNamePrefix(
+    sql,
+    orgId,
+    "GST receivable",
+  );
+  const sstPayableAccountId = await resolveAccountIdByNamePrefix(
     sql,
     orgId,
     "SST payable",
+  );
+  const sstReceivableAccountId = await resolveAccountIdByNamePrefix(
+    sql,
+    orgId,
+    "SST receivable",
   );
   const tax = {
     gstEnabled: Boolean(taxRow?.gstEnabled ?? false),
     gstRate: Number(taxRow?.gstRate ?? 0) || 0,
     gstPayableAccountId,
+    gstReceivableAccountId,
     sstEnabled: Boolean(taxRow?.sstEnabled ?? false),
     sstRate: Number(taxRow?.sstRate ?? 0) || 0,
     sstPayableAccountId,
+    sstReceivableAccountId,
     updatedAt: taxRow?.updatedAt ? String(taxRow.updatedAt) : null,
   };
 
@@ -231,9 +252,11 @@ router.get("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
       gst_enabled as "gstEnabled",
       gst_rate as "gstRate",
       gst_payable_account_id as "gstPayableAccountId",
+      gst_receivable_account_id as "gstReceivableAccountId",
       sst_enabled as "sstEnabled",
       sst_rate as "sstRate",
       sst_payable_account_id as "sstPayableAccountId",
+      sst_receivable_account_id as "sstReceivableAccountId",
       updated_at as "updatedAt"
     FROM tax_settings
     WHERE org_id = ${orgId}
@@ -241,23 +264,35 @@ router.get("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
   `;
 
   const row = rows[0] as any;
-  const gstPayableAccountId = await resolvePayableAccountId(
+  const gstPayableAccountId = await resolveAccountIdByNamePrefix(
     sql,
     orgId,
     "GST payable",
   );
-  const sstPayableAccountId = await resolvePayableAccountId(
+  const gstReceivableAccountId = await resolveAccountIdByNamePrefix(
+    sql,
+    orgId,
+    "GST receivable",
+  );
+  const sstPayableAccountId = await resolveAccountIdByNamePrefix(
     sql,
     orgId,
     "SST payable",
+  );
+  const sstReceivableAccountId = await resolveAccountIdByNamePrefix(
+    sql,
+    orgId,
+    "SST receivable",
   );
   const out = {
     gstEnabled: Boolean(row?.gstEnabled ?? false),
     gstRate: Number(row?.gstRate ?? 0) || 0,
     gstPayableAccountId,
+    gstReceivableAccountId,
     sstEnabled: Boolean(row?.sstEnabled ?? false),
     sstRate: Number(row?.sstRate ?? 0) || 0,
     sstPayableAccountId,
+    sstReceivableAccountId,
     updatedAt: row?.updatedAt ? String(row.updatedAt) : null,
   };
   res.status(200).json({ success: true, data: { tax: out } });
@@ -273,9 +308,11 @@ router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
     gstEnabled: z.boolean().optional(),
     gstRate: z.number().min(0).max(100).optional(),
     gstPayableAccountId: z.string().uuid().optional().or(z.literal("")),
+    gstReceivableAccountId: z.string().uuid().optional().or(z.literal("")),
     sstEnabled: z.boolean().optional(),
     sstRate: z.number().min(0).max(100).optional(),
     sstPayableAccountId: z.string().uuid().optional().or(z.literal("")),
+    sstReceivableAccountId: z.string().uuid().optional().or(z.literal("")),
   });
 
   const parsed = bodySchema.safeParse(req.body);
@@ -291,24 +328,36 @@ router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sstRate = typeof v.sstRate === "number" ? v.sstRate : 0;
 
   let gstPayableAccountId = typeof v.gstPayableAccountId === "string" ? v.gstPayableAccountId.trim() : "";
+  let gstReceivableAccountId = typeof v.gstReceivableAccountId === "string" ? v.gstReceivableAccountId.trim() : "";
   let sstPayableAccountId = typeof v.sstPayableAccountId === "string" ? v.sstPayableAccountId.trim() : "";
+  let sstReceivableAccountId = typeof v.sstReceivableAccountId === "string" ? v.sstReceivableAccountId.trim() : "";
 
   if (gstEnabled) {
     const ok = await accountNameMatches(sql, orgId, gstPayableAccountId, /^\s*GST\s+payable\b/i);
     if (!ok) {
-      gstPayableAccountId = await ensurePayableAccount(sql, orgId, "GST payable", 2100);
+      gstPayableAccountId = await ensureTaxAccount(sql, orgId, "GST payable", 2100, "liability", "credit");
+    }
+    const okRecv = await accountNameMatches(sql, orgId, gstReceivableAccountId, /^\s*GST\s+receivable\b/i);
+    if (!okRecv) {
+      gstReceivableAccountId = await ensureTaxAccount(sql, orgId, "GST receivable", 1230, "asset", "debit");
     }
   } else {
     gstPayableAccountId = "";
+    gstReceivableAccountId = "";
   }
 
   if (sstEnabled) {
     const ok = await accountNameMatches(sql, orgId, sstPayableAccountId, /^\s*SST\s+payable\b/i);
     if (!ok) {
-      sstPayableAccountId = await ensurePayableAccount(sql, orgId, "SST payable", 2110);
+      sstPayableAccountId = await ensureTaxAccount(sql, orgId, "SST payable", 2110, "liability", "credit");
+    }
+    const okRecv = await accountNameMatches(sql, orgId, sstReceivableAccountId, /^\s*SST\s+receivable\b/i);
+    if (!okRecv) {
+      sstReceivableAccountId = await ensureTaxAccount(sql, orgId, "SST receivable", 1235, "asset", "debit");
     }
   } else {
     sstPayableAccountId = "";
+    sstReceivableAccountId = "";
   }
 
   await sql`
@@ -317,9 +366,11 @@ router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
       gst_enabled,
       gst_rate,
       gst_payable_account_id,
+      gst_receivable_account_id,
       sst_enabled,
       sst_rate,
       sst_payable_account_id,
+      sst_receivable_account_id,
       updated_at
     )
     VALUES (
@@ -327,9 +378,11 @@ router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
       ${gstEnabled},
       ${gstRate},
       ${gstPayableAccountId || null},
+      ${gstReceivableAccountId || null},
       ${sstEnabled},
       ${sstRate},
       ${sstPayableAccountId || null},
+      ${sstReceivableAccountId || null},
       now()
     )
     ON CONFLICT (org_id)
@@ -337,9 +390,11 @@ router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
       gst_enabled = EXCLUDED.gst_enabled,
       gst_rate = EXCLUDED.gst_rate,
       gst_payable_account_id = EXCLUDED.gst_payable_account_id,
+      gst_receivable_account_id = EXCLUDED.gst_receivable_account_id,
       sst_enabled = EXCLUDED.sst_enabled,
       sst_rate = EXCLUDED.sst_rate,
       sst_payable_account_id = EXCLUDED.sst_payable_account_id,
+      sst_receivable_account_id = EXCLUDED.sst_receivable_account_id,
       updated_at = now()
   `;
 
