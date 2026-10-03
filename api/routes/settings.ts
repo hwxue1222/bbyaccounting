@@ -22,7 +22,7 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
   }
   const limit = q.data.limit ?? 50;
 
-  const [accounts, costCenters, currencies, fxRates, bankAccounts] = await Promise.all([
+  const [accounts, costCenters, currencies, fxRates, bankAccounts, taxRows] = await Promise.all([
     sql`
       SELECT
         a.id,
@@ -82,9 +82,33 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
       WHERE org_id = ${orgId}
       ORDER BY bank_name ASC, account_no ASC
     `,
+    sql`
+      SELECT
+        gst_enabled as "gstEnabled",
+        gst_rate as "gstRate",
+        gst_payable_account_id as "gstPayableAccountId",
+        sst_enabled as "sstEnabled",
+        sst_rate as "sstRate",
+        sst_payable_account_id as "sstPayableAccountId",
+        updated_at as "updatedAt"
+      FROM tax_settings
+      WHERE org_id = ${orgId}
+      LIMIT 1
+    `,
   ]);
 
-  res.status(200).json({ success: true, data: { accounts, costCenters, currencies, fxRates, bankAccounts } });
+  const taxRow = (taxRows as any[])?.[0] as any;
+  const tax = {
+    gstEnabled: Boolean(taxRow?.gstEnabled ?? false),
+    gstRate: Number(taxRow?.gstRate ?? 0) || 0,
+    gstPayableAccountId: taxRow?.gstPayableAccountId ? String(taxRow.gstPayableAccountId) : "",
+    sstEnabled: Boolean(taxRow?.sstEnabled ?? false),
+    sstRate: Number(taxRow?.sstRate ?? 0) || 0,
+    sstPayableAccountId: taxRow?.sstPayableAccountId ? String(taxRow.sstPayableAccountId) : "",
+    updatedAt: taxRow?.updatedAt ? String(taxRow.updatedAt) : null,
+  };
+
+  res.status(200).json({ success: true, data: { accounts, costCenters, currencies, fxRates, bankAccounts, tax } });
 });
 
 router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) => {
@@ -122,6 +146,103 @@ router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) =
     ORDER BY a.code ASC
   `;
   res.status(200).json({ success: true, data: { accounts: rows } });
+});
+
+router.get("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+
+  const rows = await sql`
+    SELECT
+      gst_enabled as "gstEnabled",
+      gst_rate as "gstRate",
+      gst_payable_account_id as "gstPayableAccountId",
+      sst_enabled as "sstEnabled",
+      sst_rate as "sstRate",
+      sst_payable_account_id as "sstPayableAccountId",
+      updated_at as "updatedAt"
+    FROM tax_settings
+    WHERE org_id = ${orgId}
+    LIMIT 1
+  `;
+
+  const row = rows[0] as any;
+  const out = {
+    gstEnabled: Boolean(row?.gstEnabled ?? false),
+    gstRate: Number(row?.gstRate ?? 0) || 0,
+    gstPayableAccountId: row?.gstPayableAccountId ? String(row.gstPayableAccountId) : "",
+    sstEnabled: Boolean(row?.sstEnabled ?? false),
+    sstRate: Number(row?.sstRate ?? 0) || 0,
+    sstPayableAccountId: row?.sstPayableAccountId ? String(row.sstPayableAccountId) : "",
+    updatedAt: row?.updatedAt ? String(row.updatedAt) : null,
+  };
+  res.status(200).json({ success: true, data: { tax: out } });
+});
+
+router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+  const sql = getSql();
+
+  const bodySchema = z.object({
+    gstEnabled: z.boolean().optional(),
+    gstRate: z.number().min(0).max(100).optional(),
+    gstPayableAccountId: z.string().uuid().optional().or(z.literal("")),
+    sstEnabled: z.boolean().optional(),
+    sstRate: z.number().min(0).max(100).optional(),
+    sstPayableAccountId: z.string().uuid().optional().or(z.literal("")),
+  });
+
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const v = parsed.data;
+  const gstEnabled = v.gstEnabled ?? false;
+  const sstEnabled = v.sstEnabled ?? false;
+  const gstRate = typeof v.gstRate === "number" ? v.gstRate : 0;
+  const sstRate = typeof v.sstRate === "number" ? v.sstRate : 0;
+  const gstPayableAccountId = typeof v.gstPayableAccountId === "string" ? v.gstPayableAccountId.trim() : "";
+  const sstPayableAccountId = typeof v.sstPayableAccountId === "string" ? v.sstPayableAccountId.trim() : "";
+
+  await sql`
+    INSERT INTO tax_settings (
+      org_id,
+      gst_enabled,
+      gst_rate,
+      gst_payable_account_id,
+      sst_enabled,
+      sst_rate,
+      sst_payable_account_id,
+      updated_at
+    )
+    VALUES (
+      ${orgId},
+      ${gstEnabled},
+      ${gstRate},
+      ${gstPayableAccountId || null},
+      ${sstEnabled},
+      ${sstRate},
+      ${sstPayableAccountId || null},
+      now()
+    )
+    ON CONFLICT (org_id)
+    DO UPDATE SET
+      gst_enabled = EXCLUDED.gst_enabled,
+      gst_rate = EXCLUDED.gst_rate,
+      gst_payable_account_id = EXCLUDED.gst_payable_account_id,
+      sst_enabled = EXCLUDED.sst_enabled,
+      sst_rate = EXCLUDED.sst_rate,
+      sst_payable_account_id = EXCLUDED.sst_payable_account_id,
+      updated_at = now()
+  `;
+
+  res.status(200).json({ success: true, data: { ok: true } });
 });
 
 router.post("/accounts", requireAuth, async (req: AuthedRequest, res: Response) => {

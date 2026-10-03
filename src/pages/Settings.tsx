@@ -23,16 +23,35 @@ type Currency = { id: string; code: string; isEnabled: boolean };
 type FxRate = { id: string; rateDate: string; currencyCode: string; fxRate: number };
 type BankAccount = { id: string; bankName: string; accountNo: string; accountId: string; isActive: boolean };
 
+type TaxSettings = {
+  gstEnabled: boolean;
+  gstRate: number;
+  gstPayableAccountId: string;
+  sstEnabled: boolean;
+  sstRate: number;
+  sstPayableAccountId: string;
+  updatedAt: string | null;
+};
+
 export default function Settings() {
   const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg, deleteOrg } = useAuthStore();
   const tr = useTr();
   const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
-  const [rightTab, setRightTab] = useState<"accounts" | "bankAccounts" | "costCenters" | "currencies" | "fxRates">("accounts");
+  const [rightTab, setRightTab] = useState<"accounts" | "bankAccounts" | "costCenters" | "currencies" | "fxRates" | "tax">("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [fxRates, setFxRates] = useState<FxRate[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [tax, setTax] = useState<TaxSettings>({
+    gstEnabled: false,
+    gstRate: 0,
+    gstPayableAccountId: "",
+    sstEnabled: false,
+    sstRate: 0,
+    sstPayableAccountId: "",
+    updatedAt: null,
+  });
   const [err, setErr] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("viewer");
@@ -105,7 +124,7 @@ export default function Settings() {
   }, [active?.baseCurrency]);
 
   async function refresh() {
-    const r = await api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[] }>(
+    const r = await api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[]; tax: TaxSettings }>(
       "/api/settings/bootstrap?limit=50",
     );
     setAccounts(r.accounts as any);
@@ -113,6 +132,30 @@ export default function Settings() {
     setCurrencies(r.currencies as any);
     setFxRates(r.fxRates as any);
     setBankAccounts(r.bankAccounts as any);
+    setTax(r.tax as any);
+  }
+
+  async function saveTaxSettings() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api("/api/settings/tax", {
+        method: "PUT",
+        json: {
+          gstEnabled: tax.gstEnabled,
+          gstRate: Number(tax.gstRate) || 0,
+          gstPayableAccountId: tax.gstPayableAccountId || "",
+          sstEnabled: tax.sstEnabled,
+          sstRate: Number(tax.sstRate) || 0,
+          sstPayableAccountId: tax.sstPayableAccountId || "",
+        },
+      });
+      await refresh();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -306,7 +349,7 @@ export default function Settings() {
 
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
-            <div className="grid grid-cols-5 gap-1">
+            <div className="grid grid-cols-6 gap-1">
               <button
                 className={
                   rightTab === "accounts"
@@ -361,6 +404,17 @@ export default function Settings() {
                 onClick={() => setRightTab("fxRates")}
               >
                 汇率
+              </button>
+              <button
+                className={
+                  rightTab === "tax"
+                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
+                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                }
+                type="button"
+                onClick={() => setRightTab("tax")}
+              >
+                税务
               </button>
             </div>
           </div>
@@ -1112,6 +1166,128 @@ export default function Settings() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (rightTab === "tax" ? "" : "hidden")}>
+            <div className="text-sm font-semibold">GST / SST</div>
+
+            <div className="mt-3 grid gap-4">
+              <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={tax.gstEnabled}
+                      disabled={!(activeRole === "admin")}
+                      onChange={(e) => setTax((prev) => ({ ...prev, gstEnabled: e.target.checked }))}
+                    />
+                    GST
+                  </label>
+                  <div className="text-xs text-zinc-500">输出税科目用于自动生成税分录与报表汇总</div>
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div>
+                    <label className="text-xs text-zinc-600">税率（%）</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={100}
+                      value={tax.gstRate}
+                      disabled={!(activeRole === "admin")}
+                      onChange={(e) => setTax((prev) => ({ ...prev, gstRate: Number(e.target.value) || 0 }))}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">GST Payable 科目</label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                      value={tax.gstPayableAccountId}
+                      disabled={!(activeRole === "admin")}
+                      onChange={(e) => setTax((prev) => ({ ...prev, gstPayableAccountId: e.target.value }))}
+                    >
+                      <option value="">请选择</option>
+                      {accounts
+                        .filter((a) => ((a as any).isActive ?? true) || a.id === tax.gstPayableAccountId)
+                        .slice()
+                        .sort((a, b) => String(a.code).localeCompare(String(b.code)))
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code} {a.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={tax.sstEnabled}
+                      disabled={!(activeRole === "admin")}
+                      onChange={(e) => setTax((prev) => ({ ...prev, sstEnabled: e.target.checked }))}
+                    />
+                    SST
+                  </label>
+                  <div className="text-xs text-zinc-500">输出税科目用于自动生成税分录与报表汇总</div>
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div>
+                    <label className="text-xs text-zinc-600">税率（%）</label>
+                    <input
+                      className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={100}
+                      value={tax.sstRate}
+                      disabled={!(activeRole === "admin")}
+                      onChange={(e) => setTax((prev) => ({ ...prev, sstRate: Number(e.target.value) || 0 }))}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">SST Payable 科目</label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                      value={tax.sstPayableAccountId}
+                      disabled={!(activeRole === "admin")}
+                      onChange={(e) => setTax((prev) => ({ ...prev, sstPayableAccountId: e.target.value }))}
+                    >
+                      <option value="">请选择</option>
+                      {accounts
+                        .filter((a) => ((a as any).isActive ?? true) || a.id === tax.sstPayableAccountId)
+                        .slice()
+                        .sort((a, b) => String(a.code).localeCompare(String(b.code)))
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code} {a.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-zinc-500">{tax.updatedAt ? `最后更新：${tax.updatedAt}` : ""}</div>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={busy || !(activeRole === "admin")}
+                  onClick={saveTaxSettings}
+                  type="button"
+                >
+                  保存
+                </button>
+              </div>
+
+              {!(activeRole === "admin") ? <div className="text-xs text-zinc-500">仅 admin 可修改税务设置</div> : null}
             </div>
           </div>
         </div>

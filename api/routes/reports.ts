@@ -1234,4 +1234,131 @@ router.get("/ar-aging", requireAuth, async (req: AuthedRequest, res: Response) =
   res.status(200).json({ success: true, data: { asOf, rows } });
 });
 
+router.get("/tax/gst-form5", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const q = z
+    .object({ start: z.string().min(10), end: z.string().min(10) })
+    .safeParse({ start: req.query.start, end: req.query.end });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Missing start/end" });
+    return;
+  }
+
+  const sql = getSql();
+
+  const settingsRows = await sql`
+    SELECT gst_enabled as "gstEnabled", gst_rate as "gstRate", gst_payable_account_id as "gstPayableAccountId"
+    FROM tax_settings
+    WHERE org_id = ${orgId}
+    LIMIT 1
+  `;
+
+  const s: any = settingsRows[0] || null;
+  const gstEnabled = Boolean(s?.gstEnabled ?? false);
+  const gstRate = Number(s?.gstRate ?? 0) || 0;
+  const gstPayableAccountId = s?.gstPayableAccountId ? String(s.gstPayableAccountId) : "";
+
+  if (!gstEnabled || !gstPayableAccountId || !(gstRate > 0)) {
+    res.status(200).json({ success: true, data: { start: q.data.start, end: q.data.end, enabled: false, rows: [] } });
+    return;
+  }
+
+  const start = q.data.start;
+  const end = q.data.end;
+
+  const outRows = await sql`
+    SELECT
+      COALESCE(SUM(l.credit_base - l.debit_base), 0) as "netTaxBase"
+    FROM journal_lines l
+    JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = l.org_id
+    WHERE l.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date >= ${start}::date
+      AND e.entry_date <= ${end}::date
+      AND l.account_id = ${gstPayableAccountId}::uuid
+  `;
+
+  const netTaxBase = Number((outRows[0] as any)?.netTaxBase ?? 0) || 0;
+  const outputTax = Math.round(Math.max(0, netTaxBase) * 100) / 100;
+  const inputTax = Math.round(Math.max(0, -netTaxBase) * 100) / 100;
+
+  const rateFrac = gstRate / 100;
+  const standardRatedSales = rateFrac > 0 ? Math.round((outputTax / rateFrac) * 100) / 100 : 0;
+  const standardRatedPurchases = rateFrac > 0 ? Math.round((inputTax / rateFrac) * 100) / 100 : 0;
+  const netGstPayable = Math.round((outputTax - inputTax) * 100) / 100;
+
+  const rows = [
+    { code: "S1", label: "Standard-rated supplies (Sales)", amount: standardRatedSales },
+    { code: "S2", label: "Output tax", amount: outputTax },
+    { code: "P1", label: "Standard-rated purchases", amount: standardRatedPurchases },
+    { code: "P2", label: "Input tax", amount: inputTax },
+    { code: "N", label: "Net GST payable / (claimable)", amount: netGstPayable },
+  ];
+
+  res.status(200).json({ success: true, data: { start, end, enabled: true, gstRate, rows } });
+});
+
+router.get("/tax/sst-summary", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const q = z
+    .object({ start: z.string().min(10), end: z.string().min(10) })
+    .safeParse({ start: req.query.start, end: req.query.end });
+  if (!q.success) {
+    res.status(400).json({ success: false, error: "Missing start/end" });
+    return;
+  }
+
+  const sql = getSql();
+
+  const settingsRows = await sql`
+    SELECT sst_enabled as "sstEnabled", sst_rate as "sstRate", sst_payable_account_id as "sstPayableAccountId"
+    FROM tax_settings
+    WHERE org_id = ${orgId}
+    LIMIT 1
+  `;
+
+  const s: any = settingsRows[0] || null;
+  const sstEnabled = Boolean(s?.sstEnabled ?? false);
+  const sstRate = Number(s?.sstRate ?? 0) || 0;
+  const sstPayableAccountId = s?.sstPayableAccountId ? String(s.sstPayableAccountId) : "";
+
+  if (!sstEnabled || !sstPayableAccountId || !(sstRate > 0)) {
+    res.status(200).json({ success: true, data: { start: q.data.start, end: q.data.end, enabled: false, rows: [] } });
+    return;
+  }
+
+  const start = q.data.start;
+  const end = q.data.end;
+
+  const outRows = await sql`
+    SELECT
+      COALESCE(SUM(l.credit_base - l.debit_base), 0) as "netTaxBase"
+    FROM journal_lines l
+    JOIN journal_entries e ON e.id = l.entry_id AND e.org_id = l.org_id
+    WHERE l.org_id = ${orgId}
+      AND e.status = 'posted'
+      AND e.entry_date >= ${start}::date
+      AND e.entry_date <= ${end}::date
+      AND l.account_id = ${sstPayableAccountId}::uuid
+  `;
+
+  const netTaxBase = Number((outRows[0] as any)?.netTaxBase ?? 0) || 0;
+  const taxPayable = Math.round(Math.max(0, netTaxBase) * 100) / 100;
+  const rateFrac = sstRate / 100;
+  const taxableSales = rateFrac > 0 ? Math.round((taxPayable / rateFrac) * 100) / 100 : 0;
+
+  const rows = [
+    { code: "SST1", label: "Taxable sales", amount: taxableSales },
+    { code: "SST2", label: "SST payable", amount: taxPayable },
+  ];
+
+  res.status(200).json({ success: true, data: { start, end, enabled: true, sstRate, rows } });
+});
+
 export default router;

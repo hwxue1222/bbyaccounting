@@ -414,9 +414,20 @@ export default function Journal() {
   const [invEditingDetails, setInvEditingDetails] = useState<Array<{ rowId: string; itemId: string; qty: string; unitCostTxn: string }>>([]);
   const [invQuoteByRow, setInvQuoteByRow] = useState<Record<string, { base: number | null; err: string | null }>>({});
   const [draftLines, setDraftLines] = useState(() => [
-    { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
-    { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
+    { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "", isTaxLine: false, taxKind: "" as "" | "gst" | "sst" },
+    { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "", isTaxLine: false, taxKind: "" as "" | "gst" | "sst" },
   ]);
+
+  const [taxSettings, setTaxSettings] = useState<{
+    gstEnabled: boolean;
+    gstRate: number;
+    gstPayableAccountId: string;
+    sstEnabled: boolean;
+    sstRate: number;
+    sstPayableAccountId: string;
+  }>({ gstEnabled: false, gstRate: 0, gstPayableAccountId: "", sstEnabled: false, sstRate: 0, sstPayableAccountId: "" });
+  const [draftTaxMode, setDraftTaxMode] = useState<"none" | "gst" | "sst">("none");
+  const [draftTaxErr, setDraftTaxErr] = useState<string | null>(null);
 
   const [fixedAssetIdByLineIdx, setFixedAssetIdByLineIdx] = useState<Record<number, string>>({});
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
@@ -560,21 +571,34 @@ export default function Journal() {
     return Math.round((debit - credit) * 100) / 100;
   }, [draftLines]);
 
+  const autoDebitIdx = useMemo(() => {
+    if (draftTaxMode === "none") return null;
+    const base = draftLines.filter((l: any) => !Boolean(l.isTaxLine));
+    const idxs = base
+      .map((l: any, idx: number) => ({ idx, debit: Math.max(0, Number(l.debitTxn) || 0) }))
+      .filter((x) => x.debit > 0.0001)
+      .map((x) => x.idx);
+    return idxs.length === 1 ? idxs[0] : null;
+  }, [draftLines, draftTaxMode]);
+
   const costCenterLabelById = useMemo(() => {
     return new Map(costCenters.map((c) => [String(c.id), `${c.code} ${c.name}`.trim()]));
   }, [costCenters]);
 
+  function blankDraftLine() {
+    return { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "", isTaxLine: false, taxKind: "" as "" | "gst" | "sst" };
+  }
+
   function resetDraftEntry() {
-    setDraftLines([
-      { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
-      { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" },
-    ]);
+    setDraftLines([blankDraftLine(), blankDraftLine()]);
     setFixedAssetIdByLineIdx({});
     setDraftMemo("");
     setDraftVoucherNo("");
     setVoucherTouched(false);
     setEditingEntryId(null);
     setPostDraftId(null);
+    setDraftTaxMode("none");
+    setDraftTaxErr(null);
     setInvDetails([]);
     setInvConfirmed(null);
     setInvLineIdx(null);
@@ -743,8 +767,8 @@ export default function Journal() {
   }
 
   async function refreshCore(signal?: AbortSignal) {
-    const [{ accounts, costCenters, currencies, bankAccounts }, { entries }] = await Promise.all([
-      api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[] }>("/api/settings/bootstrap?limit=50", {
+    const [{ accounts, costCenters, currencies, bankAccounts, tax }, { entries }] = await Promise.all([
+      api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[]; tax: any }>("/api/settings/bootstrap?limit=50", {
         signal,
         cache: "no-store",
       }),
@@ -754,6 +778,16 @@ export default function Journal() {
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setBankAccounts(bankAccounts as any);
+    if (tax) {
+      setTaxSettings({
+        gstEnabled: Boolean((tax as any).gstEnabled ?? false),
+        gstRate: Number((tax as any).gstRate ?? 0) || 0,
+        gstPayableAccountId: String((tax as any).gstPayableAccountId || ""),
+        sstEnabled: Boolean((tax as any).sstEnabled ?? false),
+        sstRate: Number((tax as any).sstRate ?? 0) || 0,
+        sstPayableAccountId: String((tax as any).sstPayableAccountId || ""),
+      });
+    }
     setEntries(entries as any);
     void refreshNextVoucherNo(undefined, signal);
 
@@ -805,6 +839,104 @@ export default function Journal() {
     if (!cached) return false;
     return Date.now() - cached.ts <= 60_000;
   }
+
+  function round2(n: number): number {
+    return Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+  }
+
+  function parseAmt(v: string): number {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function linesEqual(a: any[], b: any[]): boolean {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      const y = b[i];
+      if (
+        String(x.accountId || "") !== String(y.accountId || "") ||
+        String(x.description || "") !== String(y.description || "") ||
+        String(x.costCenterId || "") !== String(y.costCenterId || "") ||
+        String(x.debitTxn || "") !== String(y.debitTxn || "") ||
+        String(x.creditTxn || "") !== String(y.creditTxn || "") ||
+        Boolean(x.isTaxLine) !== Boolean(y.isTaxLine) ||
+        String(x.taxKind || "") !== String(y.taxKind || "")
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function recomputeEntryTax(
+    inLines: any[],
+    mode: "none" | "gst" | "sst",
+  ): { lines: any[]; err: string | null } {
+    const base = (Array.isArray(inLines) ? inLines : []).filter((l) => !Boolean((l as any).isTaxLine));
+    if (mode === "none") {
+      return { lines: base.map((l) => ({ ...l, isTaxLine: false, taxKind: "" })), err: null };
+    }
+
+    const cfg =
+      mode === "gst"
+        ? { enabled: taxSettings.gstEnabled, rate: taxSettings.gstRate, payableAccountId: taxSettings.gstPayableAccountId }
+        : { enabled: taxSettings.sstEnabled, rate: taxSettings.sstRate, payableAccountId: taxSettings.sstPayableAccountId };
+
+    if (!cfg.enabled) {
+      return { lines: base, err: `${mode.toUpperCase()} 未启用，请先在设置里开启` };
+    }
+    if (!(Number(cfg.rate) > 0)) {
+      return { lines: base, err: `${mode.toUpperCase()} 税率未设置` };
+    }
+    if (!cfg.payableAccountId) {
+      return { lines: base, err: `${mode.toUpperCase()} Payable 科目未设置` };
+    }
+
+    const creditSum = base.reduce((acc, l) => acc + Math.max(0, parseAmt(String((l as any).creditTxn || ""))), 0);
+    if (!(creditSum > 0)) {
+      return { lines: base, err: `${mode.toUpperCase()} 需至少一条贷方金额` };
+    }
+
+    const debitIdxs = base
+      .map((l, idx) => ({ idx, debit: Math.max(0, parseAmt(String((l as any).debitTxn || ""))) }))
+      .filter((x) => x.debit > 0.0001)
+      .map((x) => x.idx);
+
+    if (debitIdxs.length !== 1) {
+      return { lines: base, err: `${mode.toUpperCase()} 自动生成需要且仅需要 1 条借方行（用于自动回填总额）` };
+    }
+
+    const rateFrac = Number(cfg.rate) / 100;
+    const taxAmt = round2(creditSum * rateFrac);
+    const debitIdx = debitIdxs[0];
+
+    const next = base.map((l, idx) => {
+      if (idx !== debitIdx) return { ...l, isTaxLine: false, taxKind: "" };
+      return { ...l, debitTxn: round2(creditSum + taxAmt).toFixed(2), isTaxLine: false, taxKind: "" };
+    });
+
+    next.push({
+      accountId: cfg.payableAccountId,
+      description: `${mode.toUpperCase()} ${Number(cfg.rate).toFixed(2)}%`,
+      costCenterId: "",
+      debitTxn: "",
+      creditTxn: taxAmt > 0 ? taxAmt.toFixed(2) : "",
+      isTaxLine: true,
+      taxKind: mode,
+    });
+
+    return { lines: next, err: null };
+  }
+
+  useEffect(() => {
+    const { lines: next, err } = recomputeEntryTax(draftLines as any[], draftTaxMode);
+    setDraftTaxErr(err);
+    if (!linesEqual(draftLines as any[], next)) {
+      setDraftLines(next as any);
+    }
+  }, [draftLines, draftTaxMode, taxSettings.gstEnabled, taxSettings.gstRate, taxSettings.gstPayableAccountId, taxSettings.sstEnabled, taxSettings.sstRate, taxSettings.sstPayableAccountId]);
 
   async function fetchDetailCore(entryId: string, opts?: { signal?: AbortSignal; force?: boolean }): Promise<EntryDetail> {
     const key = detailCacheKey(entryId);
@@ -871,12 +1003,17 @@ export default function Journal() {
       const nextLines = d.lines.map((l) => {
         const debit = Number(l.debitTxn) || 0;
         const credit = Number(l.creditTxn) || 0;
+        const desc = l.description ? String(l.description) : "";
+        const kind = /^GST\b/i.test(desc) ? "gst" : /^SST\b/i.test(desc) ? "sst" : "";
+        const isTaxLine = kind ? true : false;
         return {
           accountId: l.accountId,
-          description: l.description || "",
+          description: desc,
           costCenterId: l.costCenterId || "",
           debitTxn: debit > 0 ? debit.toFixed(2) : "",
           creditTxn: credit > 0 ? credit.toFixed(2) : "",
+          isTaxLine,
+          taxKind: kind as any,
         };
       });
       setDraftLines(nextLines);
@@ -984,12 +1121,17 @@ export default function Journal() {
         d.lines.map((l) => {
           const debit = Number(l.debitTxn) || 0;
           const credit = Number(l.creditTxn) || 0;
+          const desc = l.description ? String(l.description) : "";
+          const kind = /^GST\b/i.test(desc) ? "gst" : /^SST\b/i.test(desc) ? "sst" : "";
+          const isTaxLine = kind ? true : false;
           return {
             accountId: l.accountId,
-            description: l.description || "",
+            description: desc,
             costCenterId: l.costCenterId || "",
             debitTxn: debit > 0 ? debit.toFixed(2) : "",
             creditTxn: credit > 0 ? credit.toFixed(2) : "",
+            isTaxLine,
+            taxKind: kind as any,
           };
         }),
       );
@@ -1160,12 +1302,17 @@ export default function Journal() {
       (s.draft.lines || []).map((l) => {
         const debit = Number(l.debitTxn) || 0;
         const credit = Number(l.creditTxn) || 0;
+        const desc = l.description ? String(l.description) : "";
+        const kind = /^GST\b/i.test(desc) ? "gst" : /^SST\b/i.test(desc) ? "sst" : "";
+        const isTaxLine = kind ? true : false;
         return {
           accountId: String(l.accountId || ""),
-          description: l.description ? String(l.description) : "",
+          description: desc,
           costCenterId: l.costCenterId ? String(l.costCenterId) : "",
           debitTxn: debit > 0 ? debit.toFixed(2) : "",
           creditTxn: credit > 0 ? credit.toFixed(2) : "",
+          isTaxLine,
+          taxKind: kind as any,
         };
       }),
     );
@@ -2462,6 +2609,28 @@ export default function Journal() {
             Recurring
           </label>
 
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-zinc-800">
+              <input
+                type="checkbox"
+                checked={draftTaxMode === "gst"}
+                onChange={(e) => setDraftTaxMode(e.target.checked ? "gst" : "none")}
+                disabled={readOnly}
+              />
+              GST {Number(taxSettings.gstRate || 0).toFixed(2)}%
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-800">
+              <input
+                type="checkbox"
+                checked={draftTaxMode === "sst"}
+                onChange={(e) => setDraftTaxMode(e.target.checked ? "sst" : "none")}
+                disabled={readOnly}
+              />
+              SST {Number(taxSettings.sstRate || 0).toFixed(2)}%
+            </label>
+            {draftTaxErr ? <div className="text-xs text-amber-700">{draftTaxErr}</div> : null}
+          </div>
+
           {recurringEnabled ? (
             <>
               <div className="w-full sm:w-56">
@@ -2530,13 +2699,14 @@ export default function Journal() {
             </thead>
             <tbody>
               {draftLines.map((l, idx) => (
-                <tr key={idx} className="border-t border-zinc-100">
+                <tr key={idx} className={"border-t border-zinc-100 " + ((l as any).isTaxLine ? "bg-zinc-50" : "")}
+                >
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
                       <select
                         className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
                         value={l.accountId}
-                        disabled={readOnly}
+                        disabled={readOnly || Boolean((l as any).isTaxLine)}
                         onChange={(e) => {
                           const nextId = e.target.value;
                           if (nextId === "__new_account__") {
@@ -2569,7 +2739,7 @@ export default function Journal() {
                         next[idx] = { ...l, description: e.target.value };
                         setDraftLines(next);
                       }}
-                      disabled={readOnly}
+                      disabled={readOnly || Boolean((l as any).isTaxLine)}
                     />
                   </td>
                   <td className="px-3 py-2">
@@ -2581,7 +2751,7 @@ export default function Journal() {
                         next[idx] = { ...l, costCenterId: e.target.value };
                         setDraftLines(next);
                       }}
-                      disabled={readOnly}
+                      disabled={readOnly || Boolean((l as any).isTaxLine)}
                     >
                       <option value="">{tr("(无)", "(None)")}</option>
                       {costCenters.map((c) => (
@@ -2603,7 +2773,7 @@ export default function Journal() {
                         }}
                         type="number"
                         step="0.01"
-                        disabled={readOnly}
+                        disabled={readOnly || Boolean((l as any).isTaxLine) || (draftTaxMode !== "none" && autoDebitIdx === idx)}
                       />
                       {(() => {
                         const acc = accounts.find((a) => a.id === l.accountId);
@@ -2688,7 +2858,7 @@ export default function Journal() {
                         }}
                         type="number"
                         step="0.01"
-                        disabled={readOnly}
+                        disabled={readOnly || Boolean((l as any).isTaxLine)}
                       />
                       {(() => {
                         const acc = accounts.find((a) => a.id === l.accountId);
@@ -2779,7 +2949,7 @@ export default function Journal() {
           <div className="flex items-center gap-2">
             <button
               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-              onClick={() => setDraftLines([...draftLines, { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" }])}
+              onClick={() => setDraftLines([...draftLines, blankDraftLine()])}
               disabled={busy || readOnly}
               type="button"
             >
@@ -4564,7 +4734,7 @@ export default function Journal() {
                         }
                         if (creditIdx < 0) {
                           creditIdx = next.length;
-                          next.push({ accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" });
+                          next.push(blankDraftLine());
                         }
 
                         const creditLine = next[creditIdx];
@@ -4715,7 +4885,7 @@ export default function Journal() {
                     }
                     if (creditIdx < 0) {
                       creditIdx = next.length;
-                      next.push({ accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "" });
+                      next.push(blankDraftLine());
                     }
                     const creditLine = next[creditIdx];
                     next[creditIdx] = {

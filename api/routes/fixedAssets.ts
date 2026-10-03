@@ -411,11 +411,10 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
   }
   const sql = getSql();
   const period = parsed.data.period;
-  const runExisting = await sql`SELECT id FROM depreciation_runs WHERE org_id = ${orgId} AND period = ${period} LIMIT 1`;
-  if (runExisting.length) {
-    res.status(409).json({ success: false, error: "Depreciation already generated for this period" });
-    return;
-  }
+  const postedSourceRaw = String(req.header("x-posted-source") || "")
+    .trim()
+    .toLowerCase();
+  const postedSource = postedSourceRaw === "bot" ? "bot" : "user";
 
   const assets = await sql`
     SELECT
@@ -436,25 +435,31 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
     const orgRow = (await trx`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`)[0] as any;
     const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
 
-    const voucherNo = await issueVoucherNo(trx, orgId);
+    const existingRun = (await trx`SELECT id FROM depreciation_runs WHERE org_id = ${orgId} AND period = ${period} LIMIT 1`)[0] as any;
+    const run = existingRun
+      ? existingRun
+      : (
+          await trx`
+            INSERT INTO depreciation_runs (org_id, period, created_by)
+            VALUES (${orgId}, ${period}, ${req.auth!.userId})
+            RETURNING id
+          `
+        )[0] as any;
 
-    const run = (
-      await trx`
-        INSERT INTO depreciation_runs (org_id, period, created_by)
-        VALUES (${orgId}, ${period}, ${req.auth!.userId})
-        RETURNING id
-      `
-    )[0] as any;
+    const existingEntry = (await trx`SELECT entry_id as "entryId" FROM depreciation_lines WHERE org_id = ${orgId} AND run_id = ${run.id} LIMIT 1`)[0] as any;
+    const entry = existingEntry?.entryId
+      ? ({ id: existingEntry.entryId } as any)
+      : (
+          await trx`
+            INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+            VALUES (${orgId}, ${period + '-01'}, 'posted', ${postedSource}, ${await issueVoucherNo(trx, orgId)}, NULL, false, ${baseCurrency}, 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, false, now())
+            RETURNING id
+          `
+        )[0] as any;
 
-    const entry = (
-      await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
-        VALUES (${orgId}, ${period + '-01'}, 'posted', ${voucherNo}, NULL, false, ${baseCurrency}, 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, false, now())
-        RETURNING id
-      `
-    )[0] as any;
+    const lineNoRows = await trx`SELECT COALESCE(MAX(line_no), 0) as max FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${entry.id}`;
+    let lineNo = Number((lineNoRows[0] as any)?.max || 0) + 1;
 
-    let lineNo = 1;
     let createdCount = 0;
     for (const a of assets as any[]) {
       const acq = new Date(a.acquisitionDate + 'T00:00:00Z');
@@ -476,6 +481,9 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
       const amount = Math.max(0, Math.min(monthly, remaining));
       if (amount <= 0) continue;
 
+      const exists = await trx`SELECT 1 FROM depreciation_lines WHERE org_id = ${orgId} AND run_id = ${run.id} AND asset_id = ${a.id} LIMIT 1`;
+      if (exists.length) continue;
+
       await trx`
         INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
         VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.depExpenseAccountId}, 'Depreciation expense', ${amount}, 0, ${amount}, 0, ${a.id})
@@ -492,7 +500,140 @@ router.post("/depreciate", requireAuth, async (req: AuthedRequest, res: Response
       createdCount += 1;
     }
 
-    return { runId: run.id, entryId: entry.id, assetCount: createdCount };
+    const v = (await trx`SELECT voucher_no as "voucherNo" FROM journal_entries WHERE org_id = ${orgId} AND id = ${entry.id} LIMIT 1`)[0] as any;
+    return { runId: run.id, entryId: entry.id, voucherNo: v?.voucherNo || null, assetCount: createdCount };
+  });
+
+  res.status(200).json({ success: true, data: created });
+});
+
+router.post("/depreciate/asset", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+  const bodySchema = z.object({ assetId: z.string().uuid(), period: z.string().regex(/^\d{4}-\d{2}$/) });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+  const sql = getSql();
+  const period = parsed.data.period;
+  const assetId = parsed.data.assetId;
+
+  const postedSourceRaw = String(req.header("x-posted-source") || "")
+    .trim()
+    .toLowerCase();
+  const postedSource = postedSourceRaw === "bot" ? "bot" : "user";
+
+  const assetRows = await sql`
+    SELECT
+      id,
+      asset_no as "assetNo",
+      name,
+      acquisition_date as "acquisitionDate",
+      cost_base as "costBase",
+      useful_life_months as "usefulLifeMonths",
+      salvage_value_base as "salvageValueBase",
+      accum_dep_account_id as "accumDepAccountId",
+      dep_expense_account_id as "depExpenseAccountId",
+      status
+    FROM fixed_assets
+    WHERE org_id = ${orgId} AND id = ${assetId}
+    LIMIT 1
+  `;
+  const a = assetRows[0] as any;
+  if (!a) {
+    res.status(404).json({ success: false, error: "Asset not found" });
+    return;
+  }
+  if (String(a.status || "") !== "active") {
+    res.status(409).json({ success: false, error: "Asset is not active" });
+    return;
+  }
+  if (!a.accumDepAccountId || !a.depExpenseAccountId) {
+    res.status(400).json({ success: false, error: "Missing fixed asset depreciation accounts" });
+    return;
+  }
+  const acq = new Date(String(a.acquisitionDate) + "T00:00:00Z");
+  if (monthKey(acq) > period) {
+    res.status(409).json({ success: false, error: "Asset not acquired in this period" });
+    return;
+  }
+
+  const depBase = Number(a.costBase) - Number(a.salvageValueBase);
+  if (depBase <= 0) {
+    res.status(409).json({ success: false, error: "No depreciable base" });
+    return;
+  }
+  const monthly = round2(depBase / Number(a.usefulLifeMonths));
+  if (monthly <= 0) {
+    res.status(409).json({ success: false, error: "Invalid useful life" });
+    return;
+  }
+
+  const already = await sql`
+    SELECT COALESCE(SUM(amount_base), 0) as total
+    FROM depreciation_lines
+    WHERE org_id = ${orgId} AND asset_id = ${assetId}
+  `;
+  const alreadyTotal = Number((already[0] as any).total);
+  const remaining = round2(depBase - alreadyTotal);
+  const amount = Math.max(0, Math.min(monthly, remaining));
+  if (amount <= 0) {
+    res.status(409).json({ success: false, error: "No remaining depreciation" });
+    return;
+  }
+
+  const created = await sql.begin(async (trx) => {
+    const orgRow = (await trx`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`)[0] as any;
+    const baseCurrency = String(orgRow?.baseCurrency || "BASE").toUpperCase();
+
+    const existingRun = (await trx`SELECT id FROM depreciation_runs WHERE org_id = ${orgId} AND period = ${period} LIMIT 1`)[0] as any;
+    const run = existingRun
+      ? existingRun
+      : (
+          await trx`
+            INSERT INTO depreciation_runs (org_id, period, created_by)
+            VALUES (${orgId}, ${period}, ${req.auth!.userId})
+            RETURNING id
+          `
+        )[0] as any;
+
+    const exists = await trx`SELECT 1 FROM depreciation_lines WHERE org_id = ${orgId} AND run_id = ${run.id} AND asset_id = ${assetId} LIMIT 1`;
+    if (exists.length) {
+      throw new Error("Already depreciated for this period")
+    }
+
+    const existingEntry = (await trx`SELECT entry_id as "entryId" FROM depreciation_lines WHERE org_id = ${orgId} AND run_id = ${run.id} LIMIT 1`)[0] as any;
+    const entry = existingEntry?.entryId
+      ? ({ id: existingEntry.entryId } as any)
+      : (
+          await trx`
+            INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, parent_entry_id, is_system, currency_code, fx_rate, memo, created_by, inventory_impact, posted_at)
+            VALUES (${orgId}, ${period + '-01'}, 'posted', ${postedSource}, ${await issueVoucherNo(trx, orgId)}, NULL, false, ${baseCurrency}, 1, ${`Depreciation ${period}`}, ${req.auth!.userId}, false, now())
+            RETURNING id
+          `
+        )[0] as any;
+
+    const lineNoRows = await trx`SELECT COALESCE(MAX(line_no), 0) as max FROM journal_lines WHERE org_id = ${orgId} AND entry_id = ${entry.id}`;
+    let lineNo = Number((lineNoRows[0] as any)?.max || 0) + 1;
+
+    await trx`
+      INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
+      VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.depExpenseAccountId}, 'Depreciation expense', ${amount}, 0, ${amount}, 0, ${assetId})
+    `;
+    await trx`
+      INSERT INTO journal_lines (org_id, entry_id, line_no, account_id, description, debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id)
+      VALUES (${orgId}, ${entry.id}, ${lineNo++}, ${a.accumDepAccountId}, 'Accumulated depreciation', 0, ${amount}, 0, ${amount}, ${assetId})
+    `;
+    await trx`
+      INSERT INTO depreciation_lines (org_id, run_id, asset_id, amount_base, entry_id)
+      VALUES (${orgId}, ${run.id}, ${assetId}, ${amount}, ${entry.id})
+    `;
+
+    const v = (await trx`SELECT voucher_no as "voucherNo" FROM journal_entries WHERE org_id = ${orgId} AND id = ${entry.id} LIMIT 1`)[0] as any;
+    return { runId: run.id, entryId: entry.id, voucherNo: v?.voucherNo || null, amountBase: amount, assetNo: a.assetNo || null, assetName: a.name };
   });
 
   res.status(200).json({ success: true, data: created });

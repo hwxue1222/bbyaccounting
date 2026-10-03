@@ -648,6 +648,11 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
   }
   const sql = getSql();
 
+  const postedSourceRaw = String(req.header("x-posted-source") || "")
+    .trim()
+    .toLowerCase();
+  const postedSource = postedSourceRaw === "bot" ? "bot" : "user";
+
   const itemRows = await sql`
     SELECT id, inventory_account_id as "inventoryAccountId"
     FROM inventory_items
@@ -677,8 +682,8 @@ router.post("/receipts", requireAuth, async (req: AuthedRequest, res: Response) 
     const voucherNo = await issueVoucherNo(trx, orgId);
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${voucherNo}, ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo || 'Inventory receipt'}, ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, currency_code, fx_rate, memo, created_by, posted_at)
+        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${postedSource}, ${voucherNo}, ${parsed.data.currency.toUpperCase()}, ${parsed.data.fxRate}, ${parsed.data.memo || 'Inventory receipt'}, ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;
@@ -748,6 +753,11 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
   }
   const sql = getSql();
 
+  const postedSourceRaw = String(req.header("x-posted-source") || "")
+    .trim()
+    .toLowerCase();
+  const postedSource = postedSourceRaw === "bot" ? "bot" : "user";
+
   const itemRows = await sql`
     SELECT id, inventory_account_id as "inventoryAccountId", cogs_account_id as "cogsAccountId"
     FROM inventory_items
@@ -808,8 +818,8 @@ router.post("/shipments", requireAuth, async (req: AuthedRequest, res: Response)
 
     const entry = (
       await trx`
-        INSERT INTO journal_entries (org_id, entry_date, status, voucher_no, currency_code, fx_rate, memo, created_by, posted_at)
-        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${voucherNo}, 'BASE', 1, ${parsed.data.memo || 'Inventory shipment (FIFO COGS)'}, ${req.auth!.userId}, now())
+        INSERT INTO journal_entries (org_id, entry_date, status, posted_source, voucher_no, currency_code, fx_rate, memo, created_by, posted_at)
+        VALUES (${orgId}, ${parsed.data.date}, 'posted', ${postedSource}, ${voucherNo}, 'BASE', 1, ${parsed.data.memo || 'Inventory shipment (FIFO COGS)'}, ${req.auth!.userId}, now())
         RETURNING id
       `
     )[0] as any;

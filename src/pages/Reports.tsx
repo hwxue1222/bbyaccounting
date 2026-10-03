@@ -14,7 +14,8 @@ export default function Reports() {
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [tab, setTab] = useState<"tb" | "pl" | "bs" | "gl">("tb");
+  const [tab, setTab] = useState<"tb" | "pl" | "bs" | "gl" | "tax">("tb");
+  const [taxKind, setTaxKind] = useState<"gst" | "sst">("gst");
   const [hideZero, setHideZero] = useState(true);
   const [start, setStart] = useState(() => {
     const d = new Date();
@@ -68,6 +69,14 @@ export default function Reports() {
       } else if (tab === "bs") {
         const r = await api<{ rows: any[] }>(`/api/reports/balance-sheet?asOf=${asOf}${ccParam}`);
         setRows(r.rows);
+      } else if (tab === "tax") {
+        if (taxKind === "gst") {
+          const r = await api<{ enabled: boolean; gstRate?: number; rows: any[] }>(`/api/reports/tax/gst-form5?start=${start}&end=${end}`);
+          setRows(r.rows);
+        } else {
+          const r = await api<{ enabled: boolean; sstRate?: number; rows: any[] }>(`/api/reports/tax/sst-summary?start=${start}&end=${end}`);
+          setRows(r.rows);
+        }
       } else {
         const accountParam = accountId ? `accountId=${encodeURIComponent(accountId)}&` : "";
         const r = await api<{ sections: any[] }>(`/api/reports/gl?${accountParam}start=${start}&end=${end}${ccParam}`);
@@ -114,6 +123,9 @@ export default function Reports() {
     if (!hideZero) return rows;
 
     if (tab === "gl") return rows;
+    if (tab === "tax") {
+      return rows.filter((r: any) => Math.round(Number(r.amount ?? 0) * 100) / 100 !== 0);
+    }
 
     if (tab === "tb") {
       return rows.filter((r) => {
@@ -190,6 +202,7 @@ export default function Reports() {
               { k: "pl", t: "Profit & Loss" },
               { k: "bs", t: "Balance Sheet" },
               { k: "gl", t: "General Ledger" },
+              { k: "tax", t: "Tax" },
             ] as const).map((x) => (
               <button
                 key={x.k}
@@ -234,6 +247,13 @@ export default function Reports() {
             </>
           )}
 
+          {tab === "tax" ? (
+            <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={taxKind} onChange={(e) => setTaxKind(e.target.value as any)}>
+              <option value="gst">GST Form 5</option>
+              <option value="sst">SST Summary</option>
+            </select>
+          ) : null}
+
           {tab === "gl" ? (
             <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
               <option value="">All Accounts</option>
@@ -245,7 +265,12 @@ export default function Reports() {
             </select>
           ) : null}
 
-          <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
+          <select
+            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+            value={costCenterId}
+            onChange={(e) => setCostCenterId(e.target.value)}
+            disabled={tab === "tax"}
+          >
             <option value="">All Cost Centers</option>
             <option value="__none__">(No Cost Center)</option>
             {costCenters.map((c) => (
@@ -267,7 +292,12 @@ export default function Reports() {
         <div className="mt-4 max-h-[560px] overflow-auto rounded-lg border border-zinc-100">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-              {tab === "gl" ? (
+              {tab === "tax" ? (
+                <tr>
+                  <th className="px-3 py-2 text-left">Item</th>
+                  <th className="px-3 py-2 text-right">Amount ({baseCurrency})</th>
+                </tr>
+              ) : tab === "gl" ? (
                 <tr>
                   <th className="px-3 py-2 text-left">科目</th>
                   <th className="px-3 py-2 text-left">日期</th>
@@ -302,7 +332,14 @@ export default function Reports() {
               )}
             </thead>
             <tbody>
-              {tab === "gl"
+              {tab === "tax" ? (
+                (displayRows as any[]).map((r, idx) => (
+                  <tr key={idx} className="border-t border-zinc-100">
+                    <td className="px-3 py-2">{String(r.label || r.code || "")}</td>
+                    <td className="px-3 py-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                  </tr>
+                ))
+              ) : tab === "gl"
                 ? glRows.map((r, idx) => {
                     if (r.kind === "section") {
                       return (

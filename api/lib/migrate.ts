@@ -23,6 +23,7 @@ export async function ensureMigrated(): Promise<void> {
   const BASE_MIGRATION_ID = "base_2026_09";
   const FX_FIX_MIGRATION_ID = "fx_rate_txn_per_base_2026_09";
   const PERF_INDEXES_MIGRATION_ID = "perf_indexes_2026_09";
+  const TAX_SETTINGS_MIGRATION_ID = "tax_settings_2026_10";
   const JOURNAL_POSTED_SOURCE_MIGRATION_ID = "journal_posted_source_2026_09";
 
   let baseApplied = false;
@@ -848,6 +849,40 @@ export async function ensureMigrated(): Promise<void> {
     try {
       await sql`INSERT INTO schema_migrations (id) VALUES (${PERF_INDEXES_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
       perfIndexesApplied = true;
+    } catch {
+      void 0;
+    }
+  }
+
+  let taxSettingsApplied = false;
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${TAX_SETTINGS_MIGRATION_ID} LIMIT 1`;
+    taxSettingsApplied = Boolean((applied as any[])?.length);
+  } catch {
+    taxSettingsApplied = false;
+  }
+
+  if (!taxSettingsApplied) {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS tax_settings (
+          org_id UUID PRIMARY KEY,
+          gst_enabled BOOLEAN NOT NULL DEFAULT false,
+          gst_rate NUMERIC(9,4) NOT NULL DEFAULT 0,
+          gst_payable_account_id UUID,
+          sst_enabled BOOLEAN NOT NULL DEFAULT false,
+          sst_rate NUMERIC(9,4) NOT NULL DEFAULT 0,
+          sst_payable_account_id UUID,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`INSERT INTO schema_migrations (id) VALUES (${TAX_SETTINGS_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      taxSettingsApplied = true;
     } catch {
       void 0;
     }
