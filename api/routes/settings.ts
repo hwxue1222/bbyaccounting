@@ -20,6 +20,57 @@ async function resolvePayableAccountId(sql: any, orgId: string, currentId: strin
   return rows.length ? String((rows[0] as any).id) : "";
 }
 
+async function accountNameMatches(sql: any, orgId: string, accountId: string, re: RegExp): Promise<boolean> {
+  const id = (accountId || "").trim();
+  if (!id) return false;
+  const rows = await sql`
+    SELECT name
+    FROM accounts
+    WHERE org_id = ${orgId} AND id = ${id}
+    LIMIT 1
+  `;
+  const name = rows.length ? String((rows[0] as any).name || "") : "";
+  return re.test(name);
+}
+
+async function ensurePayableAccount(sql: any, orgId: string, desiredName: string, codeBase: number): Promise<string> {
+  const existing = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE ${desiredName + "%"}
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  if (existing.length) return String((existing[0] as any).id);
+
+  let code = String(codeBase);
+  for (let i = 0; i < 50; i++) {
+    const check = await sql`SELECT 1 FROM accounts WHERE org_id = ${orgId} AND code = ${code} LIMIT 1`;
+    if (!check.length) break;
+    code = String(codeBase + i + 1);
+  }
+
+  const row = (
+    await sql`
+      INSERT INTO accounts (org_id, code, name, type, normal_balance, is_active, link_inventory_fifo, link_fixed_assets)
+      VALUES (${orgId}, ${code}, ${desiredName}, 'liability', 'credit', true, false, false)
+      ON CONFLICT (org_id, code) DO NOTHING
+      RETURNING id
+    `
+  )[0];
+
+  if (row?.id) return String((row as any).id);
+
+  const fallback = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE ${desiredName + "%"}
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  return fallback.length ? String((fallback[0] as any).id) : "";
+}
+
 router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrgAccess(req, res);
@@ -244,8 +295,27 @@ router.put("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
   const sstEnabled = v.sstEnabled ?? false;
   const gstRate = typeof v.gstRate === "number" ? v.gstRate : 0;
   const sstRate = typeof v.sstRate === "number" ? v.sstRate : 0;
-  const gstPayableAccountId = typeof v.gstPayableAccountId === "string" ? v.gstPayableAccountId.trim() : "";
-  const sstPayableAccountId = typeof v.sstPayableAccountId === "string" ? v.sstPayableAccountId.trim() : "";
+
+  let gstPayableAccountId = typeof v.gstPayableAccountId === "string" ? v.gstPayableAccountId.trim() : "";
+  let sstPayableAccountId = typeof v.sstPayableAccountId === "string" ? v.sstPayableAccountId.trim() : "";
+
+  if (gstEnabled) {
+    const ok = await accountNameMatches(sql, orgId, gstPayableAccountId, /^\s*GST\s+payable\b/i);
+    if (!ok) {
+      gstPayableAccountId = await ensurePayableAccount(sql, orgId, "GST payable", 2100);
+    }
+  } else {
+    gstPayableAccountId = "";
+  }
+
+  if (sstEnabled) {
+    const ok = await accountNameMatches(sql, orgId, sstPayableAccountId, /^\s*SST\s+payable\b/i);
+    if (!ok) {
+      sstPayableAccountId = await ensurePayableAccount(sql, orgId, "SST payable", 2110);
+    }
+  } else {
+    sstPayableAccountId = "";
+  }
 
   await sql`
     INSERT INTO tax_settings (
