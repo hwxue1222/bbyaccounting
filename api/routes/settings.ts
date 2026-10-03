@@ -7,6 +7,19 @@ import { requireOrgAccess } from "../lib/orgAccess.js";
 
 const router = Router();
 
+async function resolvePayableAccountId(sql: any, orgId: string, currentId: string, namePrefix: string): Promise<string> {
+  const id = (currentId || "").trim();
+  if (id) return id;
+  const rows = await sql`
+    SELECT id
+    FROM accounts
+    WHERE org_id = ${orgId} AND name ILIKE ${namePrefix + "%"}
+    ORDER BY code ASC
+    LIMIT 1
+  `;
+  return rows.length ? String((rows[0] as any).id) : "";
+}
+
 router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrgAccess(req, res);
@@ -98,13 +111,25 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
   ]);
 
   const taxRow = (taxRows as any[])?.[0] as any;
+  const gstPayableAccountId = await resolvePayableAccountId(
+    sql,
+    orgId,
+    taxRow?.gstPayableAccountId ? String(taxRow.gstPayableAccountId) : "",
+    "GST payable",
+  );
+  const sstPayableAccountId = await resolvePayableAccountId(
+    sql,
+    orgId,
+    taxRow?.sstPayableAccountId ? String(taxRow.sstPayableAccountId) : "",
+    "SST payable",
+  );
   const tax = {
     gstEnabled: Boolean(taxRow?.gstEnabled ?? false),
     gstRate: Number(taxRow?.gstRate ?? 0) || 0,
-    gstPayableAccountId: taxRow?.gstPayableAccountId ? String(taxRow.gstPayableAccountId) : "",
+    gstPayableAccountId,
     sstEnabled: Boolean(taxRow?.sstEnabled ?? false),
     sstRate: Number(taxRow?.sstRate ?? 0) || 0,
-    sstPayableAccountId: taxRow?.sstPayableAccountId ? String(taxRow.sstPayableAccountId) : "",
+    sstPayableAccountId,
     updatedAt: taxRow?.updatedAt ? String(taxRow.updatedAt) : null,
   };
 
@@ -169,13 +194,25 @@ router.get("/tax", requireAuth, async (req: AuthedRequest, res: Response) => {
   `;
 
   const row = rows[0] as any;
+  const gstPayableAccountId = await resolvePayableAccountId(
+    sql,
+    orgId,
+    row?.gstPayableAccountId ? String(row.gstPayableAccountId) : "",
+    "GST payable",
+  );
+  const sstPayableAccountId = await resolvePayableAccountId(
+    sql,
+    orgId,
+    row?.sstPayableAccountId ? String(row.sstPayableAccountId) : "",
+    "SST payable",
+  );
   const out = {
     gstEnabled: Boolean(row?.gstEnabled ?? false),
     gstRate: Number(row?.gstRate ?? 0) || 0,
-    gstPayableAccountId: row?.gstPayableAccountId ? String(row.gstPayableAccountId) : "",
+    gstPayableAccountId,
     sstEnabled: Boolean(row?.sstEnabled ?? false),
     sstRate: Number(row?.sstRate ?? 0) || 0,
-    sstPayableAccountId: row?.sstPayableAccountId ? String(row.sstPayableAccountId) : "",
+    sstPayableAccountId,
     updatedAt: row?.updatedAt ? String(row.updatedAt) : null,
   };
   res.status(200).json({ success: true, data: { tax: out } });
