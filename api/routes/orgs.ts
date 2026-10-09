@@ -96,12 +96,15 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
   const created = await sql.begin(async (trx) => {
     const org = (
       await trx`
-        INSERT INTO organizations (name, registration_no, base_currency, industry)
+        INSERT INTO organizations (name, registration_no, base_currency, industry, plan, plan_status, plan_started_at)
         VALUES (
           ${parsed.data.name.trim()},
           ${parsed.data.registrationNo || null},
           ${parsed.data.baseCurrency.toUpperCase()},
-          ${parsed.data.industry}
+          ${parsed.data.industry},
+          'basic',
+          'active',
+          now()
         )
         RETURNING id, name, registration_no as "registrationNo", base_currency as "baseCurrency", industry
       `

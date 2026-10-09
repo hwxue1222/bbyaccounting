@@ -54,8 +54,8 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
 
     const org = (
       await trx`
-        INSERT INTO organizations (name, base_currency, industry)
-        VALUES (${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry})
+        INSERT INTO organizations (name, base_currency, industry, plan, plan_status, plan_started_at)
+        VALUES (${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry}, 'basic', 'active', now())
         RETURNING id, name, base_currency as "baseCurrency", industry
       `
     )[0] as any;
