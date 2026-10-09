@@ -7,6 +7,10 @@ const CACHE_TTL_MS = 60_000;
 let warmupInFlight: Promise<void> | null = null;
 let lastWarmupAt = 0;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function warmupBackend(timeoutMs: number): Promise<void> {
   const now = Date.now();
   if (now - lastWarmupAt < 8_000) return;
@@ -16,13 +20,67 @@ async function warmupBackend(timeoutMs: number): Promise<void> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      await fetch("/api/ready", { credentials: "include", cache: "no-store", signal: controller.signal });
-      lastWarmupAt = Date.now();
+      const deadline = Date.now() + timeoutMs;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          throw new Error("后端初始化超时，请稍后重试");
+        }
+
+        let res: Response;
+        try {
+          res = await fetch("/api/ready", { credentials: "include", cache: "no-store", signal: controller.signal });
+        } catch (e: any) {
+          if (e?.name === "AbortError") {
+            throw new Error("后端初始化超时，请稍后重试");
+          }
+          await sleep(800);
+          continue;
+        }
+
+        if (res.ok) {
+          lastWarmupAt = Date.now();
+          return;
+        }
+
+        const isJson = res.headers.get("Content-Type")?.includes("application/json");
+        if (isJson) {
+          try {
+            const data = (await res.json()) as any;
+            const code = typeof data?.code === "string" ? data.code : null;
+            const err = typeof data?.error === "string" ? data.error : null;
+            const message = typeof data?.message === "string" ? data.message : null;
+
+            const permanent =
+              code === "MISSING_DATABASE_URL" ||
+              code === "MISSING_JWT_SECRET" ||
+              code === "DB_AUTH_FAILED" ||
+              code === "DB_PERMISSION";
+
+            if (permanent) {
+              throw new Error(err || "后端配置错误");
+            }
+
+            const retryable = code === "DB_NOT_READY" || code === "MIGRATION_BUSY" || code === "DB_CONN_FAILED";
+            if (!retryable) {
+              throw new Error(err || message || `HTTP ${res.status}`);
+            }
+          } catch (e: any) {
+            if (e?.name === "AbortError") throw e;
+            if (typeof e?.message === "string" && e.message) {
+              throw e;
+            }
+          }
+        }
+
+        await sleep(900);
+      }
     } finally {
       clearTimeout(id);
       warmupInFlight = null;
     }
   })();
+
 
   await warmupInFlight;
 }

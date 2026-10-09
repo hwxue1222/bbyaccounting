@@ -209,6 +209,10 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
       ? { status: 503, error: 'Missing DATABASE_URL', code: 'MISSING_DATABASE_URL' }
       : normalized.includes('missing jwt_secret')
         ? { status: 503, error: 'Missing JWT_SECRET', code: 'MISSING_JWT_SECRET' }
+        : normalized.includes('db not ready')
+          ? { status: 503, error: 'DB not ready', code: 'DB_NOT_READY' }
+          : normalized.includes('migration busy')
+            ? { status: 503, error: 'Migration busy', code: 'MIGRATION_BUSY' }
         : normalized.includes('password authentication failed') || normalized.includes('authentication failed')
           ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
           : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')

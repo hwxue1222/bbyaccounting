@@ -3286,7 +3286,22 @@ export default function Journal() {
   return (
     <AppShell title={tr("分录", "Journals")} subtitle={tr("录入、编辑与过账凭证", "Create, edit and post journals")}>
       <div className="space-y-4">
-        {err ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{err}</div> : null}
+        {err ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            <div className="min-w-0 flex-1">{err}</div>
+            <button
+              className="shrink-0 rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm text-red-800 hover:bg-red-50"
+              disabled={busy}
+              onClick={() => {
+                setErr(null);
+                void refreshCore();
+              }}
+              type="button"
+            >
+              {tr("重试", "Retry")}
+            </button>
+          </div>
+        ) : null}
         {editingEntryId ? (
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
