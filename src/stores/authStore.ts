@@ -98,12 +98,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   register: async (email, password, orgName, baseCurrency, industry) => {
     set({ status: "loading", error: null });
     try {
-      const resp = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; requestId: string }>("/api/auth/register", {
+      const resp = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/register", {
         method: "POST",
         json: { email, password, orgName, baseCurrency, industry },
         timeoutMs: 25_000,
       });
-      set({ status: "authed", user: resp.user, activeOrgId: null, orgs: [], error: null });
+      set({ status: "authed", user: resp.user, activeOrgId: resp.orgId ?? null, orgs: [], error: null });
       void api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { timeoutMs: 15_000 })
         .then((orgsResp) => set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId ?? null }))
         .catch(() => void 0);

@@ -10,6 +10,7 @@ import { clearSessionCookie, readSessionCookie, requireAuth, setSessionCookie, t
 import { hashPassword, signSession, verifyPassword, verifySession } from "../lib/security.js";
 import { randomToken } from "../lib/security.js";
 import { requireOrgPermission } from "../lib/orgAccess.js";
+import { seedOrgDefaults } from "../lib/seed.js";
 
 const router = Router();
 
@@ -42,31 +43,46 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const passwordHash = await hashPassword(password);
-
   const created = await sql.begin(async (trx) => {
-    const userRows = await trx`
-      INSERT INTO users (email, password_hash, status)
-      VALUES (${emailNorm}, ${passwordHash}, 'pending')
-      RETURNING id, email
-    `;
-    const user = userRows[0] as any;
-    const reqRow = (
+    const user = (
       await trx`
-        INSERT INTO signup_requests (email, org_name, base_currency, industry, status, user_id)
-        VALUES (${emailNorm}, ${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry}, 'pending', ${user.id})
-        RETURNING id
+        INSERT INTO users (email, password_hash, status)
+        VALUES (${emailNorm}, ${await hashPassword(password)}, 'active')
+        RETURNING id, email, status
       `
     )[0] as any;
-    return { user, requestId: String(reqRow.id) };
+
+    const org = (
+      await trx`
+        INSERT INTO organizations (name, base_currency, industry)
+        VALUES (${orgName.trim()}, ${baseCurrency.toUpperCase()}, ${industry})
+        RETURNING id, name, base_currency as "baseCurrency", industry
+      `
+    )[0] as any;
+
+    await trx`
+      INSERT INTO memberships (org_id, user_id, role, status, is_global)
+      VALUES (${org.id}, ${user.id}, 'admin', 'active', false)
+      ON CONFLICT (org_id, user_id) DO UPDATE SET role = 'admin', status = 'active', is_global = false
+    `;
+
+    await trx`
+      INSERT INTO user_default_org (user_id, org_id)
+      VALUES (${user.id}, ${org.id})
+      ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
+    `;
+
+    return { user, org };
   });
 
-  setSessionCookie(res, signSession({ userId: created.user.id, orgId: null }));
+  await seedOrgDefaults(sql, created.org.id, created.org.baseCurrency, created.org.industry);
+
+  setSessionCookie(res, signSession({ userId: created.user.id, orgId: created.org.id }));
   res.status(200).json({
     success: true,
     data: {
-      user: { id: created.user.id, email: created.user.email, status: "pending" },
-      requestId: created.requestId,
+      user: { id: created.user.id, email: created.user.email, status: "active" },
+      orgId: created.org.id,
     },
   });
 });
