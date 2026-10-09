@@ -67,6 +67,35 @@ export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<
     baseApplied = false;
   }
 
+  if (baseApplied) {
+    try {
+      const rows = await sql`
+        SELECT
+          to_regclass('public.users') IS NOT NULL AS users_ok,
+          to_regclass('public.organizations') IS NOT NULL AS orgs_ok,
+          to_regclass('public.memberships') IS NOT NULL AS memberships_ok,
+          to_regclass('public.role_permissions') IS NOT NULL AS role_permissions_ok,
+          to_regclass('public.accounts') IS NOT NULL AS accounts_ok,
+          to_regclass('public.journal_entries') IS NOT NULL AS journals_ok,
+          to_regclass('public.journal_lines') IS NOT NULL AS journal_lines_ok
+      `;
+      const s: any = (rows as any[])?.[0];
+      const requiredOk =
+        Boolean(s?.users_ok) &&
+        Boolean(s?.orgs_ok) &&
+        Boolean(s?.memberships_ok) &&
+        Boolean(s?.role_permissions_ok) &&
+        Boolean(s?.accounts_ok) &&
+        Boolean(s?.journals_ok) &&
+        Boolean(s?.journal_lines_ok);
+      if (!requiredOk) {
+        baseApplied = false;
+      }
+    } catch {
+      baseApplied = false;
+    }
+  }
+
   let postedSourceApplied = false;
   try {
     const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${JOURNAL_POSTED_SOURCE_MIGRATION_ID} LIMIT 1`;
