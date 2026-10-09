@@ -91,7 +91,6 @@ export default function Login() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-lg font-semibold">BBY Accounting</div>
-                <div className="mt-1 text-sm text-zinc-500">{tr("记账、库存 FIFO、固定资产与报表", "Accounting, FIFO inventory, fixed assets and reports")}</div>
               </div>
               <Segmented className="grid-cols-2">
                 <SegmentedItem active={lang === "zh"} onClick={() => setLang("zh")}>
@@ -188,9 +187,6 @@ export default function Login() {
                 {mode === "login" ? tr("登录", "Sign in") : tr("提交注册申请", "Submit sign up request")}
               </Button>
 
-              <div className="pt-1 text-xs text-zinc-500">
-                {tr("部署到 Vercel 时请配置 `DATABASE_URL` 与 `JWT_SECRET`。", "Configure `DATABASE_URL` and `JWT_SECRET` on Vercel.")}
-              </div>
             </div>
           </CardContent>
         </Card>
