@@ -24,13 +24,15 @@ export default function Login() {
   const [industry, setIndustry] = useState("restaurant");
   const [baseCurrency, setBaseCurrency] = useState("SGD");
   const [backendReady, setBackendReady] = useState<null | { ok: boolean; message?: string }>(null);
+  const [readyTick, setReadyTick] = useState(0);
 
   const disabled = useMemo(() => {
     if (status === "loading") return true;
+    if (backendReady && !backendReady.ok) return true;
     if (!email.trim() || !password.trim()) return true;
     if (mode === "register" && !orgName.trim()) return true;
     return false;
-  }, [status, email, password, mode, orgName]);
+  }, [status, backendReady, email, password, mode, orgName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +49,7 @@ export default function Login() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [readyTick]);
 
   if (status === "authed") {
     return <Navigate to={redirect} replace />;
@@ -92,6 +94,11 @@ export default function Login() {
                       "Vercel 需要配置 `DATABASE_URL`、`JWT_SECRET`，并将 `APP_ORIGIN` 设为当前域名。",
                       "Configure `DATABASE_URL` and `JWT_SECRET` on Vercel, and set `APP_ORIGIN` to your domain.",
                     )}
+                  </div>
+                  <div className="mt-2">
+                    <Button variant="secondary" className="w-full" onClick={() => setReadyTick((x) => x + 1)}>
+                      {tr("重试", "Retry")}
+                    </Button>
                   </div>
                 </div>
               ) : null}

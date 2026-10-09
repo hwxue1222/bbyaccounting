@@ -4,6 +4,17 @@ const responseCache = new Map<string, { ts: number; value: unknown }>();
 const inflight = new Map<string, Promise<unknown>>();
 const CACHE_TTL_MS = 60_000;
 
+export class ApiError extends Error {
+  code?: string;
+  errorId?: string;
+  constructor(message: string, code?: string, errorId?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.errorId = errorId;
+  }
+}
+
 export async function api<T>(
   input: string,
   init?: RequestInit & { json?: unknown; timeoutMs?: number },
@@ -63,6 +74,7 @@ export async function api<T>(
         if (!res.ok || data?.success === false) {
           const msgBase = typeof data?.error === "string" ? data.error : `HTTP ${res.status}`;
           const errorId = typeof data?.errorId === "string" && data.errorId ? data.errorId : null;
+          const code = typeof data?.code === "string" && data.code ? data.code : null;
 
           const internalMatch = /Server internal error \(ID ([0-9a-fA-F-]{36})\)/.exec(msgBase);
           const internalId = internalMatch ? internalMatch[1] : null;
@@ -82,7 +94,7 @@ export async function api<T>(
             }
           }
 
-          throw new Error(errorId ? `${msgBase} (ID ${errorId})` : msgBase);
+          throw new ApiError(errorId ? `${msgBase} (ID ${errorId})` : msgBase, code ?? undefined, errorId ?? undefined);
         }
         return (data?.data ?? data) as T;
       }

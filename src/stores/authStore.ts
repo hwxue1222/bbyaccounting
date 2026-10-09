@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 
 export type OrgRow = {
   orgId: string;
@@ -61,14 +61,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   login: async (email, password) => {
     set({ status: "loading", error: null });
-    try {
-      const resp = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/login", {
+    const doLogin = async () =>
+      await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/login", {
         method: "POST",
         json: { email, password },
       });
+    try {
+      let resp = await doLogin();
       const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
       set({ status: "authed", user: resp.user, activeOrgId: resp.orgId, orgs: orgsResp.orgs, error: null });
     } catch (e: any) {
+      const code = typeof (e as any)?.code === "string" ? (e as any).code : null;
+      if (code === "DB_NOT_READY" || code === "MIGRATION_BUSY") {
+        try {
+          await api("/api/ready", { timeoutMs: 40_000, cache: "no-store" });
+          const resp = await doLogin();
+          const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { cache: "no-store" });
+          set({ status: "authed", user: resp.user, activeOrgId: resp.orgId, orgs: orgsResp.orgs, error: null });
+          return;
+        } catch (e2: any) {
+          const msg = e2 instanceof ApiError ? e2.message : e2?.message;
+          set({ status: "anon", error: msg || "系统升级中，请稍后重试" });
+          return;
+        }
+      }
       set({ status: "anon", error: e?.message || "登录失败" });
     }
   },
