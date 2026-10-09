@@ -95,21 +95,28 @@ app.get('/api/health/db', async (_req: Request, res: Response): Promise<void> =>
   try {
     await ensureMigrated({ allowRun: false })
     const sql = getSql()
-    const rows = await sql`
-      SELECT
-        to_regclass('public.journal_entries') IS NOT NULL AS journals_ok,
-        EXISTS(
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema = 'public' AND table_name = 'journal_entries' AND column_name = 'posted_source'
-        ) AS posted_source_ok
-    `
-    const s: any = (rows as any[])?.[0]
+    let journalsOk = false
+    let postedSourceOk = false
+    try {
+      await sql`SELECT 1 FROM journal_entries LIMIT 1`
+      journalsOk = true
+    } catch {
+      journalsOk = false
+    }
+    if (journalsOk) {
+      try {
+        await sql`SELECT posted_source FROM journal_entries LIMIT 1`
+        postedSourceOk = true
+      } catch {
+        postedSourceOk = false
+      }
+    }
     res.status(200).json({
       success: true,
       build: buildInfo(),
       checks: {
-        journalsOk: Boolean(s?.journals_ok),
-        postedSourceOk: Boolean(s?.posted_source_ok),
+        journalsOk,
+        postedSourceOk,
       },
     })
   } catch (e: any) {

@@ -39,7 +39,7 @@ export default function Login() {
     (async () => {
       const attempt = async () => {
         try {
-          await api("/api/health/db", { timeoutMs: 10_000, cache: "no-store" });
+          await api("/api/health/db", { timeoutMs: 25_000, cache: "no-store" });
           return { ok: true as const };
         } catch (e: any) {
           const code = typeof (e as any)?.code === "string" ? (e as any).code : null;
