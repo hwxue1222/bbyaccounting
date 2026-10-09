@@ -43,18 +43,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   bootstrap: async () => {
     set({ status: "loading", error: null });
     try {
-      const [me, orgsResp] = await Promise.all([
-        api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/me"),
-        api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs"),
-      ]);
-
-      set({
-        status: "authed",
-        user: me.user,
-        activeOrgId: orgsResp.activeOrgId ?? me.orgId,
-        orgs: orgsResp.orgs,
-        error: null,
+      const me = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/me", {
+        timeoutMs: 15_000,
       });
+
+      set({ status: "authed", user: me.user, activeOrgId: me.orgId ?? null, orgs: [], error: null });
+
+      try {
+        const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { timeoutMs: 15_000 });
+        set({ activeOrgId: orgsResp.activeOrgId ?? me.orgId ?? null, orgs: orgsResp.orgs, error: null });
+      } catch {
+        void 0;
+      }
     } catch (_e: any) {
       set({ status: "anon", user: null, activeOrgId: null, orgs: [], error: null });
     }
@@ -65,19 +65,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; orgId: string | null }>("/api/auth/login", {
         method: "POST",
         json: { email, password },
+        timeoutMs: 20_000,
       });
     try {
       let resp = await doLogin();
-      const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
-      set({ status: "authed", user: resp.user, activeOrgId: resp.orgId, orgs: orgsResp.orgs, error: null });
+      set({ status: "authed", user: resp.user, activeOrgId: resp.orgId ?? null, orgs: [], error: null });
+      void api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { timeoutMs: 15_000 })
+        .then((orgsResp) => {
+          set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId ?? resp.orgId ?? null });
+        })
+        .catch(() => void 0);
     } catch (e: any) {
       const code = typeof (e as any)?.code === "string" ? (e as any).code : null;
       if (code === "DB_NOT_READY" || code === "MIGRATION_BUSY") {
         try {
           await api("/api/ready", { timeoutMs: 40_000, cache: "no-store" });
           const resp = await doLogin();
-          const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { cache: "no-store" });
-          set({ status: "authed", user: resp.user, activeOrgId: resp.orgId, orgs: orgsResp.orgs, error: null });
+          set({ status: "authed", user: resp.user, activeOrgId: resp.orgId ?? null, orgs: [], error: null });
+          void api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { timeoutMs: 15_000, cache: "no-store" })
+            .then((orgsResp) => set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId ?? resp.orgId ?? null }))
+            .catch(() => void 0);
           return;
         } catch (e2: any) {
           const msg = e2 instanceof ApiError ? e2.message : e2?.message;
@@ -94,9 +101,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const resp = await api<{ user: { id: string; email: string; status?: string; isSuperAdmin?: boolean }; requestId: string }>("/api/auth/register", {
         method: "POST",
         json: { email, password, orgName, baseCurrency, industry },
+        timeoutMs: 25_000,
       });
-      const orgsResp = await api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs");
-      set({ status: "authed", user: resp.user, activeOrgId: null, orgs: orgsResp.orgs, error: null });
+      set({ status: "authed", user: resp.user, activeOrgId: null, orgs: [], error: null });
+      void api<{ orgs: OrgRow[]; activeOrgId: string | null }>("/api/orgs", { timeoutMs: 15_000 })
+        .then((orgsResp) => set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId ?? null }))
+        .catch(() => void 0);
     } catch (e: any) {
       set({ status: "anon", error: e?.message || "注册失败" });
     }
