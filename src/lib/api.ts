@@ -4,6 +4,29 @@ const responseCache = new Map<string, { ts: number; value: unknown }>();
 const inflight = new Map<string, Promise<unknown>>();
 const CACHE_TTL_MS = 60_000;
 
+let warmupInFlight: Promise<void> | null = null;
+let lastWarmupAt = 0;
+
+async function warmupBackend(timeoutMs: number): Promise<void> {
+  const now = Date.now();
+  if (now - lastWarmupAt < 8_000) return;
+  if (warmupInFlight) return await warmupInFlight;
+
+  warmupInFlight = (async () => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      await fetch("/api/ready", { credentials: "include", cache: "no-store", signal: controller.signal });
+      lastWarmupAt = Date.now();
+    } finally {
+      clearTimeout(id);
+      warmupInFlight = null;
+    }
+  })();
+
+  await warmupInFlight;
+}
+
 export class ApiError extends Error {
   code?: string;
   errorId?: string;
@@ -40,7 +63,7 @@ export async function api<T>(
     }
   }
 
-  const doRequest = async (): Promise<T> => {
+  const doRequest = async (allowWarmupRetry: boolean): Promise<T> => {
     useUiStore.getState().beginNetwork();
     const headers = new Headers(init?.headers);
     if (init?.json !== undefined) {
@@ -75,6 +98,9 @@ export async function api<T>(
           const msgBase = typeof data?.error === "string" ? data.error : `HTTP ${res.status}`;
           const errorId = typeof data?.errorId === "string" && data.errorId ? data.errorId : null;
           const code = typeof data?.code === "string" && data.code ? data.code : null;
+          const inferredCode =
+            code ??
+            (typeof msgBase === "string" && msgBase.toLowerCase().includes("db not ready") ? "DB_NOT_READY" : null);
 
           const internalMatch = /Server internal error \(ID ([0-9a-fA-F-]{36})\)/.exec(msgBase);
           const internalId = internalMatch ? internalMatch[1] : null;
@@ -94,7 +120,26 @@ export async function api<T>(
             }
           }
 
-          throw new ApiError(errorId ? `${msgBase} (ID ${errorId})` : msgBase, code ?? undefined, errorId ?? undefined);
+          const err = new ApiError(errorId ? `${msgBase} (ID ${errorId})` : msgBase, inferredCode ?? undefined, errorId ?? undefined);
+
+          const canWarmupRetry =
+            allowWarmupRetry &&
+            method === "GET" &&
+            typeof err.code === "string" &&
+            (err.code === "DB_NOT_READY" || err.code === "MIGRATION_BUSY") &&
+            input.startsWith("/api/") &&
+            input !== "/api/ready";
+
+          if (canWarmupRetry) {
+            try {
+              await warmupBackend(40_000);
+            } catch {
+              throw err;
+            }
+            return await doRequest(false);
+          }
+
+          throw err;
         }
         return (data?.data ?? data) as T;
       }
@@ -109,10 +154,10 @@ export async function api<T>(
   };
 
   if (!cacheable) {
-    return await doRequest();
+    return await doRequest(true);
   }
 
-  const p = doRequest()
+  const p = doRequest(true)
     .then((value) => {
       responseCache.set(cacheKey, { ts: Date.now(), value });
       return value;
