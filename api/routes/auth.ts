@@ -5,7 +5,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { getSql } from "../lib/db.js";
-import { ensureMigrated, sha256 } from "../lib/migrate.js";
+import { sha256 } from "../lib/migrate.js";
 import { clearSessionCookie, readSessionCookie, requireAuth, setSessionCookie, type AuthedRequest } from "../lib/auth.js";
 import { hashPassword, signSession, verifyPassword, verifySession } from "../lib/security.js";
 import { randomToken } from "../lib/security.js";
@@ -18,7 +18,6 @@ function normalizeEmail(email: string): string {
 }
 
 router.post("/register", async (req: Request, res: Response): Promise<void> => {
-  await ensureMigrated();
   const bodySchema = z.object({
     email: z.string().email(),
     password: z.string().min(8),
@@ -73,7 +72,6 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
 });
 
 router.post("/login", async (req: Request, res: Response): Promise<void> => {
-  await ensureMigrated();
   const bodySchema = z.object({
     email: z.string().email(),
     password: z.string().min(1),
@@ -123,7 +121,6 @@ router.post("/logout", async (req: Request, res: Response): Promise<void> => {
 });
 
 router.get("/me", requireAuth, async (req: AuthedRequest, res: Response): Promise<void> => {
-  await ensureMigrated();
   const sql = getSql();
   const userRows = await sql`SELECT id, email, status, is_superadmin FROM users WHERE id = ${req.auth!.userId}`;
   const user = userRows[0];
@@ -144,7 +141,6 @@ router.post(
   "/change-password",
   requireAuth,
   async (req: AuthedRequest, res: Response): Promise<void> => {
-    await ensureMigrated();
     const bodySchema = z.object({
       currentPassword: z.string().min(1),
       newPassword: z.string().min(8),
@@ -173,7 +169,6 @@ router.post(
 );
 
 router.post("/accept-invite", async (req: Request, res: Response): Promise<void> => {
-  await ensureMigrated();
   const bodySchema = z.object({
     token: z.string().min(20),
     password: z.string().optional(),
@@ -287,7 +282,6 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
 });
 
 router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Response): Promise<void> => {
-  await ensureMigrated();
   const bodySchema = z.object({
     email: z.string().email(),
     role: z.enum(["admin", "accountant", "viewer", "auditor"]),

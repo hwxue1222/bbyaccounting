@@ -36,7 +36,7 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       try {
-        await api("/api/ready");
+        await api("/api/health/db");
         if (cancelled) return;
         setBackendReady({ ok: true });
       } catch (e: any) {

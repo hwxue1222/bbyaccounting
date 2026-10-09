@@ -4,21 +4,51 @@ import { getSql } from "./db.js";
 let migrated = false;
 let migrating: Promise<void> | null = null;
 
-export async function ensureMigrated(): Promise<void> {
+export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<void> {
   if (migrated) return;
+  const autoAllowRun = process.env.AUTO_MIGRATE === "1" || process.env.NODE_ENV !== "production";
+  const allowRun = options?.allowRun ?? autoAllowRun;
   if (migrating) {
     await migrating;
     return;
   }
   migrating = (async () => {
-  const sql = getSql();
+  const root = getSql();
 
-  await sql`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id TEXT PRIMARY KEY,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `;
+  if (!allowRun) {
+    const rows = await root`
+      SELECT
+        to_regclass('public.schema_migrations') IS NOT NULL AS migrations_ok,
+        to_regclass('public.users') IS NOT NULL AS users_ok,
+        to_regclass('public.organizations') IS NOT NULL AS orgs_ok,
+        to_regclass('public.memberships') IS NOT NULL AS memberships_ok,
+        to_regclass('public.role_permissions') IS NOT NULL AS role_permissions_ok
+    `;
+    const s: any = (rows as any[])?.[0];
+    const ok =
+      Boolean(s?.migrations_ok) &&
+      Boolean(s?.users_ok) &&
+      Boolean(s?.orgs_ok) &&
+      Boolean(s?.memberships_ok) &&
+      Boolean(s?.role_permissions_ok);
+    if (!ok) {
+      throw new Error("DB not ready");
+    }
+    return;
+  }
+
+  await root.begin(async (sql) => {
+    const lock = (await sql`SELECT pg_try_advisory_lock(hashtext('bby:migrate')) AS ok`)[0] as any;
+    if (!lock?.ok) {
+      throw new Error("Migration busy");
+    }
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          id TEXT PRIMARY KEY,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
 
   const BASE_MIGRATION_ID = "base_2026_09";
   const FX_FIX_MIGRATION_ID = "fx_rate_txn_per_base_2026_09";
@@ -1035,6 +1065,11 @@ export async function ensureMigrated(): Promise<void> {
       void 0;
     }
   }
+
+    } finally {
+      await sql`SELECT pg_advisory_unlock(hashtext('bby:migrate'))`;
+    }
+  });
 
     migrated = true;
   })().finally(() => {

@@ -93,7 +93,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
  */
 app.get('/api/health/db', async (_req: Request, res: Response): Promise<void> => {
   try {
-    await ensureMigrated()
+    await ensureMigrated({ allowRun: false })
     const sql = getSql()
     const rows = await sql`
       SELECT
@@ -178,7 +178,7 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
       return
     }
 
-    await ensureMigrated()
+    await ensureMigrated({ allowRun: true })
     res.status(200).json({
       success: true,
       message: 'ready',
@@ -225,11 +225,12 @@ app.use('/api/ready', async (_req: Request, res: Response): Promise<void> => {
 
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (req.path === '/api/health' || req.path === '/api/ready') {
+    if (req.path === '/api/health' || req.path === '/api/health/db' || req.path === '/api/ready') {
       next()
       return
     }
-    await ensureMigrated()
+    const isProd = process.env.NODE_ENV === 'production'
+    await ensureMigrated({ allowRun: !isProd })
     next()
   } catch (e) {
     next(e)
@@ -268,6 +269,8 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
     ? { status: 503, error: 'Missing DATABASE_URL', code: 'MISSING_DATABASE_URL' }
     : normalized.includes('missing jwt_secret')
       ? { status: 503, error: 'Missing JWT_SECRET', code: 'MISSING_JWT_SECRET' }
+      : normalized.includes('db not ready')
+        ? { status: 503, error: 'DB not ready', code: 'DB_NOT_READY' }
       : normalized.includes('password authentication failed') || normalized.includes('authentication failed')
         ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
         : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')
