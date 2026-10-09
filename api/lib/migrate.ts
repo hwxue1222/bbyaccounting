@@ -72,6 +72,14 @@ export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<
       const rows = await sql`
         SELECT
           to_regclass('public.users') IS NOT NULL AS users_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'status'
+          ) AS user_status_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'is_superadmin'
+          ) AS user_superadmin_ok,
           to_regclass('public.organizations') IS NOT NULL AS orgs_ok,
           to_regclass('public.memberships') IS NOT NULL AS memberships_ok,
           to_regclass('public.role_permissions') IS NOT NULL AS role_permissions_ok,
@@ -82,6 +90,8 @@ export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<
       const s: any = (rows as any[])?.[0];
       const requiredOk =
         Boolean(s?.users_ok) &&
+        Boolean(s?.user_status_ok) &&
+        Boolean(s?.user_superadmin_ok) &&
         Boolean(s?.orgs_ok) &&
         Boolean(s?.memberships_ok) &&
         Boolean(s?.role_permissions_ok) &&
