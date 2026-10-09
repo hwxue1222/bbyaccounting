@@ -7,6 +7,11 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTr } from "@/lib/tr";
+import ToastViewport from "@/components/ui/Toast";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
+import { Segmented, SegmentedItem } from "@/components/ui/Segmented";
+import PageHeader from "@/components/ui/PageHeader";
 
 function SideLink({ to, label, icon }: { to: string; label: string; icon: React.ReactNode }) {
   return (
@@ -15,7 +20,9 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
       className={({ isActive }) =>
         cn(
           "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
-          isActive ? "bg-blue-50 text-blue-700" : "text-zinc-700 hover:bg-zinc-100",
+          isActive
+            ? "bg-blue-50 text-blue-800 ring-1 ring-blue-100"
+            : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900",
         )
       }
       end
@@ -26,7 +33,17 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
   );
 }
 
-export default function AppShell({ title, children }: { title: string; children: React.ReactNode }) {
+export default function AppShell({
+  title,
+  subtitle,
+  actions,
+  children,
+}: {
+  title: string;
+  subtitle?: React.ReactNode;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   const { orgs, activeOrgId, pendingOrgId, orgSwitching, switchOrg, createOrg, user, logout } = useAuthStore();
   const active = orgs.find((o) => o.orgId === activeOrgId) || null;
   const { lang, setLang } = useUiStore();
@@ -47,7 +64,8 @@ export default function AppShell({ title, children }: { title: string; children:
 
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900">
+    <div className="min-h-screen">
+      <ToastViewport />
       {showMask ? (
         <div className="pointer-events-none fixed bottom-4 right-4 z-[2000] flex items-center gap-3 rounded-xl bg-white/95 px-4 py-3 shadow-xl ring-1 ring-zinc-200">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-200 border-t-blue-700" />
@@ -73,8 +91,8 @@ export default function AppShell({ title, children }: { title: string; children:
               <div className="text-xs text-zinc-500">{tr("当前公司", "Company")}</div>
               <div className="mt-1 flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-zinc-500" />
-                <select
-                  className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                <Select
+                  className="py-1"
                   value={(pendingOrgId || activeOrgId) || ""}
                   onChange={(e) => switchOrg(e.target.value)}
                   disabled={orgSwitching}
@@ -87,11 +105,11 @@ export default function AppShell({ title, children }: { title: string; children:
                       {o.orgName}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               {orgSwitching ? <div className="mt-1 text-xs text-zinc-500">{tr("切换中...", "Switching...")}</div> : null}
-              <button
-                className="mt-2 w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm hover:bg-zinc-50"
+              <Button
+                className="mt-2 w-full"
                 onClick={async () => {
                   if (!(user as any)?.isSuperAdmin) return;
                   const name = window.prompt(tr("公司名称", "Company name"));
@@ -105,7 +123,7 @@ export default function AppShell({ title, children }: { title: string; children:
                 disabled={orgSwitching}
               >
                 {tr("新增公司", "New company")}
-              </button>
+              </Button>
               {!(user as any)?.isSuperAdmin ? <div className="mt-1 text-xs text-zinc-500">Only SuperAdmin can create companies.</div> : null}
               {active ? (
                 <div className="mt-1 text-xs text-zinc-500">
@@ -129,47 +147,28 @@ export default function AppShell({ title, children }: { title: string; children:
 
           <div className="border-t border-zinc-200 p-3">
             <div className="mb-2 truncate text-xs text-zinc-500">{user?.email || ""}</div>
-            <div className="mb-2 rounded-xl border border-zinc-200 bg-white p-1">
-              <div className="grid grid-cols-2 gap-1">
-                <button
-                  className={
-                    lang === "zh"
-                      ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                      : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-                  }
-                  type="button"
-                  onClick={() => setLang("zh")}
-                >
+            <div className="mb-2">
+              <Segmented className="grid-cols-2">
+                <SegmentedItem active={lang === "zh"} onClick={() => setLang("zh")}>
                   中文
-                </button>
-                <button
-                  className={
-                    lang === "en"
-                      ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                      : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-                  }
-                  type="button"
-                  onClick={() => setLang("en")}
-                >
+                </SegmentedItem>
+                <SegmentedItem active={lang === "en"} onClick={() => setLang("en")}>
                   EN
-                </button>
-              </div>
+                </SegmentedItem>
+              </Segmented>
             </div>
-            <button
-              className="flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-              onClick={() => logout()}
-            >
+            <Button className="w-full" onClick={() => logout()}>
               <LogOut className="h-4 w-4" />
               {tr("退出", "Logout")}
-            </button>
+            </Button>
           </div>
         </aside>
 
         <main className="flex-1 md:pl-64">
           <header className="border-b border-zinc-200 bg-white">
             <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-base font-semibold">{title}</div>
+              <div className="w-full">
+                <PageHeader title={title} subtitle={subtitle} actions={actions} />
               </div>
             </div>
           </header>

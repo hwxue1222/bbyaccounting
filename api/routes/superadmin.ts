@@ -132,9 +132,9 @@ router.post("/approve-signup", requireAuth, async (req: AuthedRequest, res: Resp
     )[0] as any;
 
     await trx`
-      INSERT INTO memberships (org_id, user_id, role, status)
-      VALUES (${org.id}, ${r.userId}, 'admin', 'active')
-      ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = (EXCLUDED.role = 'admin')
+      INSERT INTO memberships (org_id, user_id, role, status, is_global)
+      VALUES (${org.id}, ${r.userId}, 'admin', 'active', false)
+      ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = false
     `;
 
     await trx`

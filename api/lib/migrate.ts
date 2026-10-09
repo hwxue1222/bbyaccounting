@@ -161,6 +161,11 @@ export async function ensureMigrated(): Promise<void> {
   await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS registration_no TEXT`;
   await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry TEXT NOT NULL DEFAULT 'restaurant'`;
   await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'basic'`;
+  await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_status TEXT NOT NULL DEFAULT 'active'`;
+  await sql`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_started_at TIMESTAMPTZ`;
+  await sql`UPDATE organizations SET plan = 'basic' WHERE plan IS NULL`;
+  await sql`UPDATE organizations SET plan_status = 'active' WHERE plan_status IS NULL`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS user_default_org (
@@ -295,10 +300,12 @@ export async function ensureMigrated(): Promise<void> {
       token_hash TEXT NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL,
       accepted_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
       created_by UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  await sql`ALTER TABLE invitations ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`;
   await sql`CREATE INDEX IF NOT EXISTS idx_invitations_org ON invitations(org_id)`;
 
   await sql`

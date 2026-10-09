@@ -7,6 +7,9 @@ export type OrgRow = {
   registrationNo?: string | null;
   baseCurrency: string;
   role: string;
+  permissions?: string[];
+  plan?: string;
+  planStatus?: string;
 };
 
 type AuthState = {
@@ -117,12 +120,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ orgs: orgsResp.orgs, activeOrgId: orgsResp.activeOrgId });
   },
   acceptInvite: async (token: string, password: string) => {
+    const wasAuthed = get().status === "authed";
     set({ status: "loading", error: null });
     try {
       await api("/api/auth/accept-invite", { method: "POST", json: { token, password } });
       await get().bootstrap();
     } catch (e: any) {
-      set({ status: "anon", error: e?.message || "接受邀请失败" });
+      set({ status: wasAuthed ? "authed" : "anon", error: e?.message || "接受邀请失败" });
     }
   },
   createInvite: async (email: string, role: string) => {

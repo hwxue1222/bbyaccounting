@@ -3,6 +3,11 @@ import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
+import Button from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import { Table, TableWrap, TD, TH, THead, TR } from "@/components/ui/Table";
 
 type PendingReq = {
   id: string;
@@ -51,49 +56,51 @@ export default function SuperAdmin() {
 
   if (!canView) {
     return (
-      <AppShell title="SuperAdmin">
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm">Forbidden</div>
+      <AppShell title="SuperAdmin" subtitle={tr("全局管理员控制台", "Global admin console")}>
+        <Card className="p-4 text-sm text-zinc-600">Forbidden</Card>
       </AppShell>
     );
   }
 
   return (
-    <AppShell title="SuperAdmin">
-      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+    <AppShell title="SuperAdmin" subtitle={tr("全局管理员控制台", "Global admin console")}>
+      <Card className="p-4">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold">待审批注册</div>
-          <button className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50" onClick={() => refresh()}>
+          <Button size="sm" onClick={() => refresh()}>
             刷新
-          </button>
+          </Button>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
 
-        <div className="mt-3 max-h-[560px] overflow-auto rounded-lg border border-zinc-100">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-              <tr>
-                <th className="px-3 py-2 text-left">Email</th>
-                <th className="px-3 py-2 text-left">Company</th>
-                <th className="px-3 py-2 text-left">Industry</th>
-                <th className="px-3 py-2 text-left">Base</th>
-                <th className="px-3 py-2 text-left">Created</th>
-                <th className="px-3 py-2 text-right">Action</th>
-              </tr>
-            </thead>
+        <TableWrap className="mt-3 max-h-[560px]">
+          <Table>
+            <THead>
+              <TR>
+                <TH>Email</TH>
+                <TH>Company</TH>
+                <TH>Industry</TH>
+                <TH>Base</TH>
+                <TH>Created</TH>
+                <TH className="text-right">Action</TH>
+              </TR>
+            </THead>
             <tbody>
               {requests.map((r) => (
-                <tr key={r.id} className="border-t border-zinc-100">
-                  <td className="px-3 py-2">{r.email}</td>
-                  <td className="px-3 py-2">{r.orgName}</td>
-                  <td className="px-3 py-2">{r.industry}</td>
-                  <td className="px-3 py-2">{r.baseCurrency}</td>
-                  <td className="px-3 py-2">{String(r.createdAt).slice(0, 10)}</td>
-                  <td className="px-3 py-2 text-right">
+                <TR key={r.id}>
+                  <TD>{r.email}</TD>
+                  <TD>{r.orgName}</TD>
+                  <TD>{r.industry}</TD>
+                  <TD>{r.baseCurrency}</TD>
+                  <TD>{String(r.createdAt).slice(0, 10)}</TD>
+                  <TD className="text-right">
                     <div className="flex justify-end gap-2">
-                      <button
-                        className="rounded-md bg-green-700 px-2 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-50"
+                      <Button
+                        variant="primary"
+                        size="sm"
                         disabled={busy}
+                        loading={busy}
                         onClick={async () => {
                           setBusy(true);
                           setErr(null);
@@ -108,10 +115,12 @@ export default function SuperAdmin() {
                         }}
                       >
                         {tr("批准", "Approve")}
-                      </button>
-                      <button
-                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger"
                         disabled={busy}
+                        loading={busy}
                         onClick={async () => {
                           setBusy(true);
                           setErr(null);
@@ -126,36 +135,32 @@ export default function SuperAdmin() {
                         }}
                       >
                         {tr("拒绝", "Reject")}
-                      </button>
+                      </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TD>
+                </TR>
               ))}
             </tbody>
-          </table>
-        </div>
-      </div>
+          </Table>
+        </TableWrap>
+      </Card>
 
-      <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <Card className="mt-4 p-4">
         <div className="text-sm font-semibold">公司 Admin 管理</div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={adminOrgId} onChange={(e) => setAdminOrgId(e.target.value)}>
+          <Select className="w-64" value={adminOrgId} onChange={(e) => setAdminOrgId(e.target.value)}>
             <option value="">选择公司</option>
             {orgs.map((o) => (
               <option key={o.orgId} value={o.orgId}>
                 {o.orgName}
               </option>
             ))}
-          </select>
-          <input
-            className="rounded-md border border-zinc-200 px-3 py-2 text-sm"
-            value={adminEmail}
-            onChange={(e) => setAdminEmail(e.target.value)}
-            placeholder="admin@example.com"
-          />
-          <button
-            className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+          </Select>
+          <Input className="w-64" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="admin@example.com" />
+          <Button
+            variant="primary"
             disabled={busy || !adminOrgId || !adminEmail.trim()}
+            loading={busy}
             onClick={async () => {
               setBusy(true);
               setErr(null);
@@ -171,35 +176,35 @@ export default function SuperAdmin() {
             }}
           >
             设为 Admin
-          </button>
-          <button className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50" onClick={() => refreshOrgs()}>
+          </Button>
+          <Button disabled={busy} onClick={() => refreshOrgs()}>
             刷新列表
-          </button>
+          </Button>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
 
-        <div className="mt-3 max-h-[560px] overflow-auto rounded-lg border border-zinc-100">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-              <tr>
-                <th className="px-3 py-2 text-left">Company</th>
-                <th className="px-3 py-2 text-left">Base</th>
-                <th className="px-3 py-2 text-left">Admins</th>
-              </tr>
-            </thead>
+        <TableWrap className="mt-3 max-h-[560px]">
+          <Table>
+            <THead>
+              <TR>
+                <TH>Company</TH>
+                <TH>Base</TH>
+                <TH>Admins</TH>
+              </TR>
+            </THead>
             <tbody>
               {orgs.map((o) => (
-                <tr key={o.orgId} className="border-t border-zinc-100">
-                  <td className="px-3 py-2">{o.orgName}</td>
-                  <td className="px-3 py-2">{o.baseCurrency}</td>
-                  <td className="px-3 py-2">{Array.isArray(o.adminEmails) ? o.adminEmails.join(", ") : ""}</td>
-                </tr>
+                <TR key={o.orgId}>
+                  <TD>{o.orgName}</TD>
+                  <TD>{o.baseCurrency}</TD>
+                  <TD>{Array.isArray(o.adminEmails) ? o.adminEmails.join(", ") : ""}</TD>
+                </TR>
               ))}
             </tbody>
-          </table>
-        </div>
-      </div>
+          </Table>
+        </TableWrap>
+      </Card>
     </AppShell>
   );
 }

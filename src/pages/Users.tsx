@@ -3,6 +3,17 @@ import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
+import Button from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
+import Label from "@/components/ui/Label";
+import Select from "@/components/ui/Select";
+import IconButton from "@/components/ui/IconButton";
+import { Copy } from "lucide-react";
+import { useUiStore } from "@/stores/uiStore";
+import EmptyState from "@/components/ui/EmptyState";
+import { Table, TableWrap, TD, TH, THead, TR } from "@/components/ui/Table";
+import Switch from "@/components/ui/Switch";
 
 type MemberRow = {
   id: string;
@@ -16,6 +27,14 @@ type MemberRow = {
 type RolePermRow = {
   role: string;
   permissions: string[];
+};
+
+type InvitationRow = {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  createdAt: string;
 };
 
 const PERM_GROUPS: Array<{ key: string; label: string; actions: string[] }> = [
@@ -32,8 +51,9 @@ const PERM_GROUPS: Array<{ key: string; label: string; actions: string[] }> = [
 export default function Users() {
   const { orgs, activeOrgId, orgSwitching, createInvite, user } = useAuthStore();
   const tr = useTr();
+  const toast = useUiStore((s) => s.toast);
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
-  const canManage = active?.role === "admin";
+  const canManage = Boolean((active?.permissions || []).includes("users.manage") || active?.role === "admin");
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -42,6 +62,7 @@ export default function Users() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [rolePerms, setRolePerms] = useState<RolePermRow[]>([]);
+  const [invitations, setInvitations] = useState<InvitationRow[]>([]);
 
   const rolePermByRole = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -59,38 +80,43 @@ export default function Users() {
     setRolePerms(r.roles as any);
   }
 
+  async function refreshInvitations() {
+    const r = await api<{ invitations: any[] }>("/api/users/invitations");
+    setInvitations(r.invitations as any);
+  }
+
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     setErr(null);
     setInviteUrl(null);
-    Promise.all([refresh(), refreshRolePerms()]).catch((e) => setErr(e.message));
+    Promise.all([refresh(), refreshRolePerms(), refreshInvitations()]).catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
 
   return (
-    <AppShell title={tr("用户管理", "User Management")}>
+    <AppShell title={tr("用户管理", "User Management")} subtitle={tr("邀请与管理公司成员", "Invite and manage company members")}>
       {!canManage ? (
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 shadow-sm">只有 Admin 可以管理用户。</div>
+        <Card className="p-4 text-sm text-zinc-600">只有 Admin 可以管理用户。</Card>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <Card className="p-4">
             <div className="text-sm font-semibold">角色权限</div>
-            <div className="mt-3 max-h-[520px] overflow-auto rounded-lg border border-zinc-100">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Role</th>
-                    <th className="px-3 py-2 text-left">Permissions</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
+            <TableWrap className="mt-3 max-h-[520px]">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Role</TH>
+                    <TH>Permissions</TH>
+                    <TH className="text-right">Action</TH>
+                  </TR>
+                </THead>
                 <tbody>
                   {(["admin", "accountant", "viewer", "auditor"] as const).map((role) => {
                     const perms = rolePermByRole.get(role) ?? [];
                     const permSet = new Set(perms);
                     return (
-                      <tr key={role} className="border-t border-zinc-100 align-top">
-                        <td className="px-3 py-2 font-medium">{role}</td>
-                        <td className="px-3 py-2">
+                      <TR key={role} className="align-top">
+                        <TD className="font-medium">{role}</TD>
+                        <TD>
                           <div className="grid gap-2">
                             {PERM_GROUPS.map((g) => (
                               <div key={g.key} className="grid gap-1">
@@ -99,17 +125,14 @@ export default function Users() {
                                   {g.actions.map((a) => {
                                     const p = `${g.key}.${a}`;
                                     const checked = permSet.has(p);
-                                    const disabled = busy || !(user as any)?.isSuperAdmin;
+                                    const disabled = busy || !canManage;
                                     return (
-                                      <label key={p} className="inline-flex items-center gap-2 text-xs text-zinc-700">
-                                        <input
-                                          type="checkbox"
+                                      <div key={p} className="inline-flex items-center gap-2 text-xs text-zinc-700">
+                                        <Switch
                                           checked={checked}
                                           disabled={disabled}
-                                          onChange={async (e) => {
-                                            const next = e.target.checked
-                                              ? Array.from(new Set([...perms, p]))
-                                              : perms.filter((x) => x !== p);
+                                          onClick={async () => {
+                                            const next = !checked ? Array.from(new Set([...perms, p])) : perms.filter((x) => x !== p);
                                             setBusy(true);
                                             setErr(null);
                                             try {
@@ -123,18 +146,18 @@ export default function Users() {
                                           }}
                                         />
                                         {a}
-                                      </label>
+                                      </div>
                                     );
                                   })}
                                 </div>
                               </div>
                             ))}
                           </div>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                            disabled={busy || !(user as any)?.isSuperAdmin}
+                        </TD>
+                        <TD className="text-right">
+                          <Button
+                            size="sm"
+                            disabled={busy}
                             onClick={async () => {
                               setErr(null);
                               try {
@@ -145,38 +168,40 @@ export default function Users() {
                             }}
                           >
                             刷新
-                          </button>
-                        </td>
-                      </tr>
+                          </Button>
+                        </TD>
+                      </TR>
                     );
                   })}
                 </tbody>
-              </table>
-            </div>
-            {!(user as any)?.isSuperAdmin ? <div className="mt-2 text-xs text-zinc-500">只有 SuperAdmin 可以修改角色权限。</div> : null}
-          </div>
+              </Table>
+            </TableWrap>
+            {!canManage ? <div className="mt-2 text-xs text-zinc-500">没有权限修改角色权限。</div> : null}
+          </Card>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <Card className="p-4">
             <div className="text-sm font-semibold">邀请用户</div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div>
-                <label className="text-xs text-zinc-600">邮箱</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com" />
+                <Label>邮箱</Label>
+                <Input className="mt-1" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com" />
               </div>
               <div>
-                <label className="text-xs text-zinc-600">角色</label>
-                <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                <Label>角色</Label>
+                <Select className="mt-1" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
                   {(["admin", "accountant", "viewer", "auditor"] as const).map((r) => (
-                    <option key={r} value={r}>
+                    <option key={r} value={r} disabled={r === "admin" && !(user as any)?.isSuperAdmin}>
                       {r}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
-            <button
-              className="mt-3 rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+            <Button
+              variant="primary"
+              className="mt-3"
               disabled={busy || !inviteEmail.trim()}
+              loading={busy}
               onClick={async () => {
                 setBusy(true);
                 setErr(null);
@@ -184,6 +209,7 @@ export default function Users() {
                 try {
                   const r = await createInvite(inviteEmail, inviteRole);
                   setInviteUrl(r.inviteUrl);
+                  await refreshInvitations();
                 } catch (e: any) {
                   setErr(e.message);
                 } finally {
@@ -192,42 +218,113 @@ export default function Users() {
               }}
             >
               生成邀请链接
-            </button>
+            </Button>
             {inviteUrl ? (
-              <div className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm">
-                <div className="text-xs text-zinc-600">邀请链接</div>
-                <div className="mt-1 break-all font-mono text-xs">{inviteUrl}</div>
+              <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-zinc-600">邀请链接</div>
+                  <IconButton
+                    aria-label="Copy"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(inviteUrl);
+                        toast({ type: "success", message: "已复制邀请链接" });
+                      } catch {
+                        toast({ type: "error", message: "复制失败，请手动复制" });
+                      }
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </IconButton>
+                </div>
+                <div className="mt-2 break-all font-mono text-xs text-zinc-700">{inviteUrl}</div>
               </div>
             ) : null}
-          </div>
+          </Card>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <Card className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold">待接受邀请</div>
+              <Button size="sm" disabled={busy} onClick={() => refreshInvitations()}>
+                刷新
+              </Button>
+            </div>
+            {invitations.length ? (
+              <TableWrap className="mt-3 max-h-[260px]">
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Email</TH>
+                      <TH>Role</TH>
+                      <TH>Expires</TH>
+                      <TH className="text-right">Action</TH>
+                    </TR>
+                  </THead>
+                  <tbody>
+                    {invitations.map((inv) => (
+                      <TR key={inv.id}>
+                        <TD>{inv.email}</TD>
+                        <TD>{inv.role}</TD>
+                        <TD className="text-xs text-zinc-600">{String(inv.expiresAt || "").slice(0, 10)}</TD>
+                        <TD className="text-right">
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={busy}
+                            loading={busy}
+                            onClick={async () => {
+                              setBusy(true);
+                              setErr(null);
+                              try {
+                                await api(`/api/users/invitations/${inv.id}/revoke`, { method: "POST" });
+                                await refreshInvitations();
+                              } catch (e: any) {
+                                setErr(e.message);
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            Revoke
+                          </Button>
+                        </TD>
+                      </TR>
+                    ))}
+                  </tbody>
+                </Table>
+              </TableWrap>
+            ) : (
+              <EmptyState className="mt-3" title={tr("暂无邀请", "No invitations")} description={tr("生成一条邀请链接后会出现在这里。", "Create an invitation link and it will show up here.")} />
+            )}
+          </Card>
+
+          <Card className="p-4">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold">成员列表</div>
-              <button className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50" onClick={() => refresh()}>
+              <Button size="sm" onClick={() => refresh()}>
                 刷新
-              </button>
+              </Button>
             </div>
 
-            <div className="mt-3 max-h-[520px] overflow-auto rounded-lg border border-zinc-100">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Email</th>
-                    <th className="px-3 py-2 text-left">Role</th>
-                    <th className="px-3 py-2 text-left">Status</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
+            <TableWrap className="mt-3 max-h-[520px]">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Email</TH>
+                    <TH>Role</TH>
+                    <TH>Status</TH>
+                    <TH className="text-right">Action</TH>
+                  </TR>
+                </THead>
                 <tbody>
                   {members.map((m) => (
-                    <tr key={m.id} className="border-t border-zinc-100">
-                      <td className="px-3 py-2">{m.email}</td>
-                      <td className="px-3 py-2">
-                        <select
-                          className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                    <TR key={m.id}>
+                      <TD>{m.email}</TD>
+                      <TD>
+                        <Select
+                          className="w-full"
                           value={m.role}
-                          disabled={!((user as any)?.isSuperAdmin)}
+                          disabled={busy}
                           onChange={async (e) => {
                             setErr(null);
                             try {
@@ -239,16 +336,18 @@ export default function Users() {
                           }}
                         >
                           {(["admin", "accountant", "viewer", "auditor"] as const).map((r) => (
-                            <option key={r} value={r}>
+                            <option key={r} value={r} disabled={r === "admin" && !(user as any)?.isSuperAdmin}>
                               {r}
                             </option>
                           ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">{m.status}</td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                        </Select>
+                      </TD>
+                      <TD>{m.status}</TD>
+                      <TD className="text-right">
+                        <Button
+                          size="sm"
+                          variant={m.status === "active" ? "danger" : "secondary"}
+                          disabled={busy}
                           onClick={async () => {
                             setErr(null);
                             try {
@@ -263,16 +362,16 @@ export default function Users() {
                           }}
                         >
                           {m.status === "active" ? "Disable" : "Enable"}
-                        </button>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TD>
+                    </TR>
                   ))}
                 </tbody>
-              </table>
-            </div>
+              </Table>
+            </TableWrap>
 
             {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
-          </div>
+          </Card>
         </div>
       )}
     </AppShell>

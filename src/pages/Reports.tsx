@@ -4,6 +4,13 @@ import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
+import Button from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
+import { Segmented, SegmentedItem } from "@/components/ui/Segmented";
+import { Table, TableWrap, TD, TH, THead, TR } from "@/components/ui/Table";
+import FilterBar from "@/components/ui/FilterBar";
 
 type Account = { id: string; code: string; name: string; type: string };
 type CostCenter = { id: string; code: string; name: string };
@@ -193,84 +200,66 @@ export default function Reports() {
   }, [tab, displayRows, hideZero]);
 
   return (
-    <AppShell title={tr("报表", "Reports")}>
-      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-2">
-            {([
-              { k: "tb", t: "Trial Balance" },
-              { k: "pl", t: "Profit & Loss" },
-              { k: "bs", t: "Balance Sheet" },
-              { k: "gl", t: "General Ledger" },
-              { k: "tax", t: "Tax" },
-            ] as const).map((x) => (
-              <button
-                key={x.k}
-                className={
-                  "rounded-md px-3 py-2 text-sm " +
-                  (tab === x.k ? "bg-blue-700 text-white" : "border border-zinc-200 bg-white hover:bg-zinc-50")
-                }
-                onClick={() => setTab(x.k)}
-              >
-                {x.t}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            {exportUrl ? (
-              <a
-                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                href={exportUrl}
-              >
-                导出XLSX
-              </a>
-            ) : null}
-            <button
-              className="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50"
-              disabled={busy}
-              onClick={run}
-            >
-              {busy ? "生成中..." : "生成"}
-            </button>
-          </div>
-        </div>
+    <AppShell title={tr("报表", "Reports")} subtitle={tr("生成并导出常用财务报表", "Generate and export standard financial reports")}>
+      <Card className="p-4">
+        <FilterBar
+          left={
+            <Segmented className="grid-cols-5">
+              {([
+                { k: "tb", t: "Trial Balance" },
+                { k: "pl", t: "Profit & Loss" },
+                { k: "bs", t: "Balance Sheet" },
+                { k: "gl", t: "General Ledger" },
+                { k: "tax", t: "Tax" },
+              ] as const).map((x) => (
+                <SegmentedItem key={x.k} active={tab === x.k} onClick={() => setTab(x.k)}>
+                  {x.t}
+                </SegmentedItem>
+              ))}
+            </Segmented>
+          }
+          right={
+            <>
+              {exportUrl ? (
+                <Button onClick={() => window.open(exportUrl, "_blank")} type="button">
+                  导出XLSX
+                </Button>
+              ) : null}
+              <Button variant="primary" disabled={busy} onClick={run}>
+                {busy ? "生成中..." : "生成"}
+              </Button>
+            </>
+          }
+        />
 
         <div className="mt-3 flex flex-wrap gap-2">
-          {tab === "bs" ? (
+          {tab === "bs" ? <Input className="w-44" value={asOf} onChange={(e) => setAsOf(e.target.value)} /> : null}
+          {tab !== "bs" ? (
             <>
-              <input className="rounded-md border border-zinc-200 px-3 py-2 text-sm" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              <Input className="w-44" value={start} onChange={(e) => setStart(e.target.value)} />
+              <Input className="w-44" value={end} onChange={(e) => setEnd(e.target.value)} />
             </>
-          ) : (
-            <>
-              <input className="rounded-md border border-zinc-200 px-3 py-2 text-sm" value={start} onChange={(e) => setStart(e.target.value)} />
-              <input className="rounded-md border border-zinc-200 px-3 py-2 text-sm" value={end} onChange={(e) => setEnd(e.target.value)} />
-            </>
-          )}
+          ) : null}
 
           {tab === "tax" ? (
-            <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={taxKind} onChange={(e) => setTaxKind(e.target.value as any)}>
+            <Select className="w-52" value={taxKind} onChange={(e) => setTaxKind(e.target.value as any)}>
               <option value="gst">GST Form 5</option>
               <option value="sst">SST Summary</option>
-            </select>
+            </Select>
           ) : null}
 
           {tab === "gl" ? (
-            <select className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            <Select className="w-72" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
               <option value="">All Accounts</option>
               {accountOptions.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.code} {a.name}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : null}
 
-          <select
-            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-            value={costCenterId}
-            onChange={(e) => setCostCenterId(e.target.value)}
-            disabled={tab === "tax"}
-          >
+          <Select className="w-72" value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)} disabled={tab === "tax"}>
             <option value="">All Cost Centers</option>
             <option value="__none__">(No Cost Center)</option>
             {costCenters.map((c) => (
@@ -278,259 +267,222 @@ export default function Reports() {
                 {c.code} {c.name}
               </option>
             ))}
-          </select>
+          </Select>
 
-          <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
-            <input type="checkbox" className="h-4 w-4" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
-            {tr("不显示金额为 0 的科目", "Hide zero-amount accounts")}
-          </label>
+          <Button onClick={() => setHideZero((v) => !v)} type="button">
+            {hideZero ? tr("显示 0 金额", "Show zero") : tr("隐藏 0 金额", "Hide zero")}
+          </Button>
           <div className="ml-auto text-sm text-zinc-600">{baseCurrency}</div>
         </div>
 
         {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
 
-        <div className="mt-4 max-h-[560px] overflow-auto rounded-lg border border-zinc-100">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
+        <TableWrap className="mt-4 max-h-[560px]">
+          <Table>
+            <THead>
               {tab === "tax" ? (
-                <tr>
-                  <th className="px-3 py-2 text-left">Item</th>
-                  <th className="px-3 py-2 text-right">Amount ({baseCurrency})</th>
-                </tr>
+                <TR>
+                  <TH>Item</TH>
+                  <TH className="text-right">Amount ({baseCurrency})</TH>
+                </TR>
               ) : tab === "gl" ? (
-                <tr>
-                  <th className="px-3 py-2 text-left">科目</th>
-                  <th className="px-3 py-2 text-left">日期</th>
-                  <th className="px-3 py-2 text-left">分录号</th>
-                  <th className="px-3 py-2 text-left">摘要</th>
-                  <th className="px-3 py-2 text-left">成本中心</th>
-                  <th className="px-3 py-2 text-right">借（{baseCurrency}）</th>
-                  <th className="px-3 py-2 text-right">贷（{baseCurrency}）</th>
-                  <th className="px-3 py-2 text-right">余额（{baseCurrency}）</th>
-                </tr>
+                <TR>
+                  <TH>科目</TH>
+                  <TH>日期</TH>
+                  <TH>分录号</TH>
+                  <TH>摘要</TH>
+                  <TH>成本中心</TH>
+                  <TH className="text-right">借（{baseCurrency}）</TH>
+                  <TH className="text-right">贷（{baseCurrency}）</TH>
+                  <TH className="text-right">余额（{baseCurrency}）</TH>
+                </TR>
               ) : tab === "tb" ? (
-                <tr>
-                  <th className="px-3 py-2 text-left">Code</th>
-                  <th className="px-3 py-2 text-left">Name</th>
-                  <th className="px-3 py-2 text-right">Opening Dr ({baseCurrency})</th>
-                  <th className="px-3 py-2 text-right">Opening Cr ({baseCurrency})</th>
-                  <th className="px-3 py-2 text-right">Period Dr ({baseCurrency})</th>
-                  <th className="px-3 py-2 text-right">Period Cr ({baseCurrency})</th>
-                  <th className="px-3 py-2 text-right">Closing Dr ({baseCurrency})</th>
-                  <th className="px-3 py-2 text-right">Closing Cr ({baseCurrency})</th>
-                </tr>
-              ) : tab === "pl" ? (
-                <tr>
-                  <th className="px-3 py-2 text-left">Account</th>
-                  <th className="px-3 py-2 text-right">Amount ({baseCurrency})</th>
-                </tr>
+                <TR>
+                  <TH>Code</TH>
+                  <TH>Name</TH>
+                  <TH className="text-right">Opening Dr ({baseCurrency})</TH>
+                  <TH className="text-right">Opening Cr ({baseCurrency})</TH>
+                  <TH className="text-right">Period Dr ({baseCurrency})</TH>
+                  <TH className="text-right">Period Cr ({baseCurrency})</TH>
+                  <TH className="text-right">Closing Dr ({baseCurrency})</TH>
+                  <TH className="text-right">Closing Cr ({baseCurrency})</TH>
+                </TR>
               ) : (
-                <tr>
-                  <th className="px-3 py-2 text-left">Account</th>
-                  <th className="px-3 py-2 text-right">Amount ({baseCurrency})</th>
-                </tr>
+                <TR>
+                  <TH>Account</TH>
+                  <TH className="text-right">Amount ({baseCurrency})</TH>
+                </TR>
               )}
-            </thead>
+            </THead>
             <tbody>
               {tab === "tax" ? (
                 (displayRows as any[]).map((r, idx) => (
-                  <tr key={idx} className="border-t border-zinc-100">
-                    <td className="px-3 py-2">{String(r.label || r.code || "")}</td>
-                    <td className="px-3 py-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
-                  </tr>
+                  <TR key={idx}>
+                    <TD>{String(r.label || r.code || "")}</TD>
+                    <TD className="text-right">{Number(r.amount ?? 0).toFixed(2)}</TD>
+                  </TR>
                 ))
               ) : tab === "gl"
                 ? glRows.map((r, idx) => {
                     if (r.kind === "section") {
                       return (
-                        <tr key={idx} className="border-t border-zinc-100 bg-zinc-50 font-semibold">
-                          <td className="px-3 py-2" colSpan={8}>
+                        <TR key={idx} className="bg-zinc-50 font-semibold hover:bg-zinc-50">
+                          <TD colSpan={8}>
                             {r.label}
-                          </td>
-                        </tr>
+                          </TD>
+                        </TR>
                       );
                     }
                     if (r.kind === "account") {
                       return (
-                        <tr key={idx} className="border-t border-zinc-100 bg-white font-semibold">
-                          <td className="px-3 py-2" colSpan={8}>
+                        <TR key={idx} className="bg-white font-semibold hover:bg-white">
+                          <TD colSpan={8}>
                             {`${r.accountCode} ${r.accountName}`.trim()}
-                          </td>
-                        </tr>
+                          </TD>
+                        </TR>
                       );
                     }
                     if (r.kind === "opening") {
                       return (
-                        <tr key={idx} className="border-t border-zinc-100 bg-white">
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2 text-zinc-600">Opening Balance</td>
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2 text-right"></td>
-                          <td className="px-3 py-2 text-right"></td>
-                          <td className="px-3 py-2 text-right">{fmtBalance(Number(r.balanceNet || 0))}</td>
-                        </tr>
+                        <TR key={idx} className="bg-white hover:bg-white">
+                          <TD></TD>
+                          <TD></TD>
+                          <TD></TD>
+                          <TD className="text-zinc-600">Opening Balance</TD>
+                          <TD></TD>
+                          <TD className="text-right"></TD>
+                          <TD className="text-right"></TD>
+                          <TD className="text-right">{fmtBalance(Number(r.balanceNet || 0))}</TD>
+                        </TR>
                       );
                     }
                     if (r.kind === "closing") {
                       return (
-                        <tr key={idx} className="border-t border-zinc-100 bg-zinc-50 font-medium">
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2 text-zinc-700">Closing Balance</td>
-                          <td className="px-3 py-2"></td>
-                          <td className="px-3 py-2 text-right"></td>
-                          <td className="px-3 py-2 text-right"></td>
-                          <td className="px-3 py-2 text-right">{fmtBalance(Number(r.balanceNet || 0))}</td>
-                        </tr>
+                        <TR key={idx} className="bg-zinc-50 font-medium hover:bg-zinc-50">
+                          <TD></TD>
+                          <TD></TD>
+                          <TD></TD>
+                          <TD className="text-zinc-700">Closing Balance</TD>
+                          <TD></TD>
+                          <TD className="text-right"></TD>
+                          <TD className="text-right"></TD>
+                          <TD className="text-right">{fmtBalance(Number(r.balanceNet || 0))}</TD>
+                        </TR>
                       );
                     }
                     const cc = r.costCenterCode ? `${r.costCenterCode} ${r.costCenterName || ""}`.trim() : "";
                     return (
-                      <tr key={idx} className="border-t border-zinc-100">
-                        <td className="px-3 py-2"></td>
-                        <td className="px-3 py-2">{r.entryDate}</td>
-                        <td className="px-3 py-2">
+                      <TR key={idx}>
+                        <TD></TD>
+                        <TD>{r.entryDate}</TD>
+                        <TD>
                           {r.entryId ? (
-                            <button
-                              className="text-blue-700 hover:underline"
-                              type="button"
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => navigate(`/journal?entryId=${encodeURIComponent(String(r.entryId))}`)}
+                              type="button"
                             >
                               {String(r.voucherNo || "").trim() || String(r.entryId).slice(0, 8)}
-                            </button>
+                            </Button>
                           ) : null}
-                        </td>
-                        <td className="px-3 py-2">{r.memo || r.description || ""}</td>
-                        <td className="px-3 py-2">{cc}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{Number(r.creditBase ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right">{fmtBalance(Number(r.balanceNet || 0))}</td>
-                      </tr>
+                        </TD>
+                        <TD>{r.memo || r.description || ""}</TD>
+                        <TD>{cc}</TD>
+                        <TD className="text-right">{Number(r.debitBase ?? 0).toFixed(2)}</TD>
+                        <TD className="text-right">{Number(r.creditBase ?? 0).toFixed(2)}</TD>
+                        <TD className="text-right">{fmtBalance(Number(r.balanceNet || 0))}</TD>
+                      </TR>
                     );
                   })
                 : displayRows.map((r, idx) =>
                     tab === "tb" ? (
-                      <tr key={idx} className="border-t border-zinc-100">
-                        <td className="px-3 py-2">{r.code}</td>
-                        <td className="px-3 py-2">{r.name}</td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-blue-700 hover:underline"
-                            type="button"
-                            disabled={!r.accountId}
-                            onClick={() => drillToGL(String(r.accountId), start, end)}
-                          >
+                      <TR key={idx}>
+                        <TD>{r.code}</TD>
+                        <TD>{r.name}</TD>
+                        <TD className="text-right">
+                          <Button variant="ghost" size="sm" disabled={!r.accountId} onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                             {Number(r.openingDebit ?? 0).toFixed(2)}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-blue-700 hover:underline"
-                            type="button"
-                            disabled={!r.accountId}
-                            onClick={() => drillToGL(String(r.accountId), start, end)}
-                          >
+                          </Button>
+                        </TD>
+                        <TD className="text-right">
+                          <Button variant="ghost" size="sm" disabled={!r.accountId} onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                             {Number(r.openingCredit ?? 0).toFixed(2)}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-blue-700 hover:underline"
-                            type="button"
-                            disabled={!r.accountId}
-                            onClick={() => drillToGL(String(r.accountId), start, end)}
-                          >
+                          </Button>
+                        </TD>
+                        <TD className="text-right">
+                          <Button variant="ghost" size="sm" disabled={!r.accountId} onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                             {Number(r.periodDebit ?? 0).toFixed(2)}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-blue-700 hover:underline"
-                            type="button"
-                            disabled={!r.accountId}
-                            onClick={() => drillToGL(String(r.accountId), start, end)}
-                          >
+                          </Button>
+                        </TD>
+                        <TD className="text-right">
+                          <Button variant="ghost" size="sm" disabled={!r.accountId} onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                             {Number(r.periodCredit ?? 0).toFixed(2)}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-blue-700 hover:underline"
-                            type="button"
-                            disabled={!r.accountId}
-                            onClick={() => drillToGL(String(r.accountId), start, end)}
-                          >
+                          </Button>
+                        </TD>
+                        <TD className="text-right">
+                          <Button variant="ghost" size="sm" disabled={!r.accountId} onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                             {Number(r.closingDebit ?? 0).toFixed(2)}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            className="text-blue-700 hover:underline"
-                            type="button"
-                            disabled={!r.accountId}
-                            onClick={() => drillToGL(String(r.accountId), start, end)}
-                          >
+                          </Button>
+                        </TD>
+                        <TD className="text-right">
+                          <Button variant="ghost" size="sm" disabled={!r.accountId} onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                             {Number(r.closingCredit ?? 0).toFixed(2)}
-                          </button>
-                        </td>
-                      </tr>
+                          </Button>
+                        </TD>
+                      </TR>
                     ) : tab === "pl" ? (
-                      <tr
+                      <TR
                         key={idx}
                         className={
                           ("border-t border-zinc-100 " +
                             (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
                         }
                       >
-                        <td className={"px-3 py-2 " + (r.isHeader ? "text-zinc-900" : "")}>{r.isHeader ? r.name : `${r.code ? `${r.code} ` : ""}${r.name || ""}`.trim()}</td>
-                        <td className="px-3 py-2 text-right">
+                        <TD className={(r.isHeader ? "text-zinc-900" : "").trim()}>
+                          {r.isHeader ? r.name : `${r.code ? `${r.code} ` : ""}${r.name || ""}`.trim()}
+                        </TD>
+                        <TD className="text-right">
                           {r.amount === null || r.amount === undefined ? (
                             ""
                           ) : r.accountId ? (
-                            <button className="text-blue-700 hover:underline" type="button" onClick={() => drillToGL(String(r.accountId), start, end)}>
+                            <Button variant="ghost" size="sm" onClick={() => drillToGL(String(r.accountId), start, end)} type="button">
                               {Number(r.amount).toFixed(2)}
-                            </button>
+                            </Button>
                           ) : (
                             Number(r.amount).toFixed(2)
                           )}
-                        </td>
-                      </tr>
+                        </TD>
+                      </TR>
                     ) : (
-                      <tr
+                      <TR
                         key={idx}
                         className={
                           ("border-t border-zinc-100 " +
                             (r.isTotal ? "bg-zinc-50 font-semibold" : r.isHeader ? "bg-white font-semibold" : "")).trim()
                         }
                       >
-                        <td className="px-3 py-2" style={{ paddingLeft: `${8 + Number(r.indent || 0) * 16}px` }}>
+                        <TD style={{ paddingLeft: `${8 + Number(r.indent || 0) * 16}px` }}>
                           {r.label || r.name || ""}
-                        </td>
-                        <td className="px-3 py-2 text-right">
+                        </TD>
+                        <TD className="text-right">
                           {r.amount === null || r.amount === undefined ? (
                             ""
                           ) : r.accountId ? (
-                            <button
-                              className="text-blue-700 hover:underline"
-                              type="button"
-                              onClick={() => drillToGL(String(r.accountId), `${asOf.slice(0, 4)}-01-01`, asOf)}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => drillToGL(String(r.accountId), `${asOf.slice(0, 4)}-01-01`, asOf)} type="button">
                               {Number(r.amount).toFixed(2)}
-                            </button>
+                            </Button>
                           ) : (
                             Number(r.amount).toFixed(2)
                           )}
-                        </td>
-                      </tr>
+                        </TD>
+                      </TR>
                     ),
                   )}
             </tbody>
-          </table>
-        </div>
-      </div>
+          </Table>
+        </TableWrap>
+      </Card>
     </AppShell>
   );
 }

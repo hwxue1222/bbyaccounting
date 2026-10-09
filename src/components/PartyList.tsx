@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
+import Button from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import Input from "@/components/ui/Input";
+import Label from "@/components/ui/Label";
+import { Table, TableWrap, TD, TH, THead, TR } from "@/components/ui/Table";
+import Pagination from "@/components/ui/Pagination";
 
 type PartyRow = {
   id: string;
@@ -25,6 +31,7 @@ export default function PartyList(props: {
   const [err, setErr] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
 
@@ -56,27 +63,36 @@ export default function PartyList(props: {
     });
   }, [rows, search]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), pageCount);
+  const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+    <Card className="p-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="text-sm font-semibold">{props.title}</div>
         <div>
-          <label className="text-xs text-zinc-600">{tr("搜索", "Search")}</label>
-          <input className="mt-1 w-56 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Label>{tr("搜索", "Search")}</Label>
+          <Input className="mt-1 w-56" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <div>
-          <label className="text-xs text-zinc-600">{tr("编号（可选）", "Code (optional)")}</label>
-          <input className="mt-1 w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={newCode} onChange={(e) => setNewCode(e.target.value.toUpperCase())} />
+          <Label>{tr("编号（可选）", "Code (optional)")}</Label>
+          <Input className="mt-1 w-44" value={newCode} onChange={(e) => setNewCode(e.target.value.toUpperCase())} />
         </div>
         <div>
-          <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
-          <input className="mt-1 w-72 rounded-md border border-zinc-200 px-3 py-2 text-sm" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <Label>{tr("名称", "Name")}</Label>
+          <Input className="mt-1 w-72" value={newName} onChange={(e) => setNewName(e.target.value)} />
         </div>
-        <button
-          className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+        <Button
+          variant="primary"
           disabled={busy || !newName.trim()}
           onClick={async () => {
             setBusy(true);
@@ -95,46 +111,47 @@ export default function PartyList(props: {
           type="button"
         >
           {tr("新增", "Add")}
-        </button>
+        </Button>
       </div>
 
       {err ? <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
 
-      <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-zinc-50 text-xs text-zinc-600">
+      <TableWrap className="mt-3">
+        <Table>
+          <THead>
             <tr>
-              <th className="px-3 py-2 text-left">{tr("编号", "Code")}</th>
-              <th className="px-3 py-2 text-left">{tr("名称", "Name")}</th>
-              <th className="px-3 py-2 text-left">{tr("状态", "Status")}</th>
-              <th className="px-3 py-2 text-right">{tr("操作", "Action")}</th>
+              <TH>{tr("编号", "Code")}</TH>
+              <TH>{tr("名称", "Name")}</TH>
+              <TH>{tr("状态", "Status")}</TH>
+              <TH className="text-right">{tr("操作", "Action")}</TH>
             </tr>
-          </thead>
+          </THead>
           <tbody>
-            {filtered.map((v) => {
+            {pageRows.map((v) => {
               const isEditing = editingId === v.id;
               return (
-                <tr key={v.id} className="border-t border-zinc-100">
-                  <td className="px-3 py-2">
+                <TR key={v.id}>
+                  <TD>
                     {isEditing ? (
-                      <input className="w-36 rounded-md border border-zinc-200 px-2 py-1 text-sm" value={editingCode} onChange={(e) => setEditingCode(e.target.value.toUpperCase())} />
+                      <Input className="w-36 px-2 py-1" value={editingCode} onChange={(e) => setEditingCode(e.target.value.toUpperCase())} />
                     ) : (
                       v.code || "-"
                     )}
-                  </td>
-                  <td className="px-3 py-2">
+                  </TD>
+                  <TD>
                     {isEditing ? (
-                      <input className="w-full rounded-md border border-zinc-200 px-2 py-1 text-sm" value={editingName} onChange={(e) => setEditingName(e.target.value)} />
+                      <Input className="w-full px-2 py-1" value={editingName} onChange={(e) => setEditingName(e.target.value)} />
                     ) : (
                       v.name
                     )}
-                  </td>
-                  <td className="px-3 py-2">{v.isActive ? tr("启用", "Active") : tr("停用", "Inactive")}</td>
-                  <td className="px-3 py-2 text-right">
+                  </TD>
+                  <TD>{v.isActive ? tr("启用", "Active") : tr("停用", "Inactive")}</TD>
+                  <TD className="text-right">
                     {isEditing ? (
                       <div className="flex justify-end gap-2">
-                        <button
-                          className="rounded-md bg-blue-700 px-2 py-1 text-xs text-white hover:bg-blue-800 disabled:opacity-50"
+                        <Button
+                          variant="primary"
+                          size="sm"
                           disabled={busy || !editingName.trim()}
                           onClick={async () => {
                             setBusy(true);
@@ -155,19 +172,19 @@ export default function PartyList(props: {
                           type="button"
                         >
                           {tr("保存", "Save")}
-                        </button>
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                        </Button>
+                        <Button
+                          size="sm"
                           onClick={() => setEditingId(null)}
                           type="button"
                         >
                           {tr("取消", "Cancel")}
-                        </button>
+                        </Button>
                       </div>
                     ) : (
                       <div className="flex justify-end gap-2">
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                        <Button
+                          size="sm"
                           onClick={() => {
                             setEditingId(v.id);
                             setEditingCode((v.code || "").toUpperCase());
@@ -176,9 +193,9 @@ export default function PartyList(props: {
                           type="button"
                         >
                           {tr("编辑", "Edit")}
-                        </button>
-                        <button
-                          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                        </Button>
+                        <Button
+                          size="sm"
                           disabled={busy}
                           onClick={async () => {
                             setBusy(true);
@@ -198,24 +215,25 @@ export default function PartyList(props: {
                           type="button"
                         >
                           {v.isActive ? tr("停用", "Disable") : tr("启用", "Enable")}
-                        </button>
+                        </Button>
                       </div>
                     )}
-                  </td>
-                </tr>
+                  </TD>
+                </TR>
               );
             })}
-            {!filtered.length ? (
-              <tr>
-                <td className="px-3 py-8 text-center text-sm text-zinc-500" colSpan={4}>
+            {!pageRows.length ? (
+              <TR>
+                <TD className="py-8 text-center text-sm text-zinc-500" colSpan={4}>
                   {busy ? tr("加载中...", "Loading...") : tr("暂无数据", "No data")}
-                </td>
-              </tr>
+                </TD>
+              </TR>
             ) : null}
           </tbody>
-        </table>
-      </div>
-    </div>
+        </Table>
+      </TableWrap>
+
+      <Pagination className="mt-3" page={safePage} pageCount={pageCount} onPage={setPage} />
+    </Card>
   );
 }
-

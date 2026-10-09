@@ -3,67 +3,10 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
-import { requireOrgAccess, requireOrgRole } from "../lib/orgAccess.js";
+import { requireOrgAccess, requireOrgPermission } from "../lib/orgAccess.js";
+import { ALLOWED_ROLE_PERMS, ROLE_ORDER, defaultPermissionsForRole } from "../lib/rolePermissions.js";
 
 const router = Router();
-
-const ALLOWED_ROLE_PERMS = new Set([
-  "settings.view",
-  "settings.edit",
-  "journal.view",
-  "journal.edit",
-  "inventory.view",
-  "inventory.edit",
-  "fixedAssets.view",
-  "fixedAssets.edit",
-  "vendors.view",
-  "vendors.edit",
-  "customers.view",
-  "customers.edit",
-  "reports.view",
-  "users.manage",
-]);
-
-const ROLE_ORDER = ["admin", "accountant", "viewer", "auditor"] as const;
-
-function defaultPermissionsForRole(role: string): string[] {
-  const all = [
-    "settings.view",
-    "settings.edit",
-    "journal.view",
-    "journal.edit",
-    "inventory.view",
-    "inventory.edit",
-    "fixedAssets.view",
-    "fixedAssets.edit",
-    "vendors.view",
-    "vendors.edit",
-    "customers.view",
-    "customers.edit",
-    "reports.view",
-    "users.manage",
-  ];
-  const accountant = [
-    "settings.view",
-    "journal.view",
-    "journal.edit",
-    "inventory.view",
-    "inventory.edit",
-    "fixedAssets.view",
-    "fixedAssets.edit",
-    "vendors.view",
-    "vendors.edit",
-    "customers.view",
-    "customers.edit",
-    "reports.view",
-  ];
-  const viewer = ["journal.view", "vendors.view", "customers.view", "reports.view"];
-
-  if (role === "admin") return all;
-  if (role === "accountant") return accountant;
-  if (role === "viewer" || role === "auditor") return viewer;
-  return viewer;
-}
 
 async function getMyMembershipRole(sql: ReturnType<typeof getSql>, orgId: string, userId: string): Promise<string | null> {
   const rows = await sql`
@@ -90,12 +33,10 @@ router.get("/members", requireAuth, async (req: AuthedRequest, res: Response) =>
   const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
+  const permGuard = await requireOrgPermission(req, res, orgId, "users.manage");
+  if (permGuard === null) return;
+
   const sql = getSql();
-  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
-  if (!superRows.length) {
-    const guard = await requireOrgRole(req, res, orgId, "admin");
-    if (guard === null) return;
-  }
   const rows = await sql`
     SELECT
       m.id,
@@ -112,12 +53,65 @@ router.get("/members", requireAuth, async (req: AuthedRequest, res: Response) =>
   res.status(200).json({ success: true, data: { members: rows } });
 });
 
+router.get("/invitations", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const guard = await requireOrgPermission(req, res, orgId, "users.manage");
+  if (guard === null) return;
+
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      id,
+      email,
+      role,
+      expires_at as "expiresAt",
+      accepted_at as "acceptedAt",
+      revoked_at as "revokedAt",
+      created_at as "createdAt"
+    FROM invitations
+    WHERE org_id = ${orgId}
+      AND accepted_at IS NULL
+      AND revoked_at IS NULL
+      AND expires_at > now()
+    ORDER BY created_at DESC
+  `;
+  res.status(200).json({ success: true, data: { invitations: rows } });
+});
+
+router.post("/invitations/:invitationId/revoke", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const guard = await requireOrgPermission(req, res, orgId, "users.manage");
+  if (guard === null) return;
+
+  const sql = getSql();
+  const id = String(req.params.invitationId || "");
+  const updated = (
+    await sql`
+      UPDATE invitations
+      SET revoked_at = now()
+      WHERE id = ${id} AND org_id = ${orgId} AND accepted_at IS NULL AND revoked_at IS NULL
+      RETURNING id
+    `
+  )[0];
+  if (!updated) {
+    res.status(404).json({ success: false, error: "Not found" });
+    return;
+  }
+  res.status(200).json({ success: true, data: { ok: true } });
+});
+
 router.get("/role-permissions", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
   const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
-  const guard = await requireOrgRole(req, res, orgId, "admin");
+  const guard = await requireOrgPermission(req, res, orgId, "users.manage");
   if (guard === null) return;
 
   const sql = getSql();
@@ -162,7 +156,7 @@ router.patch("/role-permissions", requireAuth, async (req: AuthedRequest, res: R
   const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
-  const guard = await requireOrgRole(req, res, orgId, "admin");
+  const guard = await requireOrgPermission(req, res, orgId, "users.manage");
   if (guard === null) return;
 
   const bodySchema = z.object({
@@ -185,18 +179,7 @@ router.patch("/role-permissions", requireAuth, async (req: AuthedRequest, res: R
     return;
   }
 
-  if (parsed.data.role) {
-    const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
-    if (!superRows.length) {
-      res.status(403).json({ success: false, error: "Only superadmin can change roles" });
-      return;
-    }
-  }
-  const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
-  if (!superRows.length) {
-    res.status(403).json({ success: false, error: "Only superadmin can change role permissions" });
-    return;
-  }
+  void 0;
 
   const updated = (
     await sql`
@@ -216,7 +199,7 @@ router.patch("/members/:membershipId", requireAuth, async (req: AuthedRequest, r
   const orgId = await requireOrgAccess(req, res);
   if (!orgId) return;
 
-  const guard = await requireOrgRole(req, res, orgId, "admin");
+  const guard = await requireOrgPermission(req, res, orgId, "users.manage");
   if (guard === null) return;
 
   const bodySchema = z.object({

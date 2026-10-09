@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { AuthedRequest } from "./auth.js";
 import { getSql } from "./db.js";
 import { roleAtLeast, type Role } from "./roles.js";
+import { defaultPermissionsForRole } from "./rolePermissions.js";
 
 async function isGlobalAdmin(userId: string): Promise<boolean> {
   const sql = getSql();
@@ -78,6 +79,49 @@ export async function requireOrgRole(req: AuthedRequest, res: Response, orgId: s
   `;
   const role = (m[0] as any)?.role as Role | undefined;
   if (!role || !roleAtLeast(role, minRole)) {
+    res.status(403).json({ success: false, error: "Forbidden" });
+    return null;
+  }
+}
+
+export async function requireOrgPermission(req: AuthedRequest, res: Response, orgId: string, permission: string): Promise<void | null> {
+  const sql = getSql();
+  const orgRows = await sql`
+    SELECT id
+    FROM organizations
+    WHERE id = ${orgId} AND deleted_at IS NULL
+    LIMIT 1
+  `;
+  if (!orgRows.length) {
+    res.status(404).json({ success: false, error: "Organization not found" });
+    return null;
+  }
+
+  if (await isGlobalAdmin(req.auth!.userId)) {
+    return;
+  }
+
+  const m = await sql`
+    SELECT role
+    FROM memberships
+    WHERE user_id = ${req.auth!.userId} AND org_id = ${orgId} AND status = 'active'
+    LIMIT 1
+  `;
+  const role = String((m[0] as any)?.role || "");
+  if (!role) {
+    res.status(403).json({ success: false, error: "Forbidden" });
+    return null;
+  }
+
+  const rp = await sql`
+    SELECT permissions
+    FROM role_permissions
+    WHERE org_id = ${orgId} AND role = ${role}
+    LIMIT 1
+  `;
+  const permissions = (rp[0] as any)?.permissions ? (rp[0] as any).permissions : defaultPermissionsForRole(role);
+  const ok = Array.isArray(permissions) && permissions.includes(permission);
+  if (!ok) {
     res.status(403).json({ success: false, error: "Forbidden" });
     return null;
   }

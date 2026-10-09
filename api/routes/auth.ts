@@ -6,10 +6,10 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated, sha256 } from "../lib/migrate.js";
-import { clearSessionCookie, requireAuth, setSessionCookie, type AuthedRequest } from "../lib/auth.js";
-import { hashPassword, signSession, verifyPassword } from "../lib/security.js";
+import { clearSessionCookie, readSessionCookie, requireAuth, setSessionCookie, type AuthedRequest } from "../lib/auth.js";
+import { hashPassword, signSession, verifyPassword, verifySession } from "../lib/security.js";
 import { randomToken } from "../lib/security.js";
-import { seedOrgDefaults } from "../lib/seed.js";
+import { requireOrgPermission } from "../lib/orgAccess.js";
 
 const router = Router();
 
@@ -176,7 +176,7 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
   await ensureMigrated();
   const bodySchema = z.object({
     token: z.string().min(20),
-    password: z.string().min(8),
+    password: z.string().optional(),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -192,7 +192,8 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
       email,
       role,
       expires_at as "expiresAt",
-      accepted_at as "acceptedAt"
+      accepted_at as "acceptedAt",
+      revoked_at as "revokedAt"
     FROM invitations
     WHERE token_hash = ${tokenHash}
     LIMIT 1
@@ -204,6 +205,10 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
   }
   if (inv.acceptedAt) {
     res.status(409).json({ success: false, error: "Invite already accepted" });
+    return;
+  }
+  if (inv.revokedAt) {
+    res.status(410).json({ success: false, error: "Invite revoked" });
     return;
   }
   if (new Date(inv.expiresAt).getTime() < Date.now()) {
@@ -218,14 +223,43 @@ router.post("/accept-invite", async (req: Request, res: Response): Promise<void>
   }
 
   const emailNorm = normalizeEmail(inv.email);
-  const userRows = await sql`SELECT id, email FROM users WHERE email = ${emailNorm}`;
-  const userExisting = userRows[0];
-  const user = userExisting
+  const userRows = await sql`SELECT id, email, status FROM users WHERE email = ${emailNorm}`;
+  const userExisting = userRows[0] as any;
+  const isExisting = Boolean(userExisting);
+  if (isExisting) {
+    if (String(userExisting.status || "active") !== "active") {
+      res.status(400).json({ success: false, error: "User is not active" });
+      return;
+    }
+    const rawToken = readSessionCookie(req);
+    if (!rawToken) {
+      res.status(401).json({ success: false, error: "Please sign in to accept this invite" });
+      return;
+    }
+    try {
+      const claims = verifySession(rawToken);
+      if (String(claims.userId) !== String(userExisting.id)) {
+        res.status(403).json({ success: false, error: "Please sign in with the invited email" });
+        return;
+      }
+    } catch {
+      res.status(401).json({ success: false, error: "Please sign in to accept this invite" });
+      return;
+    }
+  }
+
+  const pass = String(parsed.data.password || "");
+  if (!isExisting && pass.trim().length < 8) {
+    res.status(400).json({ success: false, error: "Password must be at least 8 characters" });
+    return;
+  }
+
+  const user = isExisting
     ? userExisting
     : (
         await sql`
           INSERT INTO users (email, password_hash)
-          VALUES (${emailNorm}, ${await hashPassword(parsed.data.password)})
+          VALUES (${emailNorm}, ${await hashPassword(pass)})
           RETURNING id, email
         `
       )[0];
@@ -273,17 +307,8 @@ router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Respo
   const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
   const isSuperAdmin = superRows.length > 0;
   if (!isSuperAdmin) {
-    const m = await sql`
-      SELECT role
-      FROM memberships
-      WHERE org_id = ${orgId} AND user_id = ${req.auth!.userId} AND status = 'active'
-      LIMIT 1
-    `;
-    const role = (m[0] as any)?.role;
-    if (String(role) !== "admin") {
-      res.status(403).json({ success: false, error: "Forbidden" });
-      return;
-    }
+    const g = await requireOrgPermission(req, res, orgId, "users.manage");
+    if (g === null) return;
   }
   if (parsed.data.role === "admin" && !isSuperAdmin) {
     res.status(403).json({ success: false, error: "Only superadmin can invite admins" });
@@ -301,8 +326,8 @@ router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Respo
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
 
   await sql`
-    INSERT INTO invitations (org_id, email, role, token_hash, expires_at, created_by)
-    VALUES (${orgId}, ${emailNorm}, ${parsed.data.role}, ${tokenHash}, ${expiresAt.toISOString()}, ${req.auth!.userId})
+    INSERT INTO invitations (org_id, email, role, token_hash, expires_at, revoked_at, created_by)
+    VALUES (${orgId}, ${emailNorm}, ${parsed.data.role}, ${tokenHash}, ${expiresAt.toISOString()}, null, ${req.auth!.userId})
   `;
   const appOrigin = process.env.APP_ORIGIN || "http://localhost:5173";
   res.status(200).json({ success: true, data: { token, inviteUrl: `${appOrigin}/auth/invite?token=${token}` } });

@@ -12,3 +12,27 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+body {
+  @apply bg-zinc-50 text-zinc-900;
+}
+
+::selection {
+  @apply bg-blue-100;
+}
+
+::selection {
+  @apply bg-blue-100;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  @apply outline-none ring-4 ring-blue-200 ring-offset-2 ring-offset-white;
+}
+
+a:not([class]) {
+  @apply text-blue-700;
+}
+
+a:not([class]):hover {
+  @apply underline;
+}

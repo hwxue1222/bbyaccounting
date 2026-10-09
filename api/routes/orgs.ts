@@ -36,8 +36,12 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
           o.name as "orgName",
           o.registration_no as "registrationNo",
           o.base_currency as "baseCurrency",
-          'admin' as "role"
+          'admin' as "role",
+          COALESCE(rp.permissions, '{}') as "permissions",
+          o.plan as "plan",
+          o.plan_status as "planStatus"
         FROM organizations o
+        LEFT JOIN role_permissions rp ON rp.org_id = o.id AND rp.role = 'admin'
         WHERE o.deleted_at IS NULL
         ORDER BY o.created_at ASC
       `
@@ -47,9 +51,13 @@ router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
           o.name as "orgName",
           o.registration_no as "registrationNo",
           o.base_currency as "baseCurrency",
-          m.role as "role"
+          m.role as "role",
+          COALESCE(rp.permissions, '{}') as "permissions",
+          o.plan as "plan",
+          o.plan_status as "planStatus"
         FROM memberships m
         JOIN organizations o ON o.id = m.org_id
+        LEFT JOIN role_permissions rp ON rp.org_id = o.id AND rp.role = m.role
         WHERE m.user_id = ${req.auth!.userId} AND m.status = 'active'
           AND o.deleted_at IS NULL
         ORDER BY o.created_at ASC
@@ -255,7 +263,7 @@ router.post("/delete", requireAuth, async (req: AuthedRequest, res: Response) =>
       return { deleted: false, nextOrgId: null as string | null };
     }
 
-    await trx`UPDATE memberships SET status = 'inactive' WHERE org_id = ${parsed.data.orgId}`;
+    await trx`UPDATE memberships SET status = 'disabled' WHERE org_id = ${parsed.data.orgId}`;
     await trx`DELETE FROM user_default_org WHERE org_id = ${parsed.data.orgId}`;
 
     let nextOrgId: string | null = null;

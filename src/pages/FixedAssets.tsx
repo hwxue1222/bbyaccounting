@@ -4,6 +4,14 @@ import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
+import { Segmented, SegmentedItem } from "@/components/ui/Segmented";
+import Button from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import Confirm from "@/components/ui/Confirm";
+import Label from "@/components/ui/Label";
+import Select from "@/components/ui/Select";
+import Input from "@/components/ui/Input";
+import { Table, TableWrap, TD, TH, THead, TR } from "@/components/ui/Table";
 
 type Account = { id: string; code: string; name: string };
 type CostCenter = { id: string; code: string; name: string; isActive?: boolean };
@@ -122,6 +130,8 @@ export default function FixedAssets() {
   const [scheduleEnd, setScheduleEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteTargetAssetId, setDeleteTargetAssetId] = useState<string | null>(null);
   const [assetForm, setAssetForm] = useState({
     category: "",
     assetNo: "",
@@ -545,78 +555,32 @@ export default function FixedAssets() {
   }, [activeOrgId, params]);
 
   return (
-    <AppShell title={tr("固定资产", "Fixed Assets")}>
+    <AppShell title={tr("固定资产", "Fixed Assets")} subtitle={tr("购买、折旧与处置管理", "Purchase, depreciation and disposal")}>
       <div className="space-y-4">
-        <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
-          <div className="grid grid-cols-5 gap-1">
-            <button
-              className={
-                tab === "list"
-                  ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                  : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-              }
-              type="button"
-              onClick={() => setTab("list")}
-            >
-              资产列表
-            </button>
-            <button
-              className={
-                tab === "purchase"
-                  ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                  : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-              }
-              type="button"
-              onClick={() => setTab("purchase")}
-            >
-              购买
-            </button>
-            <button
-              className={
-                tab === "depreciate"
-                  ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                  : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-              }
-              type="button"
-              onClick={() => setTab("depreciate")}
-            >
-              折旧
-            </button>
-            <button
-              className={
-                tab === "dispose"
-                  ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                  : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-              }
-              type="button"
-              onClick={() => setTab("dispose")}
-            >
-              处置
-            </button>
-            <button
-              className={
-                tab === "schedule"
-                  ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                  : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-              }
-              type="button"
-              onClick={() => setTab("schedule")}
-            >
-              变动表
-            </button>
-          </div>
-        </div>
+        <Segmented className="grid-cols-5">
+          <SegmentedItem active={tab === "list"} onClick={() => setTab("list")}>
+            资产列表
+          </SegmentedItem>
+          <SegmentedItem active={tab === "purchase"} onClick={() => setTab("purchase")}>
+            购买
+          </SegmentedItem>
+          <SegmentedItem active={tab === "depreciate"} onClick={() => setTab("depreciate")}>
+            折旧
+          </SegmentedItem>
+          <SegmentedItem active={tab === "dispose"} onClick={() => setTab("dispose")}>
+            处置
+          </SegmentedItem>
+          <SegmentedItem active={tab === "schedule"} onClick={() => setTab("schedule")}>
+            变动表
+          </SegmentedItem>
+        </Segmented>
 
-        <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "list" ? "" : "hidden")}>
+        <Card className={"p-4 " + (tab === "list" ? "" : "hidden")}>
           <div className="text-sm font-semibold">资产列表</div>
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <div>
-              <label className="text-xs text-zinc-600">Cost Center</label>
-              <select
-                className="mt-1 w-56 rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
-                value={costCenterFilterId}
-                onChange={(e) => setCostCenterFilterId(e.target.value)}
-              >
+              <Label>Cost Center</Label>
+              <Select className="mt-1 w-56" value={costCenterFilterId} onChange={(e) => setCostCenterFilterId(e.target.value)}>
                 <option value="">{tr("全部", "All")}</option>
                 <option value="__none__">{tr("(无)", "(None)")}</option>
                 {costCenters.map((c) => (
@@ -624,7 +588,7 @@ export default function FixedAssets() {
                     {c.code} {c.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="text-xs text-zinc-600">
               {tr("合计", "Total")}: {assetCostCenterSummary.total.costBase.toFixed(2)} {baseCurrency} · {tr("项数", "Count")}: {assetCostCenterSummary.total.count}
@@ -632,42 +596,42 @@ export default function FixedAssets() {
           </div>
 
           {assetCostCenterSummary.rows.length ? (
-            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-50 text-xs text-zinc-600">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Cost Center</th>
-                    <th className="px-3 py-2 text-right">项数</th>
-                    <th className="px-3 py-2 text-right">金额（交易币）</th>
-                    <th className="px-3 py-2 text-left">币种</th>
-                    <th className="px-3 py-2 text-right">成本（{baseCurrency}）</th>
-                  </tr>
-                </thead>
+            <TableWrap className="mt-3">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Cost Center</TH>
+                    <TH className="text-right">项数</TH>
+                    <TH className="text-right">金额（交易币）</TH>
+                    <TH>币种</TH>
+                    <TH className="text-right">成本（{baseCurrency}）</TH>
+                  </TR>
+                </THead>
                 <tbody>
                   {assetCostCenterSummary.rows.map((r) => {
                     const label = `${r.code || ""} ${r.name || ""}`.trim() || tr("(无)", "(None)");
                     const txnText = r.mixedCurrency ? "-" : r.txnSum.toFixed(2);
                     const curr = r.mixedCurrency ? "-" : r.currency || "-";
                     return (
-                      <tr key={r.id || "__none__"} className="border-t border-zinc-100">
-                        <td className="px-3 py-2">{label}</td>
-                        <td className="px-3 py-2 text-right">{r.count}</td>
-                        <td className="px-3 py-2 text-right">{txnText}</td>
-                        <td className="px-3 py-2">{curr}</td>
-                        <td className="px-3 py-2 text-right">{r.costBase.toFixed(2)}</td>
-                      </tr>
+                      <TR key={r.id || "__none__"}>
+                        <TD>{label}</TD>
+                        <TD className="text-right">{r.count}</TD>
+                        <TD className="text-right">{txnText}</TD>
+                        <TD>{curr}</TD>
+                        <TD className="text-right">{r.costBase.toFixed(2)}</TD>
+                      </TR>
                     );
                   })}
-                  <tr className="border-t border-zinc-200 bg-zinc-50">
-                    <td className="px-3 py-2 font-medium">{tr("合计", "Total")}</td>
-                    <td className="px-3 py-2 text-right font-medium">{assetCostCenterSummary.total.count}</td>
-                    <td className="px-3 py-2 text-right font-medium">-</td>
-                    <td className="px-3 py-2 font-medium">-</td>
-                    <td className="px-3 py-2 text-right font-medium">{assetCostCenterSummary.total.costBase.toFixed(2)}</td>
-                  </tr>
+                  <TR className="border-t border-zinc-200 bg-zinc-50 hover:bg-zinc-50">
+                    <TD className="font-medium">{tr("合计", "Total")}</TD>
+                    <TD className="text-right font-medium">{assetCostCenterSummary.total.count}</TD>
+                    <TD className="text-right font-medium">-</TD>
+                    <TD className="font-medium">-</TD>
+                    <TD className="text-right font-medium">{assetCostCenterSummary.total.costBase.toFixed(2)}</TD>
+                  </TR>
                 </tbody>
-              </table>
-            </div>
+              </Table>
+            </TableWrap>
           ) : null}
           <div className="mt-3 space-y-4">
             {categoriesToRender.map((cat) => {
@@ -731,8 +695,9 @@ export default function FixedAssets() {
                             <td className="px-3 py-2">{a.purchaseMemo || ""}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{a.status}</td>
                             <td className="px-3 py-2 text-right">
-                              <button
-                                className="mr-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              <Button
+                                size="sm"
+                                className="mr-2"
                                 disabled={busy}
                                 onClick={() => {
                                   setErr(null);
@@ -744,27 +709,20 @@ export default function FixedAssets() {
                                 type="button"
                               >
                                 编辑
-                              </button>
-                              <button
-                                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
                                 disabled={busy}
-                                onClick={async () => {
-                                  const ok = window.confirm("确认删除该固定资产？此操作将从资产列表与变动表移除该记录。");
-                                  if (!ok) return;
-                                  setBusy(true);
+                                onClick={() => {
                                   setErr(null);
-                                  try {
-                                    await deleteAsset(a.id);
-                                  } catch (e: any) {
-                                    setErr(e.message);
-                                  } finally {
-                                    setBusy(false);
-                                  }
+                                  setDeleteTargetAssetId(a.id);
+                                  setDeleteConfirmOpen(true);
                                 }}
                                 type="button"
                               >
                                 删除
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -776,18 +734,14 @@ export default function FixedAssets() {
             })}
           </div>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
-        </div>
+        </Card>
 
-        <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "purchase" ? "" : "hidden")}>
+        <Card className={"p-4 " + (tab === "purchase" ? "" : "hidden")}>
           <div className="text-sm font-semibold">新增资产（自动生成购置分录）</div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <div>
-              <label className="text-xs text-zinc-600">大类</label>
-              <select
-                className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
-                value={assetForm.category}
-                onChange={(e) => setAssetForm({ ...assetForm, category: e.target.value })}
-              >
+              <Label>大类</Label>
+              <Select className="mt-1" value={assetForm.category} onChange={(e) => setAssetForm({ ...assetForm, category: e.target.value })}>
                 <option value="">请选择</option>
                 <option value="Machinery and Equipment">Machinery and Equipment</option>
                 <option value="Vehicles">Vehicles</option>
@@ -795,69 +749,62 @@ export default function FixedAssets() {
                 <option value="Furniture and Fixtures">Furniture and Fixtures</option>
                 <option value="Renovation">Renovation</option>
                 <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
-              </select>
+              </Select>
             </div>
             <div>
-              <label className="text-xs text-zinc-600">固定资产编号</label>
-              <input
-                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                value={assetForm.assetNo}
-                onChange={(e) => setAssetForm({ ...assetForm, assetNo: e.target.value.toUpperCase() })}
-                placeholder={assetForm.category ? "例如：FA-COM00001" : "请先选择大类"}
-              />
+              <Label>固定资产编号</Label>
+              <Input className="mt-1" value={assetForm.assetNo} onChange={(e) => setAssetForm({ ...assetForm, assetNo: e.target.value.toUpperCase() })} placeholder={assetForm.category ? "例如：FA-COM00001" : "请先选择大类"} />
               <div className="mt-1 text-xs text-zinc-500">留空则系统自动生成（按大类递增）。</div>
             </div>
             <div>
-              <label className="text-xs text-zinc-600">名称</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} />
+              <Label>名称</Label>
+              <Input className="mt-1" value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">购置日</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.acquisitionDate} onChange={(e) => setAssetForm({ ...assetForm, acquisitionDate: e.target.value })} />
+              <Label>购置日</Label>
+              <Input className="mt-1" value={assetForm.acquisitionDate} onChange={(e) => setAssetForm({ ...assetForm, acquisitionDate: e.target.value })} type="date" />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">金额（交易币）</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.costTxn} onChange={(e) => setAssetForm({ ...assetForm, costTxn: Number(e.target.value) || 0 })} type="number" step="0.01" />
+              <Label>金额（交易币）</Label>
+              <Input className="mt-1" value={assetForm.costTxn} onChange={(e) => setAssetForm({ ...assetForm, costTxn: Number(e.target.value) || 0 })} type="number" step="0.01" />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">币种</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.currency} onChange={(e) => setAssetForm({ ...assetForm, currency: e.target.value.toUpperCase() })} maxLength={3} />
+              <Label>币种</Label>
+              <Input className="mt-1" value={assetForm.currency} onChange={(e) => setAssetForm({ ...assetForm, currency: e.target.value.toUpperCase() })} maxLength={3} />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">汇率</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.fxRate} onChange={(e) => setAssetForm({ ...assetForm, fxRate: Number(e.target.value) || 1 })} type="number" step="0.0001" />
+              <Label>汇率</Label>
+              <Input className="mt-1" value={assetForm.fxRate} onChange={(e) => setAssetForm({ ...assetForm, fxRate: Number(e.target.value) || 1 })} type="number" step="0.0001" />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">折旧月数</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.usefulLifeMonths} onChange={(e) => setAssetForm({ ...assetForm, usefulLifeMonths: Number(e.target.value) || 0 })} type="number" />
+              <Label>折旧月数</Label>
+              <Input className="mt-1" value={assetForm.usefulLifeMonths} onChange={(e) => setAssetForm({ ...assetForm, usefulLifeMonths: Number(e.target.value) || 0 })} type="number" />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">残值（{baseCurrency}）</label>
-              <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={assetForm.salvageBase} onChange={(e) => setAssetForm({ ...assetForm, salvageBase: Number(e.target.value) || 0 })} type="number" step="0.01" />
+              <Label>残值（{baseCurrency}）</Label>
+              <Input className="mt-1" value={assetForm.salvageBase} onChange={(e) => setAssetForm({ ...assetForm, salvageBase: Number(e.target.value) || 0 })} type="number" step="0.01" />
             </div>
             <div>
-              <label className="text-xs text-zinc-600">贷方科目（现金/应付）</label>
-              <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={assetForm.offsetAccountId} onChange={(e) => setAssetForm({ ...assetForm, offsetAccountId: e.target.value })}>
+              <Label>贷方科目（现金/应付）</Label>
+              <Select className="mt-1" value={assetForm.offsetAccountId} onChange={(e) => setAssetForm({ ...assetForm, offsetAccountId: e.target.value })}>
                 <option value="">请选择</option>
                 {cashAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.code} {a.name}{(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs text-zinc-600">备注</label>
-              <input
-                className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                value={assetForm.memo}
-                onChange={(e) => setAssetForm({ ...assetForm, memo: e.target.value })}
-              />
+              <Label>备注</Label>
+              <Input className="mt-1" value={assetForm.memo} onChange={(e) => setAssetForm({ ...assetForm, memo: e.target.value })} />
             </div>
           </div>
-          <button
-            className="mt-3 rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+          <Button
+            variant="primary"
+            className="mt-3"
             disabled={busy || !assetForm.offsetAccountId || !assetForm.category}
+            loading={busy}
             onClick={async () => {
               setBusy(true);
               setErr(null);
@@ -878,60 +825,57 @@ export default function FixedAssets() {
                 setBusy(false);
               }
             }}
+            type="button"
           >
             保存草稿
-          </button>
+          </Button>
           {err ? <div className="mt-3 text-sm text-red-700">{err}</div> : null}
 
           <div className="mt-6 border-t border-zinc-100 pt-4">
             <div className="text-sm font-semibold">购买流水</div>
             <div className="mt-3 flex gap-2">
-              <input
-                className="w-40 rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                value={purchasePeriod}
-                onChange={(e) => setPurchasePeriod(e.target.value)}
-                type="month"
-              />
+              <Input className="w-40" value={purchasePeriod} onChange={(e) => setPurchasePeriod(e.target.value)} type="month" />
             </div>
 
-            <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-50 text-xs text-zinc-600">
-                  <tr>
-                    <th className="px-3 py-2 text-left">日期</th>
-                    <th className="px-3 py-2 text-left">分录号</th>
-                    <th className="px-3 py-2 text-left">资产编号</th>
-                    <th className="px-3 py-2 text-left">状态</th>
-                    <th className="px-3 py-2 text-right">成本（{baseCurrency}）</th>
-                  </tr>
-                </thead>
+            <TableWrap className="mt-3">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>日期</TH>
+                    <TH>分录号</TH>
+                    <TH>资产编号</TH>
+                    <TH>状态</TH>
+                    <TH className="text-right">成本（{baseCurrency}）</TH>
+                  </TR>
+                </THead>
                 <tbody>
                   {purchaseEntries.length ? (
                     purchaseEntries.map((e) => (
-                      <tr key={e.entryId} className="border-t border-zinc-100">
-                        <td className="px-3 py-2">{e.entryDate}</td>
-                        <td className="px-3 py-2">
-                          <button className="text-blue-700 hover:underline" onClick={() => openJournalModal(e.entryId)} type="button">
+                      <TR key={e.entryId}>
+                        <TD>{e.entryDate}</TD>
+                        <TD>
+                          <Button variant="ghost" size="sm" onClick={() => openJournalModal(e.entryId)} type="button">
                             {e.voucherNo || "-"}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2">{e.assetNos || ""}</td>
-                        <td className="px-3 py-2">{e.status}</td>
-                        <td className="px-3 py-2 text-right">{Number(e.costBase || 0).toFixed(2)}</td>
-                      </tr>
+                          </Button>
+                        </TD>
+                        <TD>{e.assetNos || ""}</TD>
+                        <TD>{e.status}</TD>
+                        <TD className="text-right">{Number(e.costBase || 0).toFixed(2)}</TD>
+                      </TR>
                     ))
                   ) : (
-                    <tr>
-                      <td className="px-3 py-6 text-center text-sm text-zinc-500" colSpan={5}>
+                    <TR>
+                      <TD className="py-6 text-center text-sm text-zinc-500" colSpan={5}>
                         暂无购买流水
-                      </td>
-                    </tr>
+                      </TD>
+                    </TR>
                   )}
                 </tbody>
-              </table>
-            </div>
+
+              </Table>
+            </TableWrap>
           </div>
-        </div>
+        </Card>
 
         <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (tab === "depreciate" ? "" : "hidden")}>
           <div className="text-sm font-semibold">折旧分录</div>
@@ -1493,6 +1437,37 @@ export default function FixedAssets() {
           </div>
         </div>
       ) : null}
-    </AppShell>
+        <Confirm
+          open={deleteConfirmOpen}
+          title={tr("确认删除固定资产？", "Delete this asset?")}
+          description={tr("此操作将从资产列表与变动表移除该记录。", "This removes the asset from the list and schedule.")}
+          danger
+          confirmText={tr("删除", "Delete")}
+          cancelText={tr("取消", "Cancel")}
+          onClose={() => {
+            if (busy) return;
+            setDeleteConfirmOpen(false);
+            setDeleteTargetAssetId(null);
+          }}
+          onConfirm={async () => {
+            const id = deleteTargetAssetId;
+            if (!id) {
+              setDeleteConfirmOpen(false);
+              return;
+            }
+            setBusy(true);
+            setErr(null);
+            try {
+              await deleteAsset(id);
+              setDeleteConfirmOpen(false);
+              setDeleteTargetAssetId(null);
+            } catch (e: any) {
+              setErr(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      </AppShell>
   );
 }

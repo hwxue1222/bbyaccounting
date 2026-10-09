@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
-import { requireOrgAccess } from "../lib/orgAccess.js";
+import { requireOrgAccess, requireOrgPermission } from "../lib/orgAccess.js";
 
 const router = Router();
 
@@ -202,6 +202,69 @@ router.get("/bootstrap", requireAuth, async (req: AuthedRequest, res: Response) 
   };
 
   res.status(200).json({ success: true, data: { accounts, costCenters, currencies, fxRates, bankAccounts, tax } });
+});
+
+router.get("/subscription", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const guard = await requireOrgPermission(req, res, orgId, "settings.view");
+  if (guard === null) return;
+
+  const sql = getSql();
+  const rows = await sql`
+    SELECT plan, plan_status as "planStatus", plan_started_at as "planStartedAt"
+    FROM organizations
+    WHERE id = ${orgId}
+    LIMIT 1
+  `;
+  const r = (rows as any[])?.[0] as any;
+  res.status(200).json({
+    success: true,
+    data: {
+      plan: String(r?.plan || "basic"),
+      planStatus: String(r?.planStatus || "active"),
+      planStartedAt: r?.planStartedAt ? String(r.planStartedAt) : null,
+    },
+  });
+});
+
+router.post("/subscribe", requireAuth, async (req: AuthedRequest, res: Response) => {
+  await ensureMigrated();
+  const orgId = await requireOrgAccess(req, res);
+  if (!orgId) return;
+
+  const guard = await requireOrgPermission(req, res, orgId, "settings.edit");
+  if (guard === null) return;
+
+  const bodySchema = z.object({ plan: z.enum(["basic"]).default("basic") });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Invalid input" });
+    return;
+  }
+
+  const sql = getSql();
+  const updated = (
+    await sql`
+      UPDATE organizations
+      SET
+        plan = ${parsed.data.plan},
+        plan_status = 'active',
+        plan_started_at = COALESCE(plan_started_at, now())
+      WHERE id = ${orgId}
+      RETURNING plan, plan_status as "planStatus", plan_started_at as "planStartedAt"
+    `
+  )[0] as any;
+  res.status(200).json({
+    success: true,
+    data: {
+      plan: String(updated?.plan || "basic"),
+      planStatus: String(updated?.planStatus || "active"),
+      planStartedAt: updated?.planStartedAt ? String(updated.planStartedAt) : null,
+    },
+  });
 });
 
 router.get("/accounts", requireAuth, async (req: AuthedRequest, res: Response) => {

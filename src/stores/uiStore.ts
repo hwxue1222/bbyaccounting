@@ -2,6 +2,17 @@ import { create } from "zustand";
 
 export type Lang = "zh" | "en";
 
+export type ToastType = "success" | "error" | "info";
+
+export type ToastItem = {
+  id: string;
+  type: ToastType;
+  title?: string;
+  message: string;
+  createdAt: number;
+  ttlMs: number;
+};
+
 function readInitialLang(): Lang {
   try {
     const v = globalThis.localStorage?.getItem("bby_lang");
@@ -26,6 +37,9 @@ type UiState = {
   inflightStartedAt: number | null;
   beginNetwork: () => void;
   endNetwork: () => void;
+  toasts: ToastItem[];
+  toast: (t: { type: ToastType; message: string; title?: string; ttlMs?: number }) => void;
+  dismissToast: (id: string) => void;
 };
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -56,5 +70,21 @@ export const useUiStore = create<UiState>((set, get) => ({
     const cur = get().inflight;
     const next = Math.max(0, cur - 1);
     set({ inflight: next, inflightStartedAt: next === 0 ? null : get().inflightStartedAt });
+  },
+  toasts: [],
+  toast: (t) => {
+    const id = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
+    const item: ToastItem = {
+      id,
+      type: t.type,
+      title: t.title,
+      message: t.message,
+      createdAt: Date.now(),
+      ttlMs: typeof t.ttlMs === "number" && t.ttlMs > 0 ? t.ttlMs : 4000,
+    };
+    set({ toasts: [...get().toasts, item].slice(-4) });
+  },
+  dismissToast: (id) => {
+    set({ toasts: get().toasts.filter((x) => x.id !== id) });
   },
 }));

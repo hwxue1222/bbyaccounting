@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import SearchableSelect from "@/components/SearchableSelect";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useTr } from "@/lib/tr";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Label from "@/components/ui/Label";
+import Select from "@/components/ui/Select";
+import Confirm from "@/components/ui/Confirm";
+import Switch from "@/components/ui/Switch";
+import { Card } from "@/components/ui/Card";
+import { Table, TableWrap, TD, TH, THead, TR } from "@/components/ui/Table";
 
 type Account = { id: string; code: string; name: string; linkInventoryFifo?: boolean; linkFixedAssets?: boolean };
 type CostCenter = { id: string; code: string; name: string };
@@ -95,7 +103,6 @@ type AssistJournalSuggestion = {
 };
 
 export default function Journal() {
-  const navigate = useNavigate();
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
   const tr = useTr();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -123,6 +130,20 @@ export default function Journal() {
   const [detail, setDetail] = useState<EntryDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTitle, setConfirmTitle] = useState<string>("");
+  const [confirmDescription, setConfirmDescription] = useState<string>("");
+  const [confirmDanger, setConfirmDanger] = useState(false);
+  const confirmActionRef = useState<{ run: null | (() => Promise<void>) }>({ run: null })[0];
+
+  function openConfirm(opts: { title: string; description?: string; danger?: boolean; onConfirm: () => Promise<void> }) {
+    setConfirmTitle(opts.title);
+    setConfirmDescription(opts.description || "");
+    setConfirmDanger(Boolean(opts.danger));
+    confirmActionRef.run = opts.onConfirm;
+    setConfirmOpen(true);
+  }
 
   const [newAccountOpen, setNewAccountOpen] = useState(false);
   const [newAccountBusy, setNewAccountBusy] = useState(false);
@@ -388,7 +409,7 @@ export default function Journal() {
   const activeAccounts = useMemo(() => accounts.filter((a) => (a as any).isActive ?? true), [accounts]);
 
   const [draftCurrency, setDraftCurrency] = useState("SGD");
-  const [draftFx, setDraftFx] = useState(1);
+  const [draftFx, setDraftFx] = useState("1");
   const [draftMemo, setDraftMemo] = useState("");
   const [draftVoucherNo, setDraftVoucherNo] = useState("");
   const [voucherTouched, setVoucherTouched] = useState(false);
@@ -584,7 +605,7 @@ export default function Journal() {
 
   const autoAdjust = useMemo(() => {
     if (draftTaxMode === "none") return null as null | { idx: number; side: "debit" | "credit" };
-    const base = draftLines.filter((l: any) => !Boolean(l.isTaxLine));
+    const base = draftLines.filter((l: any) => !(l as any).isTaxLine);
     const debitIdxs = base
       .map((l: any, idx: number) => ({ idx, debit: Math.max(0, Number(l.debitTxn) || 0) }))
       .filter((x) => x.debit > 0.0001)
@@ -894,7 +915,7 @@ export default function Journal() {
     inLines: any[],
     mode: "none" | "gst" | "sst",
   ): { lines: any[]; err: string | null } {
-    const base = (Array.isArray(inLines) ? inLines : []).filter((l) => !Boolean((l as any).isTaxLine));
+    const base = (Array.isArray(inLines) ? inLines : []).filter((l) => !(l as any).isTaxLine);
     if (mode === "none") {
       return { lines: base.map((l) => ({ ...l, isTaxLine: false, taxKind: "" })), err: null };
     }
@@ -1020,8 +1041,7 @@ export default function Journal() {
       return inflight;
     }
 
-    let p: Promise<EntryDetail>;
-    p = api<EntryDetail>(`/api/journals/${encodeURIComponent(entryId)}`, { signal: opts?.signal, cache: "no-store" })
+    const p = api<EntryDetail>(`/api/journals/${encodeURIComponent(entryId)}`, { signal: opts?.signal, cache: "no-store" })
       .then((d) => {
         detailCacheRef.current.set(key, { key, ts: Date.now(), value: d });
         return d;
@@ -1053,7 +1073,7 @@ export default function Journal() {
       setEditingEntryId(id);
       setDraftDate(d.entry.entryDate);
       setDraftCurrency(entryCurrency);
-      setDraftFx(entryFx);
+      setDraftFx(String(entryFx));
       setDraftMemo(d.entry.memo || "");
       setDraftVoucherNo(d.entry.voucherNo || "");
       setVoucherTouched(true);
@@ -1183,7 +1203,7 @@ export default function Journal() {
       setEditModalOpen(false);
       setDraftDate(d.entry.entryDate);
       setDraftCurrency(String(d.entry.currency || "").toUpperCase());
-      setDraftFx(Number(d.entry.fxRate) || 1);
+      setDraftFx(String(Number(d.entry.fxRate) || 1));
       setDraftMemo(d.entry.memo || "");
       setDraftVoucherNo(d.entry.voucherNo || "");
       setVoucherTouched(true);
@@ -1366,7 +1386,7 @@ export default function Journal() {
     setErr(null);
     setDraftDate(s.draft.entryDate);
     setDraftCurrency(String(s.draft.currency || "").toUpperCase());
-    setDraftFx(Number(s.draft.fxRate) || 1);
+    setDraftFx(String(Number(s.draft.fxRate) || 1));
     setDraftMemo(s.draft.memo || "");
     setDraftLines(
       (s.draft.lines || []).map((l) => {
@@ -1799,7 +1819,7 @@ export default function Journal() {
     const info = {
       mode,
       expectedTxn: amountTxn,
-      expectedBase: Math.round(amountTxn * draftFx * 100) / 100,
+      expectedBase: Math.round(amountTxn * Number(draftFx || 1) * 100) / 100,
     };
 
     setInvLineIdx(lineIdx);
@@ -1868,7 +1888,7 @@ export default function Journal() {
 
   useEffect(() => {
     setDraftCurrency(baseCurrency);
-    setDraftFx(1);
+    setDraftFx("1");
   }, [baseCurrency]);
 
   useEffect(() => {
@@ -1880,7 +1900,7 @@ export default function Journal() {
   async function fillFxFromHistory(signal?: AbortSignal) {
     const cc = draftCurrency.toUpperCase();
     if (cc === baseCurrency) {
-      setDraftFx(1);
+      setDraftFx("1");
       return;
     }
     const r = await api<{ fxRates: Array<{ fxRate: number }> }>(
@@ -1891,7 +1911,7 @@ export default function Journal() {
     if (!fx) {
       throw new Error(tr("未找到该日期的历史汇率，请到设置里新增 FX Rate", "No FX rate found for this date. Please add it in Settings."));
     }
-    setDraftFx(Number(fx));
+    setDraftFx(String(Number(fx)));
   }
 
   useEffect(() => {
@@ -1901,7 +1921,7 @@ export default function Journal() {
     if (!draftDate.trim() || !cc.trim()) return;
     if (cc === baseCurrency) {
       fxTouchedRef.current = false;
-      setDraftFx(1);
+      setDraftFx("1");
       return;
     }
 
@@ -1919,7 +1939,7 @@ export default function Journal() {
           if (ctrl.signal.aborted) return;
           const fx = r.fxRates?.[0]?.fxRate;
           if (!fx) return;
-          setDraftFx(Number(fx));
+          setDraftFx(String(Number(fx)));
         })
         .catch(() => null);
     }, 250);
@@ -2167,7 +2187,7 @@ export default function Journal() {
     const quickMissingInvSaleItem = needsInvSaleItem && !!assistQuickAction.trim() && !!amt && !validInvSaleItem;
     const quickMissingInvSaleQty = needsInvSaleItem && !!assistQuickAction.trim() && !!amt && validInvSaleItem && !validInvSaleQty;
     return (
-      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <Card className="p-4">
         <div className="text-sm font-semibold">
           {editingEntryId
             ? tr("编辑凭证", "Edit journal")
@@ -2181,33 +2201,16 @@ export default function Journal() {
             <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
               <div className="grid gap-3 md:grid-cols-12">
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("谁", "Who")}</label>
-                  <input
-                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={assistQuickWho}
-                    onChange={(e) => setAssistQuickWho(e.target.value)}
-                    placeholder={tr("董事", "Director")}
-                    disabled={readOnly || busy}
-                  />
+                  <Label>{tr("谁", "Who")}</Label>
+                  <Input className="mt-1" value={assistQuickWho} onChange={(e) => setAssistQuickWho(e.target.value)} placeholder={tr("董事", "Director")} disabled={readOnly || busy} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("代替谁", "On behalf")}</label>
-                  <input
-                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={assistQuickOnBehalf}
-                    onChange={(e) => setAssistQuickOnBehalf(e.target.value)}
-                    placeholder={tr("公司", "Company")}
-                    disabled={readOnly || busy}
-                  />
+                  <Label>{tr("代替谁", "On behalf")}</Label>
+                  <Input className="mt-1" value={assistQuickOnBehalf} onChange={(e) => setAssistQuickOnBehalf(e.target.value)} placeholder={tr("公司", "Company")} disabled={readOnly || busy} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("付款方式", "Payment")}</label>
-                  <select
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-                    value={assistQuickPayMethod}
-                    onChange={(e) => setAssistQuickPayMethod(e.target.value)}
-                    disabled={readOnly || busy}
-                  >
+                  <Label>{tr("付款方式", "Payment")}</Label>
+                  <Select className="mt-1" value={assistQuickPayMethod} onChange={(e) => setAssistQuickPayMethod(e.target.value)} disabled={readOnly || busy}>
                     <option value="" disabled>
                       {tr("请选择", "Select")}
                     </option>
@@ -2219,22 +2222,16 @@ export default function Journal() {
                         {b.bankName} {b.accountNo}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="md:col-span-3">
-                  <label className="text-xs text-zinc-600">{tr("做什么", "What")}</label>
-                  <input
-                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-                    value={assistQuickAction}
-                    onChange={(e) => setAssistQuickAction(e.target.value)}
-                    placeholder={tr("购买一辆汽车", "Bought a car")}
-                    disabled={readOnly || busy}
-                  />
+                  <Label>{tr("做什么", "What")}</Label>
+                  <Input className="mt-1" value={assistQuickAction} onChange={(e) => setAssistQuickAction(e.target.value)} placeholder={tr("购买一辆汽车", "Bought a car")} disabled={readOnly || busy} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
-                  <select
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  <Label>{tr("是否涉及现有供应商", "Existing vendor")}</Label>
+                  <Select
+                    className="mt-1"
                     value={draftVendorId}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -2264,12 +2261,12 @@ export default function Journal() {
                           {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
                         </option>
                       ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("是否涉及现有客户", "Existing customer")}</label>
-                  <select
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  <Label>{tr("是否涉及现有客户", "Existing customer")}</Label>
+                  <Select
+                    className="mt-1"
                     value={draftCustomerId}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -2299,12 +2296,12 @@ export default function Journal() {
                           {(x as any).isActive === false ? tr("（已停用）", " (inactive)") : ""}
                         </option>
                       ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="md:col-span-1">
-                  <label className="text-xs text-zinc-600">{tr("货币", "CCY")}</label>
-                  <select
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                  <Label>{tr("货币", "CCY")}</Label>
+                  <Select
+                    className="mt-1"
                     value={currencyForQuick}
                     onChange={(e) => setAssistQuickCurrency(e.target.value.toUpperCase())}
                     disabled={readOnly || busy}
@@ -2314,12 +2311,12 @@ export default function Journal() {
                         {c}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("金额", "Amount")}</label>
-                  <input
-                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                  <Label>{tr("金额", "Amount")}</Label>
+                  <Input
+                    className="mt-1"
                     value={assistQuickAmount}
                     onChange={(e) => setAssistQuickAmount(e.target.value)}
                     placeholder={tr("20000", "20000")}
@@ -2328,11 +2325,11 @@ export default function Journal() {
                   />
                 </div>
                 <div className="md:col-span-12">
-                  <label className="text-xs text-zinc-600">{tr("用途", "Purpose")}</label>
+                  <Label>{tr("用途", "Purpose")}</Label>
                   <div className="mt-1 grid gap-3 md:grid-cols-12">
                     <div className="md:col-span-3">
-                      <select
-                        className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                      <Select
+                        className="w-full"
                         value={assistQuickPurposeKind}
                         onChange={(e) => setAssistQuickPurposeKind(e.target.value as any)}
                         disabled={readOnly || busy}
@@ -2346,13 +2343,13 @@ export default function Journal() {
                         <option value="invPurchase">{tr("购买存货", "Buy inventory")}</option>
                         <option value="invSale">{tr("出售存货", "Sell inventory")}</option>
                         <option value="other">{tr("其他", "Other")}</option>
-                      </select>
+                      </Select>
                     </div>
 
                     {assistQuickPurposeKind === "other" ? (
                       <div className="md:col-span-9">
-                        <input
-                          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                        <Input
+                          className="w-full"
                           value={assistQuickPurpose}
                           onChange={(e) => setAssistQuickPurpose(e.target.value)}
                           placeholder={tr("请输入用途/说明", "Enter purpose/notes")}
@@ -2370,17 +2367,15 @@ export default function Journal() {
                     {assistQuickPurposeKind === "faPurchase" ? (
                       <div className="md:col-span-9">
                         <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            className={
-                              "rounded-md border bg-white px-3 py-2 text-sm hover:bg-zinc-50 " +
-                              (quickMissingNewFixedAsset ? "border-red-300" : "border-zinc-200")
-                            }
+                          <Button
+                            variant="secondary"
+                            className={quickMissingNewFixedAsset ? "border-red-300" : undefined}
                             type="button"
                             disabled={readOnly || busy}
                             onClick={() => triggerQuickNewFixedAsset()}
                           >
                             {tr("填写固定资产信息", "Fill fixed asset info")}
-                          </button>
+                          </Button>
                           {assistQuickNewFaSaved?.name?.trim() ? (
                             <div className="text-sm text-zinc-700">
                               {tr("已选择：", "Selected: ")}
@@ -2398,11 +2393,8 @@ export default function Journal() {
 
                     {assistQuickPurposeKind === "faDisposal" ? (
                       <div className="md:col-span-5">
-                        <select
-                          className={
-                            "w-full rounded-md border bg-white px-3 py-2 text-sm " +
-                            (quickMissingFaDisposalAsset ? "border-red-300" : "border-zinc-200")
-                          }
+                        <Select
+                          className={"w-full " + (quickMissingFaDisposalAsset ? "border-red-300" : "")}
                           value={assistQuickDisposalAssetId}
                           onChange={(e) => setAssistQuickDisposalAssetId(e.target.value)}
                           onFocus={() => {
@@ -2422,18 +2414,15 @@ export default function Journal() {
                                 {fa.assetNo ? `${fa.assetNo} ` : ""}{fa.name}
                               </option>
                             ))}
-                        </select>
+                        </Select>
                       </div>
                     ) : null}
 
                     {assistQuickPurposeKind === "invPurchase" || assistQuickPurposeKind === "invSale" ? (
                       <div className="md:col-span-5">
-                        <label className="text-xs text-zinc-600">{tr("存货", "Inventory")}</label>
-                        <select
-                          className={
-                            "mt-1 w-full rounded-md border bg-white px-3 py-2 text-sm " +
-                            (quickMissingInvSaleItem ? "border-red-300" : "border-zinc-200")
-                          }
+                        <Label>{tr("存货", "Inventory")}</Label>
+                        <Select
+                          className={"mt-1 w-full " + (quickMissingInvSaleItem ? "border-red-300" : "")}
                           value={assistQuickExistingInventoryItemId}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -2462,18 +2451,15 @@ export default function Journal() {
                               {it.sku ? `${it.sku} ` : ""}{it.name}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </div>
                     ) : null}
 
                     {assistQuickPurposeKind === "invSale" ? (
                       <div className="md:col-span-2">
-                        <label className="text-xs text-zinc-600">{tr("数量", "Qty")}</label>
-                        <input
-                          className={
-                            "mt-1 w-full rounded-md border px-3 py-2 text-sm " +
-                            (quickMissingInvSaleQty ? "border-red-300" : "border-zinc-200")
-                          }
+                        <Label>{tr("数量", "Qty")}</Label>
+                        <Input
+                          className={"mt-1 w-full " + (quickMissingInvSaleQty ? "border-red-300" : "")}
                           value={assistQuickInvQty}
                           onChange={(e) => setAssistQuickInvQty(e.target.value)}
                           disabled={readOnly || busy}
@@ -2499,8 +2485,8 @@ export default function Journal() {
                   </div>
                 )}
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  <Button
+                    variant="primary"
                     disabled={!canGenerate}
                     onClick={() => {
                       if (!canGenerate) return;
@@ -2516,9 +2502,8 @@ export default function Journal() {
                     type="button"
                   >
                     {tr("生成建议", "Generate")}
-                  </button>
-                  <button
-                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  </Button>
+                  <Button
                     disabled={readOnly || busy}
                     onClick={() => {
                       resetDraftEntry();
@@ -2560,9 +2545,8 @@ export default function Journal() {
                     type="button"
                   >
                     {tr("清空", "Clear")}
-                  </button>
-                  <button
-                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  </Button>
+                  <Button
                     disabled={readOnly || busy}
                     onClick={() => {
                       if (assistQuickPurposeKind === "faDisposal" && assistQuickDisposalAssetId) {
@@ -2573,7 +2557,7 @@ export default function Journal() {
                     type="button"
                   >
                     {tr("展开对话框", "Open")}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -2583,21 +2567,13 @@ export default function Journal() {
 
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="w-full sm:w-44">
-            <label className="text-xs text-zinc-600">{tr("日期", "Date")}</label>
-            <input
-              className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-              value={draftDate}
-              onChange={(e) => setDraftDate(e.target.value)}
-              disabled={readOnly}
-            />
+            <Label>{tr("日期", "Date")}</Label>
+            <Input className="mt-1" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} disabled={readOnly} />
           </div>
           <div className="w-full sm:w-44">
-            <label className="text-xs text-zinc-600">{tr("分录号", "Voucher No")}</label>
-            <input
-              className={
-                "mt-1 w-full rounded-md border px-3 py-2 text-sm " +
-                (voucherEmpty ? "border-red-300" : "border-zinc-200")
-              }
+            <Label>{tr("分录号", "Voucher No")}</Label>
+            <Input
+              className={"mt-1 " + (voucherEmpty ? "border-red-300" : "")}
               value={draftVoucherNo}
               onChange={(e) => {
                 setVoucherTouched(true);
@@ -2608,36 +2584,31 @@ export default function Journal() {
             />
           </div>
           <div className="w-full sm:w-28">
-            <label className="text-xs text-zinc-600">{tr("币种", "Currency")}</label>
-            <select
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
-              value={draftCurrency}
-              onChange={(e) => setDraftCurrency(e.target.value.toUpperCase())}
-              disabled={readOnly}
-            >
+            <Label>{tr("币种", "Currency")}</Label>
+            <Select className="mt-1" value={draftCurrency} onChange={(e) => setDraftCurrency(e.target.value.toUpperCase())} disabled={readOnly}>
               {enabledCurrencies.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="w-full sm:w-40">
-            <label className="text-xs text-zinc-600">{tr("汇率", "FX rate")}</label>
-            <input
-              className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-              value={String(draftFx)}
+            <Label>{tr("汇率", "FX rate")}</Label>
+            <Input
+              className="mt-1"
+              value={draftFx}
               onChange={(e) => {
                 fxTouchedRef.current = true;
-                setDraftFx(e.target.value === "" ? 1 : Number(e.target.value) || 1);
+                setDraftFx(e.target.value);
               }}
               type="number"
               step="0.0001"
               disabled={readOnly}
             />
           </div>
-          <button
-            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+          <Button
+            className="shrink-0"
             disabled={readOnly || !draftDate.trim() || !draftCurrency.trim()}
             onClick={async () => {
               setErr(null);
@@ -2650,63 +2621,55 @@ export default function Journal() {
             type="button"
           >
             {tr("用历史", "Use history")}
-          </button>
+          </Button>
           <div className="w-full min-w-0 flex-1 sm:min-w-[260px]">
-            <label className="text-xs text-zinc-600">{tr("备注", "Memo")}</label>
-            <input
-              className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
-              value={draftMemo}
-              onChange={(e) => setDraftMemo(e.target.value)}
-              disabled={readOnly}
-            />
+            <Label>{tr("备注", "Memo")}</Label>
+            <Input className="mt-1" value={draftMemo} onChange={(e) => setDraftMemo(e.target.value)} disabled={readOnly} />
           </div>
         </div>
 
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="flex items-center gap-2 text-sm text-zinc-800">
-            <input
-              type="checkbox"
+          <div className="flex items-center gap-3 text-sm text-zinc-800">
+            <Switch
               checked={recurringEnabled}
-              onChange={(e) => {
-                const checked = e.target.checked;
+              disabled={readOnly}
+              onClick={() => {
+                const checked = !recurringEnabled;
                 setRecurringEnabled(checked);
                 if (checked) {
                   setRecurringStartDate((prev) => (prev?.trim() ? prev : draftDate));
                 }
               }}
-              disabled={readOnly}
             />
             Recurring
-          </label>
+          </div>
 
           <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-zinc-800">
-              <input
-                type="checkbox"
+            <div className="flex items-center gap-3 text-sm text-zinc-800">
+              <Switch
                 checked={draftTaxMode === "gst"}
-                onChange={(e) => setDraftTaxMode(e.target.checked ? "gst" : "none")}
                 disabled={readOnly}
+                onClick={() => setDraftTaxMode(draftTaxMode === "gst" ? "none" : "gst")}
               />
               GST {Number(taxSettings.gstRate || 0).toFixed(2)}%
-            </label>
-            <label className="flex items-center gap-2 text-sm text-zinc-800">
-              <input
-                type="checkbox"
+            </div>
+            <div className="flex items-center gap-3 text-sm text-zinc-800">
+              <Switch
                 checked={draftTaxMode === "sst"}
-                onChange={(e) => setDraftTaxMode(e.target.checked ? "sst" : "none")}
                 disabled={readOnly}
+                onClick={() => setDraftTaxMode(draftTaxMode === "sst" ? "none" : "sst")}
               />
               SST {Number(taxSettings.sstRate || 0).toFixed(2)}%
-            </label>
+            </div>
             {draftTaxErr ? <div className="text-xs text-amber-700">{draftTaxErr}</div> : null}
           </div>
 
           {recurringEnabled ? (
             <>
               <div className="w-full sm:w-56">
-                <label className="text-xs text-zinc-600">{tr("开始日期", "Start date")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                <Label>{tr("开始日期", "Start date")}</Label>
+                <Input
+                  className="mt-1"
                   value={recurringStartDate || draftDate}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -2718,9 +2681,9 @@ export default function Journal() {
                 />
               </div>
               <div className="w-full sm:w-48">
-                <label className="text-xs text-zinc-600">{tr("每隔（月）", "Every (months)")}</label>
-                <select
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                <Label>{tr("每隔（月）", "Every (months)")}</Label>
+                <Select
+                  className="mt-1"
                   value={recurringEveryMonths}
                   onChange={(e) => setRecurringEveryMonths(Number(e.target.value) || 1)}
                   disabled={readOnly}
@@ -2730,12 +2693,12 @@ export default function Journal() {
                       {m}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div className="w-full sm:w-48">
-                <label className="text-xs text-zinc-600">{tr("次数", "Count")}</label>
-                <input
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                <Label>{tr("次数", "Count")}</Label>
+                <Input
+                  className="mt-1"
                   value={recurringCount}
                   onChange={(e) => setRecurringCount(Math.max(1, Math.min(120, Number(e.target.value) || 1)))}
                   type="number"
@@ -2756,29 +2719,39 @@ export default function Journal() {
           )}
         </div>
 
-        <div className="mt-4 overflow-auto rounded-lg border border-zinc-100">
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-50 text-xs text-zinc-600">
-              <tr>
-                <th className="px-3 py-2 text-left">{tr("科目", "Account")}</th>
-                <th className="px-3 py-2 text-left">{tr("摘要", "Description")}</th>
-                <th className="px-3 py-2 text-left">Cost Center</th>
-                <th className="px-3 py-2 text-right">{tr("借", "Debit")}</th>
-                <th className="px-3 py-2 text-right">{tr("贷", "Credit")}</th>
-              </tr>
-            </thead>
+        <TableWrap className="mt-4">
+          <Table>
+            <THead>
+              <TR>
+                <TH>{tr("科目", "Account")}</TH>
+                <TH>{tr("摘要", "Description")}</TH>
+                <TH>Cost Center</TH>
+                <TH className="text-right">{tr("借", "Debit")}</TH>
+                <TH className="text-right">{tr("贷", "Credit")}</TH>
+              </TR>
+            </THead>
             <tbody>
               {draftLines.map((l, idx) => (
-                <tr key={idx} className={"border-t border-zinc-100 " + ((l as any).isTaxLine ? "bg-zinc-50" : "")}
-                >
-                  <td className="px-3 py-2">
+                <TR key={idx} className={(l as any).isTaxLine ? "bg-zinc-50" : ""}>
+                  <TD>
                     <div className="flex items-center gap-2">
-                      <select
-                        className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                      <SearchableSelect
                         value={l.accountId}
+                        placeholder={tr("请选择", "Select")}
                         disabled={readOnly || Boolean((l as any).isTaxLine)}
-                        onChange={(e) => {
-                          const nextId = e.target.value;
+                        options={(() => {
+                          const sel = accounts.find((a) => a.id === l.accountId) as any;
+                          const active = accounts.filter((a) => ((a as any).isActive ?? true));
+                          const list = sel && sel.isActive === false ? [sel, ...active.filter((a) => a.id !== sel.id)] : active;
+                          return [
+                            { value: "__new_account__", label: tr("+ 新建", "+ New") },
+                            ...list.map((a: any) => ({
+                              value: a.id,
+                              label: `${a.code} ${a.name}${a.isActive === false ? tr("（已删除）", " (inactive)") : ""}`,
+                            })),
+                          ];
+                        })()}
+                        onChange={(nextId) => {
                           if (nextId === "__new_account__") {
                             openInlineNewAccount(idx);
                             return;
@@ -2787,22 +2760,12 @@ export default function Journal() {
                           next[idx] = { ...l, accountId: nextId };
                           setDraftLines(next);
                         }}
-                      >
-                        <option value="">{tr("请选择", "Select")}</option>
-                        <option value="__new_account__">{tr("+ 新建", "+ New")}</option>
-                        {accounts
-                          .filter((a) => ((a as any).isActive ?? true) || a.id === l.accountId)
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {`${a.code} ${a.name}${(a as any).isActive === false ? tr("（已删除）", " (inactive)") : ""}`}
-                            </option>
-                          ))}
-                      </select>
+                      />
                     </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      className="w-full rounded-md border border-zinc-200 px-2 py-1 text-sm"
+                  </TD>
+                  <TD>
+                    <Input
+                      className="w-full px-2 py-1"
                       value={l.description}
                       onChange={(e) => {
                         const next = [...draftLines];
@@ -2811,10 +2774,10 @@ export default function Journal() {
                       }}
                       disabled={readOnly || Boolean((l as any).isTaxLine)}
                     />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                  </TD>
+                  <TD>
+                    <Select
+                      className="w-full px-2 py-1"
                       value={l.costCenterId}
                       onChange={(e) => {
                         const next = [...draftLines];
@@ -2829,12 +2792,12 @@ export default function Journal() {
                           {c.code} {c.name}
                         </option>
                       ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                    </Select>
+                  </TD>
+                  <TD className="text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <input
-                        className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                      <Input
+                        className="w-28 px-2 py-1 text-right"
                         value={l.debitTxn}
                         onChange={(e) => {
                           const next = [...draftLines];
@@ -2881,7 +2844,9 @@ export default function Journal() {
                               : "border-zinc-200 bg-white");
 
                         return (
-                          <button
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             className={cls}
                             onClick={() => {
                               if (disabled) return;
@@ -2915,15 +2880,15 @@ export default function Journal() {
                             type="button"
                           >
                             {label}
-                          </button>
+                          </Button>
                         );
                       })()}
                     </div>
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                  </TD>
+                  <TD className="text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <input
-                        className="w-28 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                      <Input
+                        className="w-28 px-2 py-1 text-right"
                         value={l.creditTxn}
                         onChange={(e) => {
                           const next = [...draftLines];
@@ -2970,7 +2935,9 @@ export default function Journal() {
                               : "border-zinc-200 bg-white");
 
                         return (
-                          <button
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             className={cls}
                             onClick={() => {
                               if (disabled) return;
@@ -3008,16 +2975,16 @@ export default function Journal() {
                             type="button"
                           >
                             {label}
-                          </button>
+                          </Button>
                         );
                       })()}
                     </div>
-                  </td>
-                </tr>
+                  </TD>
+                </TR>
               ))}
             </tbody>
-          </table>
-        </div>
+          </Table>
+        </TableWrap>
 
         <div className="mt-4 flex items-center justify-between">
           <div className={"text-sm " + (txnDiff === 0 ? "text-green-700" : "text-amber-700")}>
@@ -3109,7 +3076,7 @@ export default function Journal() {
                     return;
                   }
                   const existingTxn = debit > 0 ? debit : credit > 0 ? credit : 0;
-                  const expectedBaseFromExisting = Math.round(existingTxn * draftFx * 100) / 100;
+                  const expectedBaseFromExisting = Math.round(existingTxn * Number(draftFx || 1) * 100) / 100;
 
                   const computedReceiptTxn = Math.round(invDetails.reduce((s, d) => s + (Number(d.qty) || 0) * (Number(d.unitCostTxn) || 0), 0) * 100) / 100;
                   const computedShipmentBase = invConfirmed?.quoteBase ?? 0;
@@ -3211,7 +3178,7 @@ export default function Journal() {
                         }
                       } else {
                         const totalBase = invConfirmed?.quoteBase ?? 0;
-                        const totalTxn = Math.round((totalBase / (draftFx || 1)) * 100) / 100;
+                        const totalTxn = Math.round((totalBase / (Number(draftFx || 1) || 1)) * 100) / 100;
                         if (invDefaultSide === "debit") {
                           line.debitTxn = totalTxn > 0 ? String(totalTxn) : "";
                           line.creditTxn = "";
@@ -3227,7 +3194,7 @@ export default function Journal() {
                     entryDate: recurringEnabled ? recurringStartDate || draftDate : draftDate,
                     voucherNo: draftVoucherNo.trim() || undefined,
                     currency: draftCurrency,
-                    fxRate: draftFx,
+                    fxRate: Number(draftFx) || 1,
                     vendorId: draftVendorId && draftVendorId !== "__new__" ? draftVendorId : null,
                     customerId: draftCustomerId && draftCustomerId !== "__new__" ? draftCustomerId : null,
                     memo: draftMemo,
@@ -3295,7 +3262,7 @@ export default function Journal() {
                   }
                   const seriesCount = Array.isArray((resp as any)?.entries) ? (resp as any).entries.length : 0;
                   if (seriesCount > 1) {
-                    window.alert(`已生成 ${seriesCount} 张凭证`);
+                    setErr(tr(`已生成 ${seriesCount} 张凭证`, `Created ${seriesCount} journals`));
                   }
                   if (editModalOpen) {
                     setEditModalOpen(false);
@@ -3312,12 +3279,12 @@ export default function Journal() {
             </button>
           </div>
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <AppShell title={tr("分录", "Journals")}>
+    <AppShell title={tr("分录", "Journals")} subtitle={tr("录入、编辑与过账凭证", "Create, edit and post journals")}>
       <div className="space-y-4">
         {err ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{err}</div> : null}
         {editingEntryId ? (
@@ -4757,7 +4724,7 @@ export default function Journal() {
 
                         setDraftDate(faPurchaseForm.acquisitionDate);
                         setDraftCurrency(String(faPurchaseForm.currency || "").toUpperCase());
-                        setDraftFx(Number(faPurchaseForm.fxRate) || 1);
+                        setDraftFx(String(Number(faPurchaseForm.fxRate) || 1));
                         if (memo) {
                           setDraftMemo(memo);
                         }
@@ -5272,24 +5239,28 @@ export default function Journal() {
                               setErr(tr("请先保存或取消当前编辑。", "Please save or cancel the current edit first."));
                               return;
                             }
-                            const ok = window.confirm(
-                              e.status === "posted"
-                                ? tr(
-                                    "确认删除该已过账凭证？删除会回滚库存/FIFO 并影响报表。",
-                                    "Delete this posted journal? This will rollback inventory/FIFO and affect reports.",
-                                  )
-                                : tr("确认删除该草稿凭证？", "Delete this draft journal?"),
-                            );
-                            if (!ok) return;
-                            setBusy(true);
-                            setErr(null);
-                            try {
-                              await deleteEntry(e.id);
-                            } catch (err: any) {
-                              setErr(err.message);
-                            } finally {
-                              setBusy(false);
-                            }
+                            openConfirm({
+                              title:
+                                e.status === "posted"
+                                  ? tr("确认删除该已过账凭证？", "Delete this posted journal?")
+                                  : tr("确认删除该草稿凭证？", "Delete this draft journal?"),
+                              description:
+                                e.status === "posted"
+                                  ? tr("删除会回滚库存/FIFO 并影响报表。", "This will rollback inventory/FIFO and affect reports.")
+                                  : undefined,
+                              danger: true,
+                              onConfirm: async () => {
+                                setBusy(true);
+                                setErr(null);
+                                try {
+                                  await deleteEntry(e.id);
+                                } catch (err: any) {
+                                  setErr(err.message);
+                                } finally {
+                                  setBusy(false);
+                                }
+                              },
+                            });
                           }}
                         >
                           {tr("删除", "Delete")}
@@ -5336,19 +5307,23 @@ export default function Journal() {
                             setErr("请先保存或取消当前编辑。");
                             return;
                           }
-                          const ok = window.confirm("确认过账该草稿凭证？过账后会影响报表与库存（如有）。");
-                          if (!ok) return;
-                          setBusy(true);
-                          setErr(null);
-                          try {
-                            await api(`/api/journals/${encodeURIComponent(detail.entry.id)}/post` as any, { method: "POST" });
-                            await refreshCore();
-                            await loadDetail(detail.entry.id, undefined, { force: true });
-                          } catch (e: any) {
-                            setErr(e.message);
-                          } finally {
-                            setBusy(false);
-                          }
+                          openConfirm({
+                            title: tr("确认过账该草稿凭证？", "Post this draft journal?") ,
+                            description: tr("过账后会影响报表与库存（如有）。", "Posting will affect reports and inventory (if any)."),
+                            onConfirm: async () => {
+                              setBusy(true);
+                              setErr(null);
+                              try {
+                                await api(`/api/journals/${encodeURIComponent(detail.entry.id)}/post` as any, { method: "POST" });
+                                await refreshCore();
+                                await loadDetail(detail.entry.id, undefined, { force: true });
+                              } catch (e: any) {
+                                setErr(e.message);
+                              } finally {
+                                setBusy(false);
+                              }
+                            },
+                          });
                         }}
                         type="button"
                       >
@@ -5363,19 +5338,28 @@ export default function Journal() {
                           setErr("请先保存或取消当前编辑。");
                           return;
                         }
-                        const ok = window.confirm(
-                          detail.entry.status === "posted" ? "确认删除该已过账凭证？删除会回滚库存/FIFO 并影响报表。" : "确认删除该草稿凭证？",
-                        );
-                        if (!ok) return;
-                        setBusy(true);
-                        setErr(null);
-                        try {
-                          await deleteEntry(detail.entry.id);
-                        } catch (e: any) {
-                          setErr(e.message);
-                        } finally {
-                          setBusy(false);
-                        }
+                        openConfirm({
+                          title:
+                            detail.entry.status === "posted"
+                              ? tr("确认删除该已过账凭证？", "Delete this posted journal?")
+                              : tr("确认删除该草稿凭证？", "Delete this draft journal?"),
+                          description:
+                            detail.entry.status === "posted"
+                              ? tr("删除会回滚库存/FIFO 并影响报表。", "This will rollback inventory/FIFO and affect reports.")
+                              : undefined,
+                          danger: true,
+                          onConfirm: async () => {
+                            setBusy(true);
+                            setErr(null);
+                            try {
+                              await deleteEntry(detail.entry.id);
+                            } catch (e: any) {
+                              setErr(e.message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          },
+                        });
                       }}
                       type="button"
                     >
@@ -5547,19 +5531,23 @@ export default function Journal() {
                             <button
                               className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800 hover:bg-red-100 disabled:opacity-50"
                               disabled={busy}
-                              onClick={async () => {
-                                const ok = window.confirm(tr("确认删除该附件？", "Delete this attachment?"));
-                                if (!ok) return;
-                                setBusy(true);
-                                setErr(null);
-                                try {
-                                  await api(`/api/journals/${detail.entry.id}/attachments/${a.id}` as any, { method: "DELETE" });
-                                  await loadDetail(detail.entry.id, undefined, { force: true });
-                                } catch (e: any) {
-                                  setErr(e.message);
-                                } finally {
-                                  setBusy(false);
-                                }
+                              onClick={() => {
+                                openConfirm({
+                                  title: tr("确认删除该附件？", "Delete this attachment?"),
+                                  danger: true,
+                                  onConfirm: async () => {
+                                    setBusy(true);
+                                    setErr(null);
+                                    try {
+                                      await api(`/api/journals/${detail.entry.id}/attachments/${a.id}` as any, { method: "DELETE" });
+                                      await loadDetail(detail.entry.id, undefined, { force: true });
+                                    } catch (e: any) {
+                                      setErr(e.message);
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  },
+                                });
                               }}
                               type="button"
                             >
@@ -5779,7 +5767,7 @@ export default function Journal() {
                     const side = debit > 0 && credit <= 0 ? "debit" : credit > 0 && debit <= 0 ? "credit" : invDefaultSide;
                     const amt = side === "debit" ? debit : credit;
                     setInvExpectedTxn(amt);
-                    setInvExpectedBase(Math.round(amt * draftFx * 100) / 100);
+                    setInvExpectedBase(Math.round(amt * Number(draftFx || 1) * 100) / 100);
                   }}
                 >
                   <option value="">绑定分录行/科目</option>
@@ -5838,7 +5826,7 @@ export default function Journal() {
                     const unit = Number(r.unitCostTxn) || 0;
                     const amtTxn = Math.round(qty * unit * 100) / 100;
                     const costBase = q?.base == null ? null : Number(q.base);
-                    const costTxn = costBase == null ? null : Math.round((costBase / (draftFx || 1)) * 100) / 100;
+                    const costTxn = costBase == null ? null : Math.round((costBase / (Number(draftFx || 1) || 1)) * 100) / 100;
                     return (
                       <tr key={r.rowId} className="border-t border-zinc-100">
                         <td className="px-3 py-2">
@@ -5940,7 +5928,7 @@ export default function Journal() {
               <div className="mt-3 text-sm">
                 {(() => {
                   const totalCostBase = invEditingTotals.totalQuoteBase;
-                  const totalCostTxn = Math.round((totalCostBase / (draftFx || 1)) * 100) / 100;
+                  const totalCostTxn = Math.round((totalCostBase / (Number(draftFx || 1) || 1)) * 100) / 100;
                   const profitTxn = Math.round((invExpectedTxn - totalCostTxn) * 100) / 100;
                   return (
                     <div>
@@ -6007,6 +5995,27 @@ export default function Journal() {
           </div>
         </div>
       ) : null}
+
+      <Confirm
+        open={confirmOpen}
+        title={confirmTitle}
+        description={confirmDescription || undefined}
+        danger={confirmDanger}
+        confirmText={confirmDanger ? tr("删除", "Delete") : tr("确认", "Confirm")}
+        cancelText={tr("取消", "Cancel")}
+        onClose={() => {
+          if (busy) return;
+          setConfirmOpen(false);
+          confirmActionRef.run = null;
+        }}
+        onConfirm={async () => {
+          const run = confirmActionRef.run;
+          setConfirmOpen(false);
+          confirmActionRef.run = null;
+          if (!run) return;
+          await run();
+        }}
+      />
     </AppShell>
   );
 }
