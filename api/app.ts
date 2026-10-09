@@ -262,6 +262,17 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   const pgCode = typeof (error as any)?.code === 'string' ? (error as any).code : null
   const errorId = crypto.randomUUID()
 
+  if (req.path === '/api/auth/login') {
+    const sql = getSql()
+    const route = `${req.method} ${req.path}`
+    const message = msg || 'unknown error'
+    const stack = typeof (error as any)?.stack === 'string' ? (error as any).stack : null
+    void sql`
+      INSERT INTO error_logs (id, org_id, user_id, route, message, stack)
+      VALUES (${errorId}, null, null, ${route}, ${message}, ${stack})
+    `.catch(() => void 0)
+  }
+
   console.error(`[api ${errorId}] ${req.method} ${req.path}`, msg)
 
   const normalized = msg.toLowerCase()
