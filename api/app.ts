@@ -260,6 +260,9 @@ app.use('/api/superadmin', superadminRoutes)
 app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   const msg = typeof error?.message === 'string' ? error.message : ''
   const pgCode = typeof (error as any)?.code === 'string' ? (error as any).code : null
+  const pgTable = typeof (error as any)?.table === 'string' ? (error as any).table : null
+  const pgColumn = typeof (error as any)?.column === 'string' ? (error as any).column : null
+  const pgConstraint = typeof (error as any)?.constraint === 'string' ? (error as any).constraint : null
   const errorId = crypto.randomUUID()
 
   if (req.path === '/api/auth/login') {
@@ -276,12 +279,22 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   console.error(`[api ${errorId}] ${req.method} ${req.path}`, msg)
 
   const normalized = msg.toLowerCase()
-  const mapped = normalized.includes('missing database_url')
+  const isJsonParseError =
+    (error as any)?.type === 'entity.parse.failed' ||
+    (error as any)?.type === 'entity.too.large' ||
+    normalized.includes('unexpected token') ||
+    normalized.includes('invalid json')
+
+  const mapped = isJsonParseError
+    ? { status: 400, error: 'Invalid JSON', code: 'INVALID_JSON' }
+    : normalized.includes('missing database_url')
     ? { status: 503, error: 'Missing DATABASE_URL', code: 'MISSING_DATABASE_URL' }
     : normalized.includes('missing jwt_secret')
       ? { status: 503, error: 'Missing JWT_SECRET', code: 'MISSING_JWT_SECRET' }
       : normalized.includes('db not ready')
         ? { status: 503, error: 'DB not ready', code: 'DB_NOT_READY' }
+      : normalized.includes('migration busy')
+        ? { status: 503, error: 'Migration busy', code: 'MIGRATION_BUSY' }
       : normalized.includes('password authentication failed') || normalized.includes('authentication failed')
         ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
         : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')
@@ -290,11 +303,30 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
             ? { status: 503, error: 'Database permission denied (create extension)', code: 'DB_PERMISSION' }
             : { status: 500, error: 'Server internal error', code: 'UNKNOWN' }
 
+  const includeDetails = req.path === '/api/auth/login'
+  const details = includeDetails
+    ? {
+        pgCode,
+        pgTable,
+        pgColumn,
+        pgConstraint,
+        message:
+          mapped.code === 'INVALID_JSON' ||
+          mapped.code === 'DB_NOT_READY' ||
+          mapped.code === 'MIGRATION_BUSY' ||
+          pgCode === '42P01' ||
+          pgCode === '42703'
+            ? msg
+            : null,
+      }
+    : null
+
   res.status(mapped.status).json({
     success: false,
     error: mapped.error,
     code: mapped.code,
     errorId,
+    details,
     build: buildInfo(),
     env: {
       hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
