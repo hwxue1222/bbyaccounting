@@ -180,6 +180,11 @@ export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<
     void 0;
   }
 
+  if (baseApplied) {
+    migrated = true;
+    return;
+  }
+
   if (!postedSourceApplied) {
     try {
       const rows = await sql`
