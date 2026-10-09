@@ -80,8 +80,24 @@ export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'is_superadmin'
           ) AS user_superadmin_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'password_hash'
+          ) AS user_password_hash_ok,
           to_regclass('public.organizations') IS NOT NULL AS orgs_ok,
           to_regclass('public.memberships') IS NOT NULL AS memberships_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'memberships' AND column_name = 'org_id'
+          ) AS memberships_org_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'memberships' AND column_name = 'user_id'
+          ) AS memberships_user_ok,
+          EXISTS(
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'memberships' AND column_name = 'status'
+          ) AS memberships_status_ok,
           to_regclass('public.role_permissions') IS NOT NULL AS role_permissions_ok,
           to_regclass('public.accounts') IS NOT NULL AS accounts_ok,
           to_regclass('public.journal_entries') IS NOT NULL AS journals_ok,
@@ -92,8 +108,12 @@ export async function ensureMigrated(options?: { allowRun?: boolean }): Promise<
         Boolean(s?.users_ok) &&
         Boolean(s?.user_status_ok) &&
         Boolean(s?.user_superadmin_ok) &&
+        Boolean(s?.user_password_hash_ok) &&
         Boolean(s?.orgs_ok) &&
         Boolean(s?.memberships_ok) &&
+        Boolean(s?.memberships_org_ok) &&
+        Boolean(s?.memberships_user_ok) &&
+        Boolean(s?.memberships_status_ok) &&
         Boolean(s?.role_permissions_ok) &&
         Boolean(s?.accounts_ok) &&
         Boolean(s?.journals_ok) &&
