@@ -37,14 +37,42 @@ export default function Login() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        await api("/api/health/db");
-        if (cancelled) return;
+      const attempt = async () => {
+        try {
+          await api("/api/health/db", { timeoutMs: 10_000, cache: "no-store" });
+          return { ok: true as const };
+        } catch (e: any) {
+          const code = typeof (e as any)?.code === "string" ? (e as any).code : null;
+          const msg = typeof e?.message === "string" ? e.message : "Backend not reachable";
+          return { ok: false as const, code, msg };
+        }
+      };
+
+      const first = await attempt();
+      if (cancelled) return;
+      if (first.ok) {
         setBackendReady({ ok: true });
-      } catch (e: any) {
-        if (cancelled) return;
-        setBackendReady({ ok: false, message: typeof e?.message === "string" ? e.message : "Backend not reachable" });
+        return;
       }
+
+      if (first.code === "DB_NOT_READY" || first.code === "MIGRATION_BUSY" || first.msg.toLowerCase().includes("db not ready")) {
+        setBackendReady({ ok: false, message: tr("系统正在初始化（DB not ready），请稍等 10–30 秒…", "System is starting up (DB not ready). Please wait 10–30s…") });
+        try {
+          await api("/api/ready", { timeoutMs: 40_000, cache: "no-store" });
+        } catch {
+          void 0;
+        }
+        const second = await attempt();
+        if (cancelled) return;
+        if (second.ok) {
+          setBackendReady({ ok: true });
+          return;
+        }
+        setBackendReady({ ok: false, message: second.msg });
+        return;
+      }
+
+      setBackendReady({ ok: false, message: first.msg });
     })();
     return () => {
       cancelled = true;
@@ -89,12 +117,14 @@ export default function Login() {
               {backendReady && !backendReady.ok ? (
                 <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   {tr("后端未就绪", "Backend not ready")}: {backendReady.message || "unknown error"}
-                  <div className="mt-1 text-xs text-amber-700">
-                    {tr(
-                      "Vercel 需要配置 `DATABASE_URL`、`JWT_SECRET`，并将 `APP_ORIGIN` 设为当前域名。",
-                      "Configure `DATABASE_URL` and `JWT_SECRET` on Vercel, and set `APP_ORIGIN` to your domain.",
-                    )}
-                  </div>
+                  {backendReady.message?.toLowerCase().includes("missing") ? (
+                    <div className="mt-1 text-xs text-amber-700">
+                      {tr(
+                        "Vercel 需要配置 `DATABASE_URL`、`JWT_SECRET`，并将 `APP_ORIGIN` 设为当前域名。",
+                        "Configure `DATABASE_URL` and `JWT_SECRET` on Vercel, and set `APP_ORIGIN` to your domain.",
+                      )}
+                    </div>
+                  ) : null}
                   <div className="mt-2">
                     <Button variant="secondary" className="w-full" onClick={() => setReadyTick((x) => x + 1)}>
                       {tr("重试", "Retry")}
