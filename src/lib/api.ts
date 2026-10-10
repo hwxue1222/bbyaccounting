@@ -96,6 +96,40 @@ export class ApiError extends Error {
   }
 }
 
+function normalizeApiPath(input: string): string {
+  const q = input.indexOf("?");
+  return q >= 0 ? input.slice(0, q) : input;
+}
+
+function invalidateCacheForMutation(input: string): void {
+  if (!input.startsWith("/api/")) {
+    responseCache.clear();
+    return;
+  }
+
+  const path = normalizeApiPath(input);
+  const prefixes: string[] = [];
+  if (path.startsWith("/api/settings")) prefixes.push("/api/settings");
+  else if (path.startsWith("/api/journals")) prefixes.push("/api/journals");
+  else if (path.startsWith("/api/inventory")) prefixes.push("/api/inventory");
+  else if (path.startsWith("/api/fixed-assets")) prefixes.push("/api/fixed-assets");
+  else if (path.startsWith("/api/vendors")) prefixes.push("/api/vendors");
+  else if (path.startsWith("/api/customers")) prefixes.push("/api/customers");
+  else if (path.startsWith("/api/reports")) prefixes.push("/api/reports");
+  else if (path.startsWith("/api/orgs")) prefixes.push("/api/orgs");
+  else if (path.startsWith("/api/users")) prefixes.push("/api/users");
+  else prefixes.push(path);
+
+  for (const key of responseCache.keys()) {
+    if (!key.startsWith("GET /api/")) continue;
+    const url = key.slice("GET ".length);
+    const urlPath = normalizeApiPath(url);
+    if (prefixes.some((p) => urlPath.startsWith(p))) {
+      responseCache.delete(key);
+    }
+  }
+}
+
 export async function api<T>(
   input: string,
   init?: RequestInit & { json?: unknown; timeoutMs?: number },
@@ -106,7 +140,7 @@ export async function api<T>(
   const cacheKey = `${method} ${input}`;
 
   if (method !== "GET") {
-    responseCache.clear();
+    invalidateCacheForMutation(input);
   }
 
   const now = Date.now();

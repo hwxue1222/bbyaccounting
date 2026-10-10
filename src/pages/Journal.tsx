@@ -807,10 +807,7 @@ export default function Journal() {
 
   async function refreshCore(signal?: AbortSignal) {
     const [{ accounts, costCenters, currencies, bankAccounts, tax }, { entries }] = await Promise.all([
-      api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[]; tax: any }>("/api/settings/bootstrap?limit=50", {
-        signal,
-        cache: "no-store",
-      }),
+      api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[]; tax: any }>("/api/settings/bootstrap?limit=50", { signal }),
       api<{ entries: any[] }>("/api/journals?limit=50", { signal, cache: "no-store" }),
     ]);
     setAccounts(accounts as any);
@@ -2013,7 +2010,6 @@ export default function Journal() {
       if (e?.message === "请求超时，请重试") return;
       setErr(e.message);
     });
-    void refreshBankAccountsOnly(ctrl.signal).catch(() => null);
     return () => {
       ctrl.abort();
     };

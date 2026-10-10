@@ -265,6 +265,7 @@ export default function Inventory() {
     await Promise.all([
       refresh(),
       refreshMoves(),
+      refreshBalances(),
       selectedItemId ? refreshStock(selectedItemId) : Promise.resolve(),
     ]);
   }
@@ -275,9 +276,7 @@ export default function Inventory() {
     setSelectedItemId("");
     setStock(null);
     setMoves([]);
-    refresh()
-      .then(() => refreshStockTakeItems())
-      .catch((e) => setErr(e.message));
+    Promise.all([refresh(), refreshStockTakeItems()]).catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
