@@ -13,6 +13,7 @@ import Settings from "@/pages/Settings";
 import Users from "@/pages/Users";
 import Vendors from "@/pages/Vendors";
 import Customers from "@/pages/Customers";
+import InvoicePrint from "@/pages/InvoicePrint";
 import PendingApproval from "@/pages/PendingApproval";
 import SuperAdmin from "@/pages/SuperAdmin";
 
@@ -113,6 +114,14 @@ export default function App() {
           element={
             <RequireAuth>
               <Customers />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/invoices/:invoiceId/print"
+          element={
+            <RequireAuth>
+              <InvoicePrint />
             </RequireAuth>
           }
         />

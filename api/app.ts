@@ -26,6 +26,7 @@ import debugRoutes from './routes/debug.js'
 import superadminRoutes from './routes/superadmin.js'
 import vendorsRoutes from './routes/vendors.js'
 import customersRoutes from './routes/customers.js'
+import invoicesRoutes from './routes/invoices.js'
 
 // load env
 dotenv.config()
@@ -248,6 +249,7 @@ app.use('/api/fixed-assets', fixedAssetsRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/vendors', vendorsRoutes)
 app.use('/api/customers', customersRoutes)
+app.use('/api/invoices', invoicesRoutes)
 app.use('/api/users', usersRoutes)
 app.use('/api/assist', assistRoutes)
 app.use('/api/debug', debugRoutes)
@@ -268,6 +270,8 @@ app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
     ? { status: 503, error: 'Missing DATABASE_URL', code: 'MISSING_DATABASE_URL' }
     : normalized.includes('missing jwt_secret')
       ? { status: 503, error: 'Missing JWT_SECRET', code: 'MISSING_JWT_SECRET' }
+      : pgCode === '23505'
+        ? { status: 409, error: '已存在', code: 'DUPLICATE' }
       : normalized.includes('password authentication failed') || normalized.includes('authentication failed')
         ? { status: 503, error: 'Database authentication failed', code: 'DB_AUTH_FAILED' }
         : normalized.includes('econnrefused') || normalized.includes('enotfound') || normalized.includes('etimedout') || normalized.includes('timeout')

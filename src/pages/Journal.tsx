@@ -111,6 +111,8 @@ export default function Journal() {
   const detailPrefetchTimerRef = useRef<number | null>(null);
   const detailPrefetchIdRef = useRef<string | null>(null);
   const detailWarmIdRef = useRef<string | null>(null);
+  const vendorSelectRef = useRef<HTMLSelectElement | null>(null);
+  const customerSelectRef = useRef<HTMLSelectElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -394,6 +396,14 @@ export default function Journal() {
   const [voucherTouched, setVoucherTouched] = useState(false);
   const [draftVendorId, setDraftVendorId] = useState("");
   const [draftCustomerId, setDraftCustomerId] = useState("");
+  const selectedVendorName = useMemo(() => {
+    const vendor = vendors.find((item) => String(item.id) === draftVendorId);
+    return vendor?.name ? String(vendor.name) : "";
+  }, [vendors, draftVendorId]);
+  const selectedCustomerName = useMemo(() => {
+    const customer = customers.find((item) => String(item.id) === draftCustomerId);
+    return customer?.name ? String(customer.name) : "";
+  }, [customers, draftCustomerId]);
 
   const [invModalOpen, setInvModalOpen] = useState(false);
   const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
@@ -605,6 +615,68 @@ export default function Journal() {
 
   function blankDraftLine() {
     return { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "", isTaxLine: false, taxKind: "" as "" | "gst" | "sst" };
+  }
+
+  function applyPartyDescriptionRules(
+    lines: Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string; isTaxLine: boolean; taxKind: "" | "gst" | "sst" }>,
+    overrides?: { vendorId?: string; customerId?: string },
+  ) {
+    const nextVendorId = overrides?.vendorId ?? draftVendorId;
+    const nextCustomerId = overrides?.customerId ?? draftCustomerId;
+    const vendor = vendors.find((item) => String(item.id) === nextVendorId);
+    const customer = customers.find((item) => String(item.id) === nextCustomerId);
+    const vendorName = vendor?.name ? String(vendor.name) : "";
+    const customerName = customer?.name ? String(customer.name) : "";
+
+    return lines.map((line) => {
+      const account = accountById.get(line.accountId);
+      const code = account?.code ? String(account.code) : "";
+      if (code === "1200" && (Number(line.debitTxn) || 0) > 0 && customerName) {
+        return { ...line, description: customerName };
+      }
+      if (code === "2000" && (Number(line.creditTxn) || 0) > 0 && vendorName) {
+        return { ...line, description: vendorName };
+      }
+      return line;
+    });
+  }
+
+  function openInvoiceWorkspace(lineIdx: number) {
+    const line = draftLines[lineIdx];
+    const customerId = draftCustomerId && draftCustomerId !== "__new__" ? draftCustomerId : "";
+    if (!customerId) {
+      setErr(tr("请先选择客户，再开发票。", "Please choose a customer before creating an invoice."));
+      customerSelectRef.current?.focus();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    const amountTxn = Number(line?.debitTxn) || 0;
+    const params = new URLSearchParams({
+      tab: "invoices",
+      new: "1",
+      customerId,
+      issueDate: draftDate,
+      currency: draftCurrency,
+      fxRate: String(draftFx || 1),
+      amountTxn: String(amountTxn),
+      description: line?.description?.trim() || draftMemo.trim() || "Package fee 配套费",
+      memo: draftMemo.trim(),
+      entryLineNo: String(lineIdx + 1),
+    });
+    if (editingEntryId) params.set("entryId", editingEntryId);
+    const href = `/customers?${params.toString()}`;
+    const popup = window.open(href, "_blank", "noopener,noreferrer");
+    if (!popup) navigate(href);
+  }
+
+  function focusVendorSelector() {
+    setErr(
+      draftVendorId && draftVendorId !== "__new__" && selectedVendorName
+        ? tr(`当前供货商：${selectedVendorName}`, `Current vendor: ${selectedVendorName}`)
+        : tr("请先选择供货商。", "Please choose a vendor first."),
+    );
+    vendorSelectRef.current?.focus();
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function resetDraftEntry() {
@@ -1007,6 +1079,13 @@ export default function Journal() {
     taxSettings.sstPayableAccountId,
     taxSettings.sstReceivableAccountId,
   ]);
+
+  useEffect(() => {
+    const next = applyPartyDescriptionRules(draftLines as any[]);
+    if (!linesEqual(draftLines as any[], next as any[])) {
+      setDraftLines(next as any);
+    }
+  }, [draftLines, draftVendorId, draftCustomerId, vendors, customers, accountById]);
 
   async function fetchDetailCore(entryId: string, opts?: { signal?: AbortSignal; force?: boolean }): Promise<EntryDetail> {
     const key = detailCacheKey(entryId);
@@ -2234,6 +2313,7 @@ export default function Journal() {
                 <div className="md:col-span-2">
                   <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
                   <select
+                    ref={vendorSelectRef}
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                     value={draftVendorId}
                     onChange={(e) => {
@@ -2269,6 +2349,7 @@ export default function Journal() {
                 <div className="md:col-span-2">
                   <label className="text-xs text-zinc-600">{tr("是否涉及现有客户", "Existing customer")}</label>
                   <select
+                    ref={customerSelectRef}
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                     value={draftCustomerId}
                     onChange={(e) => {
@@ -2856,10 +2937,13 @@ export default function Journal() {
                         const linkInv = Boolean(acc?.linkInventoryFifo);
                         const isFa = linkFa || code.startsWith("16") || code.startsWith("61");
                         const isInv = linkInv || code === "1500";
+                        const isInvoiceReceivable = code === "1200";
                         const amount = Number(l.debitTxn) || 0;
                         const hasAmount = amount > 0;
                         const label =
-                          isFa && code.startsWith("161")
+                          isInvoiceReceivable
+                            ? "发票"
+                            : isFa && code.startsWith("161")
                             ? null
                             : isFa && code.startsWith("16") && !code.startsWith("161")
                               ? "购买"
@@ -2891,6 +2975,10 @@ export default function Journal() {
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
                                 openFixedAssetPurchaseModal(idx, amount);
+                                return;
+                              }
+                              if (label === "发票") {
+                                openInvoiceWorkspace(idx);
                                 return;
                               }
                               if (label === "折旧") {
@@ -2945,10 +3033,13 @@ export default function Journal() {
                         const linkInv = Boolean(acc?.linkInventoryFifo);
                         const isFa = linkFa || code.startsWith("16") || code.startsWith("61");
                         const isInv = linkInv || code === "1500";
+                        const isVendorPayable = code === "2000";
                         const amount = Number(l.creditTxn) || 0;
                         const hasAmount = amount > 0;
                         const label =
-                          isFa && code.startsWith("16")
+                          isVendorPayable
+                            ? "供货商"
+                            : isFa && code.startsWith("16")
                             ? code.startsWith("161")
                               ? null
                               : "处置"
@@ -2984,6 +3075,10 @@ export default function Journal() {
                                 } else {
                                   void openFixedAssetDisposeModal("cost", idx, amount);
                                 }
+                                return;
+                              }
+                              if (label === "供货商") {
+                                focusVendorSelector();
                                 return;
                               }
                               if (label === "折旧") {

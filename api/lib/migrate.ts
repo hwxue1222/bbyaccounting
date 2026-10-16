@@ -28,6 +28,7 @@ export async function ensureMigrated(): Promise<void> {
   const PERF_INDEXES_MIGRATION_ID = "perf_indexes_2026_09";
   const TAX_SETTINGS_MIGRATION_ID = "tax_settings_2026_10";
   const JOURNAL_POSTED_SOURCE_MIGRATION_ID = "journal_posted_source_2026_09";
+  const INVOICES_MIGRATION_ID = "invoices_2026_10";
 
   let baseApplied = false;
   try {
@@ -1024,6 +1025,71 @@ export async function ensureMigrated(): Promise<void> {
     try {
       await sql`INSERT INTO schema_migrations (id) VALUES (${TAX_RECEIVABLE_SEED_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
       taxReceivablesApplied = true;
+    } catch {
+      void 0;
+    }
+  }
+
+  let invoicesApplied = false;
+  try {
+    const applied = await sql`SELECT 1 FROM schema_migrations WHERE id = ${INVOICES_MIGRATION_ID} LIMIT 1`;
+    invoicesApplied = Boolean((applied as any[])?.length);
+  } catch {
+    invoicesApplied = false;
+  }
+
+  if (!invoicesApplied) {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS invoices (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          org_id UUID NOT NULL,
+          entry_id UUID,
+          entry_line_no INT,
+          customer_id UUID,
+          invoice_no TEXT NOT NULL,
+          issue_date DATE NOT NULL,
+          currency_code TEXT NOT NULL,
+          fx_rate NUMERIC(18,8) NOT NULL DEFAULT 1,
+          status TEXT NOT NULL DEFAULT 'issued',
+          bill_to_name TEXT NOT NULL,
+          memo TEXT,
+          payment_account_name TEXT,
+          payment_bank_name TEXT,
+          payment_bank_address TEXT,
+          payment_account_number TEXT,
+          payment_swift_code TEXT,
+          official_stamp TEXT,
+          total_txn NUMERIC(18,2) NOT NULL DEFAULT 0,
+          line_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+          created_by UUID,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`CREATE INDEX IF NOT EXISTS idx_invoices_org_issue ON invoices(org_id, issue_date DESC, created_at DESC)`;
+    } catch {
+      void 0;
+    }
+    try {
+      await sql`CREATE INDEX IF NOT EXISTS idx_invoices_org_customer ON invoices(org_id, customer_id)`;
+    } catch {
+      void 0;
+    }
+    try {
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_org_invoice_no_unique ON invoices(org_id, invoice_no)`;
+    } catch {
+      void 0;
+    }
+
+    try {
+      await sql`INSERT INTO schema_migrations (id) VALUES (${INVOICES_MIGRATION_ID}) ON CONFLICT (id) DO NOTHING`;
+      invoicesApplied = true;
     } catch {
       void 0;
     }
