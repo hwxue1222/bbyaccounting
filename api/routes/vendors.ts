@@ -4,8 +4,19 @@ import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
 import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { requireOrgAccess } from "../lib/orgAccess.js";
+import { normalizeOrgName } from "../lib/orgName.js";
 
 const router = Router();
+
+function sortVendorsForMatch<T extends { isActive?: boolean; code?: string | null; name?: string | null }>(rows: T[]): T[] {
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const activeDiff = Number(Boolean(b.isActive ?? true)) - Number(Boolean(a.isActive ?? true));
+      if (activeDiff !== 0) return activeDiff;
+      return `${a.code || ""} ${a.name || ""}`.localeCompare(`${b.code || ""} ${b.name || ""}`);
+    });
+}
 
 router.get("/", requireAuth, async (req: AuthedRequest, res: Response) => {
   await ensureMigrated();
@@ -67,6 +78,18 @@ router.post("/", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const sql = getSql();
   const userId = req.auth!.userId;
+  const nameKey = normalizeOrgName(body.data.name);
+
+  const existingRows = (await sql`
+    SELECT id, code, name, notes, is_active as "isActive", created_at as "createdAt"
+    FROM vendors
+    WHERE org_id = ${orgId}
+  `) as any[];
+  const existingByName = sortVendorsForMatch(existingRows).find((row) => normalizeOrgName(String(row.name || "")) === nameKey);
+  if (existingByName) {
+    res.status(200).json({ success: true, data: { vendor: existingByName, createdBy: userId, existed: true } });
+    return;
+  }
 
   const row = (
     await sql`
@@ -130,6 +153,19 @@ router.patch("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
   const name = typeof patch.name === "string" ? patch.name.trim() : undefined;
   const notes = typeof patch.notes === "string" ? patch.notes.trim() : undefined;
   const isActive = patch.isActive;
+  if (name) {
+    const nameKey = normalizeOrgName(name);
+    const duplicateRows = (await sql`
+      SELECT id, code, name, notes, is_active as "isActive", created_at as "createdAt"
+      FROM vendors
+      WHERE org_id = ${orgId} AND id <> ${id}
+    `) as any[];
+    const duplicate = sortVendorsForMatch(duplicateRows).find((row) => normalizeOrgName(String(row.name || "")) === nameKey);
+    if (duplicate) {
+      res.status(409).json({ success: false, error: "供货商名称已存在", code: "VENDOR_NAME_TAKEN", data: { vendor: duplicate } });
+      return;
+    }
+  }
   const next = (
     await sql`
       UPDATE vendors
