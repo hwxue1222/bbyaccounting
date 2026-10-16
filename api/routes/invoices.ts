@@ -335,7 +335,7 @@ function renderInvoicePdfHtml(invoice: any): string {
             <tr>
               <th>S/N<br/>序号</th>
               <th>Particulars 收款事项</th>
-              <th>Cash 现金/ Cheque 支票/ Fund Transfer 转账</th>
+              <th>Payment mode 付款方式<br/>Cash / Cheque / Fund Transfer</th>
               <th>Amount 金额 (${escapeHtml(currencyLabel)})</th>
             </tr>
           </thead>

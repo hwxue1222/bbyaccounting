@@ -137,7 +137,7 @@ export default function InvoicePrint() {
               <tr className="bg-white">
                 <th className="border border-zinc-900 px-2 py-2 text-center font-medium">S/N<br />序号</th>
                 <th className="border border-zinc-900 px-3 py-2 text-left font-medium">Particulars 收款事项</th>
-                <th className="border border-zinc-900 px-3 py-2 text-left font-medium">Cash 现金/ Cheque 支票/ Fund Transfer 转账</th>
+                <th className="border border-zinc-900 px-3 py-2 text-left font-medium">Payment mode 付款方式<br />Cash / Cheque / Fund Transfer</th>
                 <th className="border border-zinc-900 px-3 py-2 text-right font-medium">Amount 金额 ({currencyLabel})</th>
               </tr>
             </thead>

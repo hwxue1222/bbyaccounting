@@ -17,6 +17,12 @@ type InvoiceLineItem = {
   amount: string;
 };
 
+const PAYMENT_MODE_OPTIONS = [
+  { value: "Cash 现金", label: "Cash 现金" },
+  { value: "Cheque 支票", label: "Cheque 支票" },
+  { value: "Fund Transfer 转账", label: "Fund Transfer 转账" },
+] as const;
+
 type InvoiceRow = {
   id: string;
   entryId?: string | null;
@@ -608,7 +614,7 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
                   <tr>
                     <th className="px-3 py-2 text-left">S/N</th>
                     <th className="px-3 py-2 text-left">Particulars 收款事项</th>
-                    <th className="px-3 py-2 text-left">Payment 收款方式</th>
+                    <th className="px-3 py-2 text-left">Payment mode 付款方式</th>
                     <th className="px-3 py-2 text-right">Amount 金额</th>
                     <th className="px-3 py-2 text-right">{tr("操作", "Action")}</th>
                   </tr>
@@ -630,8 +636,8 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                        <select
+                          className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                           value={item.paymentMethod}
                           onChange={(e) =>
                             setForm((current) => ({
@@ -639,7 +645,13 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
                               lineItems: current.lineItems.map((line, lineIdx) => (lineIdx === idx ? { ...line, paymentMethod: e.target.value } : line)),
                             }))
                           }
-                        />
+                        >
+                          {PAYMENT_MODE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-3 py-2">
                         <input
@@ -696,6 +708,21 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
               </div>
               <div className="mt-3 text-lg font-semibold text-zinc-900">
                 TOTAL 合计 ({form.currency || "SGD"}) {totalTxn.toFixed(2)}
+              </div>
+              <div className="mt-3 space-y-2 border-t border-zinc-200 pt-3 text-sm text-zinc-700">
+                {form.lineItems.map((item, idx) => (
+                  <div key={idx} className="rounded-md bg-white px-3 py-2">
+                    <div className="font-medium">
+                      {idx + 1}. {item.particulars || "-"}
+                    </div>
+                    <div className="mt-1 text-zinc-600">
+                      Payment mode: {item.paymentMethod || "-"}
+                    </div>
+                    <div className="mt-1 text-zinc-600">
+                      Amount: {form.currency || "SGD"} {(Math.round((Number(item.amount) || 0) * 100) / 100).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
