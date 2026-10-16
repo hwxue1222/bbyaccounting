@@ -39,7 +39,7 @@ export default function InvoicePrint() {
     const draftKey = params.get("draftKey");
     if (draftKey) {
       try {
-        const raw = window.sessionStorage.getItem(draftKey);
+        const raw = window.localStorage.getItem(draftKey);
         if (!raw) {
           setErr(tr("未找到预览数据，请返回发票表单重新预览。", "Preview data was not found. Please go back to the invoice form and preview again."));
           setBusy(false);

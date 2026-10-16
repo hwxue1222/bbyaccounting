@@ -229,7 +229,7 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
       lineItems,
     };
     const draftKey = `invoice-preview:${Date.now()}`;
-    window.sessionStorage.setItem(draftKey, JSON.stringify(draftPreview));
+    window.localStorage.setItem(draftKey, JSON.stringify(draftPreview));
     const href = `/invoices/draft/print?draftKey=${encodeURIComponent(draftKey)}`;
     const popup = window.open(href, "_blank", "noopener,noreferrer");
     if (!popup) window.location.href = href;
