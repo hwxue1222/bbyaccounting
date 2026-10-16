@@ -2,6 +2,7 @@ import { round2, round6 } from "../lib/nums.js";
 import { sha256 } from "../lib/migrate.js";
 import { signSession, verifySession } from "../lib/security.js";
 import { buildHeuristicSuggestion, parseFirstAmountAndCurrency } from "../lib/assistRules.js";
+import { normalizeOrgName } from "../lib/orgName.js";
 
 function assert(condition: unknown, message: string): void {
   if (!condition) {
@@ -21,6 +22,9 @@ async function main() {
   const claims = verifySession(jwt);
   assert(claims.userId === "u1", "session userId should match");
   assert(claims.orgId === "o1", "session orgId should match");
+
+  assert(normalizeOrgName("  Acme  ") === "acme", "normalizeOrgName should trim and lowercase");
+  assert(normalizeOrgName("Acme   Pte   Ltd") === "acme pte ltd", "normalizeOrgName should collapse whitespace");
 
   const accounts = [
     { id: "a1000", code: "1000", name: "Cash", type: "asset" },

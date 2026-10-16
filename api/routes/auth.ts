@@ -10,6 +10,7 @@ import { clearSessionCookie, requireAuth, setSessionCookie, type AuthedRequest }
 import { hashPassword, signSession, verifyPassword } from "../lib/security.js";
 import { randomToken } from "../lib/security.js";
 import { seedOrgDefaults } from "../lib/seed.js";
+import { normalizeOrgName } from "../lib/orgName.js";
 
 const router = Router();
 
@@ -36,10 +37,33 @@ router.post("/register", async (req: Request, res: Response): Promise<void> => {
   const { email, password, orgName, baseCurrency, industry } = parsed.data;
   const sql = getSql();
   const emailNorm = normalizeEmail(email);
+  const orgNameKey = normalizeOrgName(orgName);
 
   const existing = await sql`SELECT id FROM users WHERE email = ${emailNorm}`;
   if (existing.length) {
     res.status(409).json({ success: false, error: "Email already registered" });
+    return;
+  }
+
+  const orgDup = await sql`
+    SELECT id
+    FROM organizations
+    WHERE deleted_at IS NULL AND lower(trim(name)) = ${orgNameKey}
+    LIMIT 1
+  `;
+  if (orgDup.length) {
+    res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
+    return;
+  }
+
+  const pendingDup = await sql`
+    SELECT id
+    FROM signup_requests
+    WHERE status = 'pending' AND lower(trim(org_name)) = ${orgNameKey}
+    LIMIT 1
+  `;
+  if (pendingDup.length) {
+    res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
     return;
   }
 
