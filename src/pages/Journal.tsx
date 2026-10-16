@@ -12,19 +12,6 @@ type Currency = { id: string; code: string; isEnabled: boolean };
 type InventoryItem = { id: string; sku: string | null; name: string; uom: string };
 type Party = { id: string; code: string | null; name: string; isActive?: boolean };
 
-function normalizePartyName(input: string): string {
-  return String(input || "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function mergePartyOption<T extends Party>(items: T[], nextItem: T): T[] {
-  const nextId = String(nextItem.id);
-  const idx = items.findIndex((item) => String(item.id) === nextId);
-  if (idx < 0) return [...items, nextItem];
-  const next = items.slice();
-  next[idx] = nextItem;
-  return next;
-}
-
 type EntryListRow = {
   id: string;
   entryDate: string;
@@ -124,8 +111,6 @@ export default function Journal() {
   const detailPrefetchTimerRef = useRef<number | null>(null);
   const detailPrefetchIdRef = useRef<string | null>(null);
   const detailWarmIdRef = useRef<string | null>(null);
-  const vendorSelectRef = useRef<HTMLSelectElement | null>(null);
-  const customerSelectRef = useRef<HTMLSelectElement | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -282,26 +267,6 @@ export default function Journal() {
     return customers.slice().sort((a, b) => `${a.code || ""} ${a.name}`.localeCompare(`${b.code || ""} ${b.name}`));
   }, [customers]);
 
-  const vendorByNameKey = useMemo(() => {
-    const map = new Map<string, Party>();
-    for (const vendor of vendorsSorted) {
-      const key = normalizePartyName(vendor.name);
-      if (!key || map.has(key)) continue;
-      map.set(key, vendor);
-    }
-    return map;
-  }, [vendorsSorted]);
-
-  const customerByNameKey = useMemo(() => {
-    const map = new Map<string, Party>();
-    for (const customer of customersSorted) {
-      const key = normalizePartyName(customer.name);
-      if (!key || map.has(key)) continue;
-      map.set(key, customer);
-    }
-    return map;
-  }, [customersSorted]);
-
   const inventoryItemById = useMemo(() => new Map(inventoryItems.map((it) => [it.id, it] as const)), [inventoryItems]);
 
   const quickNeedsNewFixedAsset = assistQuickPurposeKind === "faPurchase" && assistQuickNewFixedAsset === "yes";
@@ -429,10 +394,6 @@ export default function Journal() {
   const [voucherTouched, setVoucherTouched] = useState(false);
   const [draftVendorId, setDraftVendorId] = useState("");
   const [draftCustomerId, setDraftCustomerId] = useState("");
-  const selectedVendorName = useMemo(() => {
-    const vendor = vendors.find((item) => String(item.id) === draftVendorId);
-    return vendor?.name ? String(vendor.name) : "";
-  }, [vendors, draftVendorId]);
 
   const [invModalOpen, setInvModalOpen] = useState(false);
   const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
@@ -644,203 +605,6 @@ export default function Journal() {
 
   function blankDraftLine() {
     return { accountId: "", description: "", costCenterId: "", debitTxn: "", creditTxn: "", isTaxLine: false, taxKind: "" as "" | "gst" | "sst" };
-  }
-
-  function applyPartyDescriptionRules(
-    lines: Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string; isTaxLine: boolean; taxKind: "" | "gst" | "sst" }>,
-    overrides?: { vendorId?: string; customerId?: string },
-  ) {
-    const nextVendorId = overrides?.vendorId ?? draftVendorId;
-    const nextCustomerId = overrides?.customerId ?? draftCustomerId;
-    const vendor = vendors.find((item) => String(item.id) === nextVendorId);
-    const customer = customers.find((item) => String(item.id) === nextCustomerId);
-    const vendorName = vendor?.name ? String(vendor.name) : "";
-    const customerName = customer?.name ? String(customer.name) : "";
-
-    return lines.map((line) => {
-      const account = accountById.get(line.accountId);
-      const code = account?.code ? String(account.code) : "";
-      if (code === "1200" && (Number(line.debitTxn) || 0) > 0 && customerName) {
-        return { ...line, description: customerName };
-      }
-      if (code === "2000" && (Number(line.creditTxn) || 0) > 0 && vendorName) {
-        return { ...line, description: vendorName };
-      }
-      return line;
-    });
-  }
-
-  function applyCustomerNameToReceivableLines(
-    lines: Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string; isTaxLine: boolean; taxKind: "" | "gst" | "sst" }>,
-    customerName: string,
-  ) {
-    return lines.map((line) => {
-      const account = accountById.get(line.accountId);
-      const code = account?.code ? String(account.code) : "";
-      if (code === "1200" && (Number(line.debitTxn) || 0) > 0) {
-        return { ...line, description: customerName };
-      }
-      return line;
-    });
-  }
-
-  function applyVendorNameToPayableLines(
-    lines: Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string; isTaxLine: boolean; taxKind: "" | "gst" | "sst" }>,
-    vendorName: string,
-  ) {
-    return lines.map((line) => {
-      const account = accountById.get(line.accountId);
-      const code = account?.code ? String(account.code) : "";
-      if (code === "2000" && (Number(line.creditTxn) || 0) > 0) {
-        return { ...line, description: vendorName };
-      }
-      return line;
-    });
-  }
-
-  async function ensureVendorBySummaryName(rawName: string): Promise<Party | null> {
-    const cleanedName = String(rawName || "").trim();
-    const nameKey = normalizePartyName(cleanedName);
-    if (!nameKey) return null;
-
-    const matched = vendorByNameKey.get(nameKey);
-    if (matched) {
-      setDraftVendorId(String(matched.id));
-      setDraftLines((prev) => applyVendorNameToPayableLines(prev, matched.name));
-      return matched;
-    }
-
-    const r = await api<{ vendor: Party }>("/api/vendors", {
-      method: "POST",
-      json: { name: cleanedName },
-    });
-    const vendor = r.vendor as Party | undefined;
-    if (!vendor?.id) {
-      throw new Error(tr("创建供货商失败。", "Failed to create vendor."));
-    }
-    setVendors((prev) => mergePartyOption(prev, vendor));
-    setDraftVendorId(String(vendor.id));
-    setDraftLines((prev) => applyVendorNameToPayableLines(prev, vendor.name));
-    return vendor;
-  }
-
-  async function ensureCustomerBySummaryName(rawName: string): Promise<Party | null> {
-    const cleanedName = String(rawName || "").trim();
-    const nameKey = normalizePartyName(cleanedName);
-    if (!nameKey) return null;
-
-    const matched = customerByNameKey.get(nameKey);
-    if (matched) {
-      setDraftCustomerId(String(matched.id));
-      setDraftLines((prev) => applyCustomerNameToReceivableLines(prev, matched.name));
-      return matched;
-    }
-
-    const r = await api<{ customer: Party }>("/api/customers", {
-      method: "POST",
-      json: { name: cleanedName },
-    });
-    const customer = r.customer as Party | undefined;
-    if (!customer?.id) {
-      throw new Error(tr("创建客户失败。", "Failed to create customer."));
-    }
-    setCustomers((prev) => mergePartyOption(prev, customer));
-    setDraftCustomerId(String(customer.id));
-    setDraftLines((prev) => applyCustomerNameToReceivableLines(prev, customer.name));
-    return customer;
-  }
-
-  async function resolveDraftCustomerIdFromReceivableLines(
-    lines: Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string; isTaxLine: boolean; taxKind: "" | "gst" | "sst" }>,
-  ): Promise<string | null> {
-    const names = new Map<string, string>();
-    for (const line of lines) {
-      const account = accountById.get(line.accountId);
-      const code = account?.code ? String(account.code) : "";
-      if (code !== "1200" || (Number(line.debitTxn) || 0) <= 0) continue;
-      const cleaned = String(line.description || "").trim();
-      const key = normalizePartyName(cleaned);
-      if (key) names.set(key, cleaned);
-    }
-
-    if (!names.size) {
-      return draftCustomerId && draftCustomerId !== "__new__" ? draftCustomerId : null;
-    }
-    if (names.size > 1) {
-      throw new Error(tr("当前凭证有多个应收客户名称，请拆分凭证或统一摘要中的客户名。", "This entry contains multiple receivable customer names. Split the entry or keep one customer name in descriptions."));
-    }
-
-    const first = Array.from(names.values())[0];
-    const customer = await ensureCustomerBySummaryName(first);
-    return customer?.id ? String(customer.id) : null;
-  }
-
-  async function resolveDraftVendorIdFromPayableLines(
-    lines: Array<{ accountId: string; description: string; costCenterId: string; debitTxn: string; creditTxn: string; isTaxLine: boolean; taxKind: "" | "gst" | "sst" }>,
-  ): Promise<string | null> {
-    const names = new Map<string, string>();
-    for (const line of lines) {
-      const account = accountById.get(line.accountId);
-      const code = account?.code ? String(account.code) : "";
-      if (code !== "2000" || (Number(line.creditTxn) || 0) <= 0) continue;
-      const cleaned = String(line.description || "").trim();
-      const key = normalizePartyName(cleaned);
-      if (key) names.set(key, cleaned);
-    }
-
-    if (!names.size) {
-      return draftVendorId && draftVendorId !== "__new__" ? draftVendorId : null;
-    }
-    if (names.size > 1) {
-      throw new Error(tr("当前凭证有多个应付供货商名称，请拆分凭证或统一摘要中的供货商名。", "This entry contains multiple payable vendor names. Split the entry or keep one vendor name in descriptions."));
-    }
-
-    const first = Array.from(names.values())[0];
-    const vendor = await ensureVendorBySummaryName(first);
-    return vendor?.id ? String(vendor.id) : null;
-  }
-
-  async function openInvoiceWorkspace(lineIdx: number) {
-    const line = draftLines[lineIdx];
-    const typedName = String(line?.description || "").trim();
-    const summaryCustomer = typedName ? await ensureCustomerBySummaryName(typedName) : null;
-    const customerId = summaryCustomer?.id
-      ? String(summaryCustomer.id)
-      : draftCustomerId && draftCustomerId !== "__new__"
-      ? draftCustomerId
-      : "";
-    if (!customerId) {
-      setErr(tr("请先在摘要填写客户名称，或选择已有客户，再开发票。", "Please type a customer name in the description or choose an existing customer before creating an invoice."));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-    const amountTxn = Number(line?.debitTxn) || 0;
-    const params = new URLSearchParams({
-      tab: "invoices",
-      new: "1",
-      customerId,
-      issueDate: draftDate,
-      currency: draftCurrency,
-      fxRate: String(draftFx || 1),
-      amountTxn: String(amountTxn),
-      description: line?.description?.trim() || draftMemo.trim() || "Package fee 配套费",
-      memo: draftMemo.trim(),
-      entryLineNo: String(lineIdx + 1),
-    });
-    if (editingEntryId) params.set("entryId", editingEntryId);
-    const href = `/customers?${params.toString()}`;
-    const popup = window.open(href, "_blank", "noopener,noreferrer");
-    if (!popup) navigate(href);
-  }
-
-  function focusVendorSelector() {
-    setErr(
-      draftVendorId && draftVendorId !== "__new__" && selectedVendorName
-        ? tr(`当前供货商：${selectedVendorName}`, `Current vendor: ${selectedVendorName}`)
-        : tr("请先在摘要填写供货商名称，或选择已有供货商。", "Please type a vendor name in the description or choose an existing vendor first."),
-    );
-    vendorSelectRef.current?.focus();
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function resetDraftEntry() {
@@ -1243,13 +1007,6 @@ export default function Journal() {
     taxSettings.sstPayableAccountId,
     taxSettings.sstReceivableAccountId,
   ]);
-
-  useEffect(() => {
-    const next = applyPartyDescriptionRules(draftLines as any[]);
-    if (!linesEqual(draftLines as any[], next as any[])) {
-      setDraftLines(next as any);
-    }
-  }, [draftLines, draftVendorId, draftCustomerId, vendors, customers, accountById]);
 
   async function fetchDetailCore(entryId: string, opts?: { signal?: AbortSignal; force?: boolean }): Promise<EntryDetail> {
     const key = detailCacheKey(entryId);
@@ -2475,9 +2232,8 @@ export default function Journal() {
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("现有供货商（可选，2000 摘要也可直接填供货商名）", "Existing vendor (optional, you can also type vendor name in 2000 description)")}</label>
+                  <label className="text-xs text-zinc-600">{tr("是否涉及现有供应商", "Existing vendor")}</label>
                   <select
-                    ref={vendorSelectRef}
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                     value={draftVendorId}
                     onChange={(e) => {
@@ -2511,9 +2267,8 @@ export default function Journal() {
                   </select>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-xs text-zinc-600">{tr("现有客户（可选，1200 摘要也可直接填客户名）", "Existing customer (optional, you can also type customer name in 1200 description)")}</label>
+                  <label className="text-xs text-zinc-600">{tr("是否涉及现有客户", "Existing customer")}</label>
                   <select
-                    ref={customerSelectRef}
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                     value={draftCustomerId}
                     onChange={(e) => {
@@ -3048,47 +2803,12 @@ export default function Journal() {
                   <td className="px-3 py-2">
                     <input
                       className="w-full rounded-md border border-zinc-200 px-2 py-1 text-sm"
-                      list={
-                        (() => {
-                          const acc = accountById.get(l.accountId);
-                          const code = acc?.code ? String(acc.code) : "";
-                          if (code === "1200" && (Number(l.debitTxn) || 0) > 0) return "journal-customer-options";
-                          if (code === "2000" && (Number(l.creditTxn) || 0) > 0) return "journal-vendor-options";
-                          return undefined;
-                        })()
-                      }
                       value={l.description}
                       onChange={(e) => {
-                        const value = e.target.value;
                         const next = [...draftLines];
-                        next[idx] = { ...l, description: value };
+                        next[idx] = { ...l, description: e.target.value };
                         setDraftLines(next);
-                        const acc = accountById.get(l.accountId);
-                        const code = acc?.code ? String(acc.code) : "";
-                        if (code === "1200" && (Number(l.debitTxn) || 0) > 0) {
-                          const matched = customerByNameKey.get(normalizePartyName(value));
-                          if (matched?.id) {
-                            setDraftCustomerId(String(matched.id));
-                          }
-                        }
-                        if (code === "2000" && (Number(l.creditTxn) || 0) > 0) {
-                          const matched = vendorByNameKey.get(normalizePartyName(value));
-                          if (matched?.id) {
-                            setDraftVendorId(String(matched.id));
-                          }
-                        }
                       }}
-                      placeholder={
-                        (() => {
-                          const acc = accountById.get(l.accountId);
-                          const code = acc?.code ? String(acc.code) : "";
-                          return code === "1200" && (Number(l.debitTxn) || 0) > 0
-                            ? tr("输入客户名或选择已有客户", "Type customer name or choose an existing customer")
-                            : code === "2000" && (Number(l.creditTxn) || 0) > 0
-                              ? tr("输入供货商名或选择已有供货商", "Type vendor name or choose an existing vendor")
-                            : "";
-                        })()
-                      }
                       disabled={readOnly || Boolean((l as any).isTaxLine)}
                     />
                   </td>
@@ -3136,13 +2856,10 @@ export default function Journal() {
                         const linkInv = Boolean(acc?.linkInventoryFifo);
                         const isFa = linkFa || code.startsWith("16") || code.startsWith("61");
                         const isInv = linkInv || code === "1500";
-                        const isInvoiceReceivable = code === "1200";
                         const amount = Number(l.debitTxn) || 0;
                         const hasAmount = amount > 0;
                         const label =
-                          isInvoiceReceivable
-                            ? "发票"
-                            : isFa && code.startsWith("161")
+                          isFa && code.startsWith("161")
                             ? null
                             : isFa && code.startsWith("16") && !code.startsWith("161")
                               ? "购买"
@@ -3174,10 +2891,6 @@ export default function Journal() {
                                 setInvConfirmed(null);
                                 setInvLineIdx(null);
                                 openFixedAssetPurchaseModal(idx, amount);
-                                return;
-                              }
-                              if (label === "发票") {
-                                void openInvoiceWorkspace(idx).catch((e: any) => setErr(e?.message || tr("开发票失败。", "Failed to open invoice.")));
                                 return;
                               }
                               if (label === "折旧") {
@@ -3232,13 +2945,10 @@ export default function Journal() {
                         const linkInv = Boolean(acc?.linkInventoryFifo);
                         const isFa = linkFa || code.startsWith("16") || code.startsWith("61");
                         const isInv = linkInv || code === "1500";
-                        const isVendorPayable = code === "2000";
                         const amount = Number(l.creditTxn) || 0;
                         const hasAmount = amount > 0;
                         const label =
-                          isVendorPayable
-                            ? "供货商"
-                            : isFa && code.startsWith("16")
+                          isFa && code.startsWith("16")
                             ? code.startsWith("161")
                               ? null
                               : "处置"
@@ -3274,15 +2984,6 @@ export default function Journal() {
                                 } else {
                                   void openFixedAssetDisposeModal("cost", idx, amount);
                                 }
-                                return;
-                              }
-                              if (label === "供货商") {
-                                const typedName = String(l.description || "").trim();
-                                if (!typedName) {
-                                  focusVendorSelector();
-                                  return;
-                                }
-                                void ensureVendorBySummaryName(typedName).catch((e: any) => setErr(e?.message || tr("选择供货商失败。", "Failed to resolve vendor.")));
                                 return;
                               }
                               if (label === "折旧") {
@@ -3522,16 +3223,13 @@ export default function Journal() {
                     }
                   }
 
-                  const resolvedCustomerId = await resolveDraftCustomerIdFromReceivableLines(effectiveLines);
-                  const resolvedVendorId = await resolveDraftVendorIdFromPayableLines(effectiveLines);
-
                   const reqBody = {
                     entryDate: recurringEnabled ? recurringStartDate || draftDate : draftDate,
                     voucherNo: draftVoucherNo.trim() || undefined,
                     currency: draftCurrency,
                     fxRate: draftFx,
-                    vendorId: resolvedVendorId,
-                    customerId: resolvedCustomerId,
+                    vendorId: draftVendorId && draftVendorId !== "__new__" ? draftVendorId : null,
+                    customerId: draftCustomerId && draftCustomerId !== "__new__" ? draftCustomerId : null,
                     memo: draftMemo,
                     inventoryLinkLineNo: invLineIdx != null && inventoryDetails?.length ? invLineIdx + 1 : undefined,
                     inventoryDetails,
@@ -3622,24 +3320,6 @@ export default function Journal() {
     <AppShell title={tr("分录", "Journals")}>
       <div className="space-y-4">
         {err ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{err}</div> : null}
-        <datalist id="journal-vendor-options">
-          {vendorsSorted
-            .filter((x: any) => (x as any).isActive ?? true)
-            .map((x) => (
-              <option key={String(x.id)} value={x.name}>
-                {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
-              </option>
-            ))}
-        </datalist>
-        <datalist id="journal-customer-options">
-          {customersSorted
-            .filter((x: any) => (x as any).isActive ?? true)
-            .map((x) => (
-              <option key={String(x.id)} value={x.name}>
-                {x.code ? `${String(x.code).toUpperCase()} ` : ""}{x.name}
-              </option>
-            ))}
-        </datalist>
         {editingEntryId ? (
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">

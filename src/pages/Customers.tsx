@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
-import CustomerInvoices from "@/components/CustomerInvoices";
 import PartyAging from "@/components/PartyAging";
 import PartyList from "@/components/PartyList";
 import { useAuthStore } from "@/stores/authStore";
@@ -13,7 +12,7 @@ export default function Customers() {
   const active = useMemo(() => orgs.find((o) => o.orgId === activeOrgId) || null, [orgs, activeOrgId]);
   const baseCurrency = (active?.baseCurrency || "").toUpperCase();
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") || "list") as "list" | "aging" | "invoices";
+  const tab = (params.get("tab") || "list") as "list" | "aging";
 
   return (
     <AppShell title={tr("客户", "Customers")}>
@@ -47,24 +46,13 @@ export default function Customers() {
               >
                 {tr("AR 账龄", "AR Aging")}
               </button>
-              <button
-                className={
-                  tab === "invoices"
-                    ? "rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white"
-                    : "rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                }
-                onClick={() => setParams((p) => ({ ...Object.fromEntries(p.entries()), tab: "invoices" }) as any)}
-                type="button"
-              >
-                {tr("发票", "Invoices")}
-              </button>
             </div>
           </div>
         </div>
 
         {tab === "list" ? (
           <PartyList title={tr("客户列表", "Customer list")} listEndpoint="/api/customers" listKey="customers" createEndpoint="/api/customers" patchEndpointPrefix="/api/customers/" />
-        ) : tab === "aging" ? (
+        ) : (
           <PartyAging
             title={tr("AR Aging（应收账龄）", "AR Aging")}
             endpointPrefix="/api/reports/ar-aging?asOf="
@@ -74,10 +62,9 @@ export default function Customers() {
             baseCurrency={baseCurrency}
             emptyText={tr("暂无未结清应收单据", "No open AR documents")}
           />
-        ) : (
-          <CustomerInvoices baseCurrency={baseCurrency || "SGD"} />
         )}
       </div>
     </AppShell>
   );
 }
+

@@ -7,7 +7,6 @@ import { signSession } from "../lib/security.js";
 import { seedOrgDefaults } from "../lib/seed.js";
 import { roleAtLeast, type Role } from "../lib/roles.js";
 import { requireOrgRole } from "../lib/orgAccess.js";
-import { normalizeOrgName } from "../lib/orgName.js";
 
 const router = Router();
 
@@ -81,33 +80,12 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
   }
   const sql = getSql();
 
-  const nameKey = normalizeOrgName(parsed.data.name);
-  const dup = await sql`
-    SELECT id
-    FROM organizations
-    WHERE deleted_at IS NULL AND lower(trim(name)) = ${nameKey}
-    LIMIT 1
-  `;
-  if (dup.length) {
-    res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
-    return;
-  }
-
   const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
   if (!superRows.length) {
     res.status(403).json({ success: false, error: "Only superadmin can create organizations" });
     return;
   }
   const created = await sql.begin(async (trx) => {
-    const dup2 = await trx`
-      SELECT id
-      FROM organizations
-      WHERE deleted_at IS NULL AND lower(trim(name)) = ${nameKey}
-      LIMIT 1
-    `;
-    if (dup2.length) {
-      return { dup: true } as const;
-    }
     const org = (
       await trx`
         INSERT INTO organizations (name, registration_no, base_currency, industry)
@@ -130,18 +108,13 @@ router.post("/create", requireAuth, async (req: AuthedRequest, res: Response) =>
       VALUES (${req.auth!.userId}, ${org.id})
       ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
     `;
-    return { dup: false, org } as const;
+    return org;
   });
 
-  if (created.dup) {
-    res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
-    return;
-  }
+  await seedOrgDefaults(sql, created.id, created.baseCurrency, created.industry);
 
-  await seedOrgDefaults(sql, created.org.id, created.org.baseCurrency, created.org.industry);
-
-  setSessionCookie(res, signSession({ userId: req.auth!.userId, orgId: created.org.id }));
-  res.status(200).json({ success: true, data: { org: created.org } });
+  setSessionCookie(res, signSession({ userId: req.auth!.userId, orgId: created.id }));
+  res.status(200).json({ success: true, data: { org: created } });
 });
 
 router.post("/update", requireAuth, async (req: AuthedRequest, res: Response) => {
@@ -158,18 +131,6 @@ router.post("/update", requireAuth, async (req: AuthedRequest, res: Response) =>
   }
 
   const sql = getSql();
-
-  const nameKey = normalizeOrgName(parsed.data.name);
-  const dup = await sql`
-    SELECT id
-    FROM organizations
-    WHERE deleted_at IS NULL AND id <> ${parsed.data.orgId} AND lower(trim(name)) = ${nameKey}
-    LIMIT 1
-  `;
-  if (dup.length) {
-    res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
-    return;
-  }
   const superRows = await sql`SELECT id FROM users WHERE id = ${req.auth!.userId} AND is_superadmin = true LIMIT 1`;
   const isSuperAdmin = superRows.length > 0;
 

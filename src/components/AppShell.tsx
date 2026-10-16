@@ -123,7 +123,6 @@ export default function AppShell({ title, children }: { title: string; children:
             <SideLink to="/fixed-assets" label={tr("固定资产", "Fixed Assets")} icon={<Warehouse className="h-4 w-4" />} />
             <SideLink to="/vendors" label={tr("供应商", "Vendors")} icon={<Handshake className="h-4 w-4" />} />
             <SideLink to="/customers" label={tr("客户", "Customers")} icon={<UserRound className="h-4 w-4" />} />
-            <SideLink to="/customers?tab=invoices" label={tr("发票", "Invoices")} icon={<FileText className="h-4 w-4" />} />
             <SideLink to="/reports" label={tr("报表", "Reports")} icon={<FileText className="h-4 w-4" />} />
             <SideLink to="/users" label={tr("用户", "Users")} icon={<Users className="h-4 w-4" />} />
           </nav>

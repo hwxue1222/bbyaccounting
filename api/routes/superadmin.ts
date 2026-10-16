@@ -6,7 +6,6 @@ import { requireAuth, type AuthedRequest } from "../lib/auth.js";
 import { seedOrgDefaults } from "../lib/seed.js";
 import { signSession } from "../lib/security.js";
 import { setSessionCookie } from "../lib/auth.js";
-import { normalizeOrgName } from "../lib/orgName.js";
 
 const router = Router();
 
@@ -112,112 +111,48 @@ router.post("/approve-signup", requireAuth, async (req: AuthedRequest, res: Resp
   }
 
   const sql = getSql();
-  const reqRows = await sql`
-    SELECT id, org_name as "orgName", base_currency as "baseCurrency", industry, user_id as "userId", status
-    FROM signup_requests
-    WHERE id = ${parsed.data.requestId}
-    LIMIT 1
-  `;
-  const r0 = reqRows[0] as any;
-  if (!r0) {
-    res.status(404).json({ success: false, error: "Not found" });
-    return;
-  }
-  if (String(r0.status) !== "pending") {
-    res.status(400).json({ success: false, error: "Already processed" });
-    return;
-  }
-  if (!r0.userId) {
-    res.status(400).json({ success: false, error: "Missing user" });
-    return;
-  }
+  const created = await sql.begin(async (trx) => {
+    const rows = await trx`
+      SELECT id, email, org_name as "orgName", base_currency as "baseCurrency", industry, user_id as "userId", status
+      FROM signup_requests
+      WHERE id = ${parsed.data.requestId}
+      LIMIT 1
+    `;
+    const r = rows[0] as any;
+    if (!r) throw new Error("Not found");
+    if (String(r.status) !== "pending") throw new Error("Already processed");
+    if (!r.userId) throw new Error("Missing user");
 
-  const orgNameKey = normalizeOrgName(String(r0.orgName));
-  const orgDup = await sql`
-    SELECT id
-    FROM organizations
-    WHERE deleted_at IS NULL AND lower(trim(name)) = ${orgNameKey}
-    LIMIT 1
-  `;
-  if (orgDup.length) {
-    res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
-    return;
-  }
-
-  let created: { org: any; userId: string };
-  try {
-    created = await sql.begin(async (trx) => {
-      const rows = await trx`
-        SELECT id, org_name as "orgName", base_currency as "baseCurrency", industry, user_id as "userId", status
-        FROM signup_requests
-        WHERE id = ${parsed.data.requestId}
-        FOR UPDATE
-      `;
-      const r = rows[0] as any;
-      if (!r) throw new Error("Not found");
-      if (String(r.status) !== "pending") throw new Error("Already processed");
-      if (!r.userId) throw new Error("Missing user");
-
-      const dup2 = await trx`
-        SELECT id
-        FROM organizations
-        WHERE deleted_at IS NULL AND lower(trim(name)) = ${orgNameKey}
-        LIMIT 1
-      `;
-      if (dup2.length) {
-        throw new Error("公司名称已存在");
-      }
-
-      const org = (
-        await trx`
-          INSERT INTO organizations (name, base_currency, industry)
-          VALUES (${String(r.orgName).trim()}, ${String(r.baseCurrency).toUpperCase()}, ${String(r.industry)})
-          RETURNING id, name, base_currency as "baseCurrency", industry
-        `
-      )[0] as any;
-
+    const org = (
       await trx`
-        INSERT INTO memberships (org_id, user_id, role, status)
-        VALUES (${org.id}, ${r.userId}, 'admin', 'active')
-        ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = (EXCLUDED.role = 'admin')
-      `;
+        INSERT INTO organizations (name, base_currency, industry)
+        VALUES (${String(r.orgName).trim()}, ${String(r.baseCurrency).toUpperCase()}, ${String(r.industry)})
+        RETURNING id, name, base_currency as "baseCurrency", industry
+      `
+    )[0] as any;
 
-      await trx`
-        INSERT INTO user_default_org (user_id, org_id)
-        VALUES (${r.userId}, ${org.id})
-        ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
-      `;
+    await trx`
+      INSERT INTO memberships (org_id, user_id, role, status)
+      VALUES (${org.id}, ${r.userId}, 'admin', 'active')
+      ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active', is_global = (EXCLUDED.role = 'admin')
+    `;
 
-      await trx`UPDATE users SET status = 'active' WHERE id = ${r.userId}`;
+    await trx`
+      INSERT INTO user_default_org (user_id, org_id)
+      VALUES (${r.userId}, ${org.id})
+      ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id, updated_at = now()
+    `;
 
-      await trx`
-        UPDATE signup_requests
-        SET status = 'approved', reviewed_by = ${req.auth!.userId}, reviewed_at = now()
-        WHERE id = ${parsed.data.requestId}
-      `;
+    await trx`UPDATE users SET status = 'active' WHERE id = ${r.userId}`;
 
-      return { org, userId: String(r.userId) };
-    });
-  } catch (e: any) {
-    const msg = typeof e?.message === "string" ? e.message : String(e);
-    if (msg === "公司名称已存在") {
-      res.status(409).json({ success: false, error: "公司名称已存在", code: "ORG_NAME_TAKEN" });
-      return;
-    }
-    if (msg === "Not found") {
-      res.status(404).json({ success: false, error: "Not found" });
-      return;
-    }
-    if (msg === "Already processed") {
-      res.status(400).json({ success: false, error: "Already processed" });
-      return;
-    }
-    if (msg === "Missing user") {
-      res.status(400).json({ success: false, error: "Missing user" });
-      return;
-    }
-    throw e;
-  }
+    await trx`
+      UPDATE signup_requests
+      SET status = 'approved', reviewed_by = ${req.auth!.userId}, reviewed_at = now()
+      WHERE id = ${parsed.data.requestId}
+    `;
+
+    return { org, userId: String(r.userId) };
+  });
 
   await seedOrgDefaults(sql, created.org.id, created.org.baseCurrency, created.org.industry);
 
