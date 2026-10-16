@@ -36,14 +36,33 @@ export default function InvoicePrint() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    const draftKey = params.get("draftKey");
+    if (draftKey) {
+      try {
+        const raw = window.sessionStorage.getItem(draftKey);
+        if (!raw) {
+          setErr(tr("未找到预览数据，请返回发票表单重新预览。", "Preview data was not found. Please go back to the invoice form and preview again."));
+          setBusy(false);
+          return;
+        }
+        setInvoice(JSON.parse(raw) as InvoiceRecord);
+        setBusy(false);
+        setErr(null);
+        return;
+      } catch (e: any) {
+        setErr(e?.message || tr("读取预览数据失败。", "Failed to load preview data."));
+        setBusy(false);
+        return;
+      }
+    }
     if (!invoiceId) return;
     setBusy(true);
     setErr(null);
-    api<{ invoice: InvoiceRecord }>(`/api/invoices/${encodeURIComponent(invoiceId)}`, { cache: "no-store" })
+    api<{ invoice: InvoiceRecord }>(`/api/invoices/${encodeURIComponent(invoiceId)}`, { cache: "no-store", timeoutMs: 120_000 })
       .then((resp) => setInvoice(resp.invoice || null))
       .catch((e: any) => setErr(e.message))
       .finally(() => setBusy(false));
-  }, [invoiceId]);
+  }, [invoiceId, params, tr]);
 
   useEffect(() => {
     if (params.get("autoprint") !== "1") return;

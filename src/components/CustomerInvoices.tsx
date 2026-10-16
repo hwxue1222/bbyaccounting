@@ -46,6 +46,25 @@ type InvoiceRow = {
   customerName?: string | null;
 };
 
+type InvoicePreviewRecord = {
+  id: string;
+  invoiceNo: string;
+  issueDate: string;
+  currency: string;
+  fxRate: number;
+  status: string;
+  billToName: string;
+  memo?: string | null;
+  paymentAccountName?: string | null;
+  paymentBankName?: string | null;
+  paymentBankAddress?: string | null;
+  paymentAccountNumber?: string | null;
+  paymentSwiftCode?: string | null;
+  officialStamp?: string | null;
+  totalTxn: number;
+  lineItems: Array<{ particulars: string; paymentMethod: string; amount: number }>;
+};
+
 type InvoiceFormState = {
   entryId: string;
   entryLineNo: string;
@@ -140,25 +159,78 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
 
   async function refreshData() {
     const [customerResp, invoiceResp] = await Promise.all([
-      api<{ customers: CustomerRow[] }>("/api/customers"),
-      api<{ invoices: InvoiceRow[] }>("/api/invoices", { cache: "no-store" }),
+      api<{ customers: CustomerRow[] }>("/api/customers", { timeoutMs: 120_000 }),
+      api<{ invoices: InvoiceRow[] }>("/api/invoices", { cache: "no-store", timeoutMs: 120_000 }),
     ]);
     setCustomers(customerResp.customers || []);
     setInvoices(invoiceResp.invoices || []);
   }
 
-  function downloadPdf(invoiceId: string) {
-    const url = `/api/invoices/${encodeURIComponent(invoiceId)}/pdf`;
-    const link = document.createElement("a");
-    link.href = url;
-    link.rel = "noopener";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  async function downloadPdf(invoiceId: string) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 180_000);
+    try {
+      const res = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/pdf`, {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const fileNameMatch = /filename="?([^"]+)"?/i.exec(res.headers.get("Content-Disposition") || "");
+      link.href = url;
+      link.download = fileNameMatch?.[1] || `invoice-${invoiceId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        setErr(tr("PDF 下载超时，请重试。", "PDF download timed out. Please try again."));
+        return;
+      }
+      setErr(e?.message || tr("PDF 下载失败。", "Failed to download PDF."));
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   }
 
   function openPrintPreview(invoiceId: string) {
     const href = `/invoices/${encodeURIComponent(invoiceId)}/print`;
+    const popup = window.open(href, "_blank", "noopener,noreferrer");
+    if (!popup) window.location.href = href;
+  }
+
+  function openDraftPreview() {
+    const lineItems = form.lineItems.map((item) => ({
+      particulars: item.particulars.trim(),
+      paymentMethod: item.paymentMethod.trim(),
+      amount: Math.round((Number(item.amount) || 0) * 100) / 100,
+    }));
+    const draftPreview: InvoicePreviewRecord = {
+      id: editingId || "draft",
+      invoiceNo: form.invoiceNo.trim(),
+      issueDate: form.issueDate,
+      currency: form.currency.toUpperCase(),
+      fxRate: Number(form.fxRate) || 1,
+      status: form.status,
+      billToName: form.billToName.trim(),
+      memo: form.memo.trim() || null,
+      paymentAccountName: form.paymentAccountName.trim() || null,
+      paymentBankName: form.paymentBankName.trim() || null,
+      paymentBankAddress: form.paymentBankAddress.trim() || null,
+      paymentAccountNumber: form.paymentAccountNumber.trim() || null,
+      paymentSwiftCode: form.paymentSwiftCode.trim() || null,
+      officialStamp: form.officialStamp.trim() || null,
+      totalTxn: Math.round(lineItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0) * 100) / 100,
+      lineItems,
+    };
+    const draftKey = `invoice-preview:${Date.now()}`;
+    window.sessionStorage.setItem(draftKey, JSON.stringify(draftPreview));
+    const href = `/invoices/draft/print?draftKey=${encodeURIComponent(draftKey)}`;
     const popup = window.open(href, "_blank", "noopener,noreferrer");
     if (!popup) window.location.href = href;
   }
@@ -188,7 +260,10 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
   }
 
   async function fillNextInvoiceNo(issueDate: string) {
-    const resp = await api<{ invoiceNo: string }>(`/api/invoices/next-no?issueDate=${encodeURIComponent(issueDate)}`, { cache: "no-store" });
+    const resp = await api<{ invoiceNo: string }>(`/api/invoices/next-no?issueDate=${encodeURIComponent(issueDate)}`, {
+      cache: "no-store",
+      timeoutMs: 120_000,
+    });
     setForm((current) => ({ ...current, invoiceNo: resp.invoiceNo || current.invoiceNo }));
   }
 
@@ -233,10 +308,18 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
       };
       let invoiceId = editingId;
       if (editingId) {
-        const resp = await api<{ invoice: { id: string } }>(`/api/invoices/${encodeURIComponent(editingId)}` as any, { method: "PATCH", json: payload });
+        const resp = await api<{ invoice: { id: string } }>(`/api/invoices/${encodeURIComponent(editingId)}` as any, {
+          method: "PATCH",
+          json: payload,
+          timeoutMs: 120_000,
+        });
         invoiceId = resp.invoice?.id || editingId;
       } else {
-        const resp = await api<{ invoice: { id: string } }>("/api/invoices", { method: "POST", json: payload });
+        const resp = await api<{ invoice: { id: string } }>("/api/invoices", {
+          method: "POST",
+          json: payload,
+          timeoutMs: 120_000,
+        });
         invoiceId = resp.invoice?.id || null;
       }
       await refreshData();
@@ -245,7 +328,7 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
       setInvoiceNoTouched(false);
       clearInvoicePrefillParams();
       if (downloadAfterSave && invoiceId) {
-        window.setTimeout(() => downloadPdf(invoiceId as string), 0);
+        window.setTimeout(() => void downloadPdf(invoiceId as string), 0);
       }
     } catch (e: any) {
       setErr(e.message);
@@ -407,6 +490,13 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
                 type="button"
               >
                 {tr("取消", "Cancel")}
+              </button>
+              <button
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                onClick={openDraftPreview}
+                type="button"
+              >
+                {tr("PDF 预览", "Preview PDF")}
               </button>
               <button
                 className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
@@ -766,7 +856,7 @@ export default function CustomerInvoices({ baseCurrency }: { baseCurrency: strin
                       </button>
                       <button
                         className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
-                        onClick={() => downloadPdf(invoice.id)}
+                        onClick={() => void downloadPdf(invoice.id)}
                         type="button"
                       >
                         {tr("下载 PDF", "Download PDF")}
