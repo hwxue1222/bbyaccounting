@@ -2651,7 +2651,7 @@ router.get("/:id/attachments/:attachmentId", requireAuth, async (req: AuthedRequ
   const sql = getSql();
   const row = (
     await sql`
-      SELECT file_name as fileName, mime_type as mimeType, data_base64 as dataBase64
+      SELECT file_name as "fileName", mime_type as "mimeType", data_base64 as "dataBase64"
       FROM attachments
       WHERE id = ${req.params.attachmentId} AND entry_id = ${req.params.id} AND org_id = ${orgId}
       LIMIT 1
@@ -2661,10 +2661,18 @@ router.get("/:id/attachments/:attachmentId", requireAuth, async (req: AuthedRequ
     res.status(404).json({ success: false, error: "Not found" });
     return;
   }
-  const buf = Buffer.from(row.dataBase64 || "", "base64");
+  const fileName = String(row.fileName || "attachment");
+  const mimeType = String(row.mimeType || "application/octet-stream");
+  const buf = Buffer.from(String(row.dataBase64 || ""), "base64");
   const inline = typeof req.query.inline === "string" ? req.query.inline === "1" || req.query.inline.toLowerCase() === "true" : false;
-  res.setHeader("Content-Type", row.mimeType || "application/octet-stream");
-  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(row.fileName)}`);
+  const asciiSafeName = fileName.replace(/["\\\r\n]/g, "_");
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Content-Length", String(buf.length));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader(
+    "Content-Disposition",
+    `${inline ? "inline" : "attachment"}; filename="${asciiSafeName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+  );
   res.status(200).send(buf);
 });
 
