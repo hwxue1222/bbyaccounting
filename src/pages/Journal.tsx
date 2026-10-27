@@ -59,6 +59,8 @@ type EntryDetail = {
   attachments: Array<{ id: string; fileName: string; mimeType: string | null; sizeBytes: number | null; createdAt: string }>;
 };
 
+type AttachmentMeta = { id: string; fileName: string; mimeType: string | null };
+
 type CachedDetail = { key: string; ts: number; value: EntryDetail };
 
 type AssistJournalSuggestion = {
@@ -123,6 +125,13 @@ export default function Journal() {
   const [detail, setDetail] = useState<EntryDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<null | {
+    id: string;
+    fileName: string;
+    mimeType: string;
+    objectUrl: string;
+    kind: "pdf" | "image";
+  }>(null);
 
   const [newAccountOpen, setNewAccountOpen] = useState(false);
   const [newAccountBusy, setNewAccountBusy] = useState(false);
@@ -717,6 +726,90 @@ export default function Journal() {
       await api(`/api/journals/${encodeURIComponent(entryId)}/attachments`, { method: "POST", body: fd });
     }
   }
+
+  async function fetchAttachmentBlob(
+    entryId: string,
+    attachment: AttachmentMeta,
+    inline?: boolean,
+  ): Promise<Blob> {
+    const url = `/api/journals/${encodeURIComponent(entryId)}/attachments/${encodeURIComponent(attachment.id)}${inline ? "?inline=1" : ""}`;
+    const res = await fetch(url, { credentials: "include" });
+    const contentType = String(res.headers.get("Content-Type") || "");
+    if (contentType.includes("application/json")) {
+      const data = (await res.json().catch(() => null)) as any;
+      throw new Error(typeof data?.error === "string" ? data.error : `HTTP ${res.status}`);
+    }
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.arrayBuffer();
+    return new Blob([data], { type: contentType || attachment.mimeType || "application/octet-stream" });
+  }
+
+  function attachmentPreviewKind(attachment: AttachmentMeta): "pdf" | "image" | null {
+    const mime = String(attachment.mimeType || "").toLowerCase();
+    const name = String(attachment.fileName || "").toLowerCase();
+    if (mime.includes("pdf") || name.endsWith(".pdf")) return "pdf";
+    if (mime.startsWith("image/") || /\.(jpg|jpeg|png)$/i.test(name)) return "image";
+    return null;
+  }
+
+  async function previewAttachment(entryId: string, attachment: AttachmentMeta) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const kind = attachmentPreviewKind(attachment);
+      if (!kind) {
+        throw new Error(tr("该附件暂不支持预览", "This attachment type cannot be previewed."));
+      }
+      const blob = await fetchAttachmentBlob(entryId, attachment, true);
+      const objectUrl = window.URL.createObjectURL(blob);
+      setAttachmentPreview((prev) => {
+        if (prev?.objectUrl) {
+          window.URL.revokeObjectURL(prev.objectUrl);
+        }
+        return {
+          id: attachment.id,
+          fileName: attachment.fileName,
+          mimeType: blob.type || attachment.mimeType || "application/octet-stream",
+          objectUrl,
+          kind,
+        };
+      });
+    } catch (e: any) {
+      setErr(e?.message || tr("附件预览失败", "Failed to preview attachment"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadAttachment(entryId: string, attachment: AttachmentMeta) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const blob = await fetchAttachmentBlob(entryId, attachment, false);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = attachment.fileName || "attachment";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (e: any) {
+      setErr(e?.message || tr("附件下载失败", "Failed to download attachment"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (attachmentPreview?.objectUrl) {
+        window.URL.revokeObjectURL(attachmentPreview.objectUrl);
+      }
+    };
+  }, [attachmentPreview]);
 
   async function refreshFixedAssets(signal?: AbortSignal) {
     const r = await api<{ assets: any[] }>("/api/fixed-assets", { signal });
@@ -5496,29 +5589,41 @@ export default function Journal() {
                   </div>
                   <div className="mt-2 space-y-2">
                     {detail.attachments.map((a) => {
-                      const mime = String(a.mimeType || "").toLowerCase();
-                      const isPreviewable = mime.startsWith("image/") || mime.includes("pdf");
-                      const inlineUrl = `/api/journals/${encodeURIComponent(detail.entry.id)}/attachments/${encodeURIComponent(a.id)}?inline=1`;
-                      const downloadUrl = `/api/journals/${encodeURIComponent(detail.entry.id)}/attachments/${encodeURIComponent(a.id)}`;
+                      const isPreviewable = attachmentPreviewKind(a) !== null;
                       return (
                         <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2">
-                          <a
-                            className="min-w-0 flex-1 truncate text-sm hover:underline"
-                            href={isPreviewable ? inlineUrl : downloadUrl}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button
+                            className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+                            onClick={() => {
+                              void (isPreviewable ? previewAttachment(detail.entry.id, a) : downloadAttachment(detail.entry.id, a));
+                            }}
+                            type="button"
                           >
                             {a.fileName}
-                          </a>
+                          </button>
                           <div className="flex items-center gap-2">
                             {isPreviewable ? (
-                              <a className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50" href={inlineUrl} target="_blank" rel="noreferrer">
+                              <button
+                                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                                disabled={busy}
+                                onClick={() => {
+                                  void previewAttachment(detail.entry.id, a);
+                                }}
+                                type="button"
+                              >
                                 {tr("预览", "Preview")}
-                              </a>
+                              </button>
                             ) : null}
-                            <a className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50" href={downloadUrl} target="_blank" rel="noreferrer">
+                            <button
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              disabled={busy}
+                              onClick={() => {
+                                void downloadAttachment(detail.entry.id, a);
+                              }}
+                              type="button"
+                            >
                               {tr("下载", "Download")}
-                            </a>
+                            </button>
                             <label className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50">
                               <input
                                 className="hidden"
@@ -5579,6 +5684,54 @@ export default function Journal() {
             )}
           </div>
       </div>
+
+      {attachmentPreview ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+              <div className="min-w-0 truncate text-sm font-medium">{attachmentPreview.fileName}</div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  onClick={() => {
+                    void downloadAttachment(detail?.entry.id || "", {
+                      id: attachmentPreview.id,
+                      fileName: attachmentPreview.fileName,
+                      mimeType: attachmentPreview.mimeType,
+                    });
+                  }}
+                  type="button"
+                >
+                  {tr("下载", "Download")}
+                </button>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  onClick={() => {
+                    setAttachmentPreview((prev) => {
+                      if (prev?.objectUrl) {
+                        window.URL.revokeObjectURL(prev.objectUrl);
+                      }
+                      return null;
+                    });
+                  }}
+                  type="button"
+                >
+                  {tr("关闭", "Close")}
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 bg-zinc-100 p-3">
+              {attachmentPreview.kind === "pdf" ? (
+                <iframe className="h-full w-full rounded-lg bg-white" src={attachmentPreview.objectUrl} title={attachmentPreview.fileName} />
+              ) : (
+                <div className="flex h-full items-center justify-center overflow-auto rounded-lg bg-white p-4">
+                  <img className="max-h-full max-w-full object-contain" src={attachmentPreview.objectUrl} alt={attachmentPreview.fileName} />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {newAccountOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
