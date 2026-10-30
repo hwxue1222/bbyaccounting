@@ -36,9 +36,9 @@ type TaxSettings = {
 };
 
 export default function Settings() {
-  const { orgs, activeOrgId, orgSwitching, switchOrg, createInvite, updateOrg, deleteOrg } = useAuthStore();
+  const { orgs, activeOrgId, orgSwitching, switchOrg, updateOrg, deleteOrg } = useAuthStore();
   const tr = useTr();
-  const [leftTab, setLeftTab] = useState<"switch" | "profile" | "invite">("switch");
+  const [leftTab, setLeftTab] = useState<"switch" | "profile">("switch");
   const [rightTab, setRightTab] = useState<"accounts" | "bankAccounts" | "costCenters" | "currencies" | "fxRates" | "tax">("accounts");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
@@ -57,9 +57,6 @@ export default function Settings() {
     updatedAt: null,
   });
   const [err, setErr] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("viewer");
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [newAccountCode, setNewAccountCode] = useState("");
@@ -167,7 +164,6 @@ export default function Settings() {
   useEffect(() => {
     if (!activeOrgId || orgSwitching) return;
     setErr(null);
-    setInviteUrl(null);
     setEditingCurrencyId(null);
     refresh().catch((e) => setErr(e.message));
   }, [activeOrgId, orgSwitching]);
@@ -177,7 +173,7 @@ export default function Settings() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-2 gap-1">
               <button
                 className={
                   leftTab === "switch"
@@ -199,17 +195,6 @@ export default function Settings() {
                 onClick={() => setLeftTab("profile")}
               >
                 公司资料
-              </button>
-              <button
-                className={
-                  leftTab === "invite"
-                    ? "rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700"
-                    : "rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
-                }
-                type="button"
-                onClick={() => setLeftTab("invite")}
-              >
-                邀请用户
               </button>
             </div>
           </div>
@@ -306,51 +291,6 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className={"rounded-xl border border-zinc-200 bg-white p-4 shadow-sm " + (leftTab === "invite" ? "" : "hidden")}
-          >
-            <div className="text-sm font-semibold">邀请用户</div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div>
-                <label className="text-xs text-zinc-600">邮箱</label>
-                <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com" />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-600">角色</label>
-                <select className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-                  {['admin','accountant','viewer','auditor'].map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <button
-              className="mt-3 rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-              disabled={busy || !inviteEmail.trim()}
-              onClick={async () => {
-                setBusy(true);
-                setErr(null);
-                setInviteUrl(null);
-                try {
-                  const r = await createInvite(inviteEmail, inviteRole);
-                  setInviteUrl(r.inviteUrl);
-                } catch (e: any) {
-                  setErr(e.message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              生成邀请链接
-            </button>
-            {inviteUrl ? (
-              <div className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm">
-                <div className="text-xs text-zinc-600">邀请链接</div>
-                <div className="mt-1 break-all font-mono text-xs">{inviteUrl}</div>
-              </div>
-            ) : null}
-          </div>
         </div>
 
         <div className="space-y-4">
