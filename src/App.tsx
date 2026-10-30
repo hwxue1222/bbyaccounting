@@ -13,6 +13,7 @@ import Settings from "@/pages/Settings";
 import Users from "@/pages/Users";
 import Vendors from "@/pages/Vendors";
 import Customers from "@/pages/Customers";
+import BankReconciliation from "@/pages/BankReconciliation";
 import PendingApproval from "@/pages/PendingApproval";
 import SuperAdmin from "@/pages/SuperAdmin";
 
@@ -81,6 +82,14 @@ export default function App() {
           element={
             <RequireAuth>
               <Journal />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/bank-reconciliation"
+          element={
+            <RequireAuth>
+              <BankReconciliation />
             </RequireAuth>
           }
         />

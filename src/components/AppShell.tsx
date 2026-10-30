@@ -2,7 +2,7 @@ import type React from "react";
 
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Building2, FileText, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
+import { Building2, FileText, Landmark, Package, Settings, Warehouse, LogOut, Users, Handshake, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -119,6 +119,7 @@ export default function AppShell({ title, children }: { title: string; children:
             {(user as any)?.isSuperAdmin ? <SideLink to="/superadmin" label="SuperAdmin" icon={<UserRound className="h-4 w-4" />} /> : null}
             <SideLink to="/settings" label={tr("设置", "Settings")} icon={<Settings className="h-4 w-4" />} />
             <SideLink to="/journal" label={tr("分录", "Journals")} icon={<FileText className="h-4 w-4" />} />
+            <SideLink to="/bank-reconciliation" label={tr("银行对账", "Bank Reconciliation")} icon={<Landmark className="h-4 w-4" />} />
             <SideLink to="/inventory" label={tr("库存 FIFO", "Inventory FIFO")} icon={<Package className="h-4 w-4" />} />
             <SideLink to="/fixed-assets" label={tr("固定资产", "Fixed Assets")} icon={<Warehouse className="h-4 w-4" />} />
             <SideLink to="/vendors" label={tr("供应商", "Vendors")} icon={<Handshake className="h-4 w-4" />} />

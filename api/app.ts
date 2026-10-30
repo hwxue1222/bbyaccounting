@@ -26,6 +26,7 @@ import debugRoutes from './routes/debug.js'
 import superadminRoutes from './routes/superadmin.js'
 import vendorsRoutes from './routes/vendors.js'
 import customersRoutes from './routes/customers.js'
+import bankReconciliationRoutes from './routes/bankReconciliation.js'
 
 // load env
 dotenv.config()
@@ -249,6 +250,7 @@ app.use('/api/reports', reportRoutes)
 app.use('/api/vendors', vendorsRoutes)
 app.use('/api/customers', customersRoutes)
 app.use('/api/users', usersRoutes)
+app.use('/api/bank-reconciliation', bankReconciliationRoutes)
 app.use('/api/assist', assistRoutes)
 app.use('/api/debug', debugRoutes)
 app.use('/api/superadmin', superadminRoutes)
