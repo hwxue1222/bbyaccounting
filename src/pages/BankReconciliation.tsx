@@ -385,7 +385,7 @@ export default function BankReconciliation() {
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold">{tr("导入银行单并过账", "Import Statement And Post")}</div>
           <div className="mt-1 text-sm text-zinc-500">
-            {tr("先选银行账号，再上传 Excel 银行单，系统会自动识别日期、摘要、借贷方和金额。", "Select a bank account, upload the Excel statement, then map each transaction to an account before posting.")}
+            {tr("先选银行账号，再上传 Excel 或 PDF 银行单，系统会自动识别日期、摘要、借贷方和金额。", "Select a bank account, upload the Excel or PDF statement, then map each transaction to an account before posting.")}
           </div>
 
           {!activeBankAccounts.length ? (
@@ -425,7 +425,7 @@ export default function BankReconciliation() {
                     ref={fileInputRef}
                     className="mt-1 block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-zinc-100 file:px-3 file:py-2 file:text-sm"
                     type="file"
-                    accept=".xlsx"
+                    accept=".xlsx,.pdf,application/pdf"
                     disabled={importing || posting || !selectedBankAccountId}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
