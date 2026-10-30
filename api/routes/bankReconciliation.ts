@@ -1,7 +1,6 @@
 import { Router, type Response } from "express";
 import ExcelJS from "exceljs";
 import multer from "multer";
-import { PDFParse } from "pdf-parse";
 import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
@@ -377,6 +376,7 @@ function parsePdfStatementLine(line: string, rowNo: number): ParsedStatementRow 
 }
 
 async function loadPdfStatementRows(file: Express.Multer.File): Promise<ParsedStatementRow[]> {
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: file.buffer });
   try {
     const result = await parser.getText();
