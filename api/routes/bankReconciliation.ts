@@ -375,7 +375,40 @@ function parsePdfStatementLine(line: string, rowNo: number): ParsedStatementRow 
   };
 }
 
+function ensurePdfRuntimePolyfills() {
+  const g = globalThis as any;
+  if (typeof g.DOMMatrix === "undefined") {
+    g.DOMMatrix = class DOMMatrix {
+      multiplySelf() {
+        return this;
+      }
+      preMultiplySelf() {
+        return this;
+      }
+      translateSelf() {
+        return this;
+      }
+      scaleSelf() {
+        return this;
+      }
+      rotateSelf() {
+        return this;
+      }
+      invertSelf() {
+        return this;
+      }
+    };
+  }
+  if (typeof g.ImageData === "undefined") {
+    g.ImageData = class ImageData {};
+  }
+  if (typeof g.Path2D === "undefined") {
+    g.Path2D = class Path2D {};
+  }
+}
+
 async function loadPdfStatementRows(file: Express.Multer.File): Promise<ParsedStatementRow[]> {
+  ensurePdfRuntimePolyfills();
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: file.buffer });
   try {

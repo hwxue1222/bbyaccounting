@@ -284,6 +284,14 @@ export default function BankReconciliation() {
       setErr(tr("请先选择银行账号。", "Please select a bank account first."));
       return;
     }
+    const lowerName = String(file.name || "").toLowerCase();
+    const mimeType = String(file.type || "").toLowerCase();
+    const supported = lowerName.endsWith(".xlsx") || lowerName.endsWith(".pdf") || mimeType.includes("pdf");
+    if (!supported) {
+      setErr(tr("目前只支持 .xlsx 和 PDF 银行单。", "Only .xlsx and PDF statements are supported right now."));
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     setImporting(true);
     setErr(null);
     setSuccess(null);
@@ -425,7 +433,6 @@ export default function BankReconciliation() {
                     ref={fileInputRef}
                     className="mt-1 block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-zinc-100 file:px-3 file:py-2 file:text-sm"
                     type="file"
-                    accept=".xlsx,.pdf,application/pdf"
                     disabled={importing || posting || !selectedBankAccountId}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
