@@ -221,7 +221,7 @@ export default function BankReconciliation() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState("");
   const [rows, setRows] = useState<ImportedRow[]>([]);
   const [importedFileName, setImportedFileName] = useState("");
-  const [importedFileType, setImportedFileType] = useState<"excel" | "pdf" | "">("");
+  const [importedFileType, setImportedFileType] = useState<"excel" | "">("");
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [posting, setPosting] = useState(false);
@@ -285,10 +285,9 @@ export default function BankReconciliation() {
       return;
     }
     const lowerName = String(file.name || "").toLowerCase();
-    const mimeType = String(file.type || "").toLowerCase();
-    const supported = lowerName.endsWith(".xlsx") || lowerName.endsWith(".pdf") || mimeType.includes("pdf");
+    const supported = lowerName.endsWith(".xlsx");
     if (!supported) {
-      setErr(tr("目前只支持 .xlsx 和 PDF 银行单。", "Only .xlsx and PDF statements are supported right now."));
+      setErr(tr("目前只支持 .xlsx 银行单。", "Only .xlsx statements are supported right now."));
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -298,7 +297,7 @@ export default function BankReconciliation() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const result = await api<{ rows: Array<Omit<ImportedRow, "id" | "accountId" | "post" | "touched" | "matchSource">>; fileName: string; fileType?: "excel" | "pdf" }>(
+      const result = await api<{ rows: Array<Omit<ImportedRow, "id" | "accountId" | "post" | "touched" | "matchSource">>; fileName: string; fileType?: "excel" }>(
         "/api/bank-reconciliation/import",
         {
         method: "POST",
@@ -306,7 +305,7 @@ export default function BankReconciliation() {
         timeoutMs: 120_000,
       });
       setImportedFileName(result.fileName || file.name);
-      setImportedFileType(result.fileType || (file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "excel"));
+      setImportedFileType(result.fileType || "excel");
       const importedRows = (result.rows || []).map((row, idx) => ({
           id: `${row.rowNo}-${idx}`,
           rowNo: row.rowNo,
@@ -393,7 +392,7 @@ export default function BankReconciliation() {
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="text-sm font-semibold">{tr("导入银行单并过账", "Import Statement And Post")}</div>
           <div className="mt-1 text-sm text-zinc-500">
-            {tr("先选银行账号，再上传 Excel 或 PDF 银行单，系统会自动识别日期、摘要、借贷方和金额。", "Select a bank account, upload the Excel or PDF statement, then map each transaction to an account before posting.")}
+            {tr("先选银行账号，再上传 Excel 银行单，系统会自动识别日期、摘要、借贷方和金额。", "Select a bank account, upload the Excel statement, then map each transaction to an account before posting.")}
           </div>
 
           {!activeBankAccounts.length ? (
@@ -433,6 +432,7 @@ export default function BankReconciliation() {
                     ref={fileInputRef}
                     className="mt-1 block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-zinc-100 file:px-3 file:py-2 file:text-sm"
                     type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     disabled={importing || posting || !selectedBankAccountId}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -440,7 +440,7 @@ export default function BankReconciliation() {
                       void importFile(file);
                     }}
                   />
-                  <div className="mt-1 text-xs text-zinc-500">{tr("目前支持 .xlsx 和文本型 PDF。", "Currently supports .xlsx and text-based PDF statements.")}</div>
+                  <div className="mt-1 text-xs text-zinc-500">{tr("目前只支持 .xlsx。", "Currently supports .xlsx only.")}</div>
                 </div>
               </div>
 
@@ -493,7 +493,7 @@ export default function BankReconciliation() {
               <div className="mt-1 text-sm text-zinc-500">
                 {importedFileName
                   ? tr(`文件：${importedFileName}${importedFileType ? `（${importedFileType.toUpperCase()}）` : ""}`, `File: ${importedFileName}${importedFileType ? ` (${importedFileType.toUpperCase()})` : ""}`)
-                  : tr("上传 Excel 或 PDF 后会在这里显示流水表格。", "Imported statement rows will appear here after upload.")}
+                  : tr("上传 Excel 后会在这里显示流水表格。", "Imported statement rows will appear here after upload.")}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">

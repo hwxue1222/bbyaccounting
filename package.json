@@ -24,8 +24,6 @@
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.511.0",
     "multer": "^2.0.2",
-    "pdf-parse": "^2.4.5",
-    "pdfjs-dist": "^5.4.296",
     "postgres": "^3.4.7",
     "puppeteer": "^25.16.0",
     "puppeteer-core": "^25.16.0",
