@@ -192,9 +192,6 @@ export default function Login() {
             </button>
           </div>
 
-          <div className="mt-4 text-xs text-zinc-500">
-            {tr("部署到 Vercel 时请配置 `DATABASE_URL` 与 `JWT_SECRET`。", "Configure `DATABASE_URL` and `JWT_SECRET` on Vercel.")}
-          </div>
         </div>
       </div>
     </div>

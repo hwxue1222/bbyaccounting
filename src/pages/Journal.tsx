@@ -907,7 +907,7 @@ export default function Journal() {
     const firstId = (entries as any[])?.[0]?.id ? String((entries as any[])[0].id) : "";
     if (firstId && !selectedId && detailWarmIdRef.current !== firstId) {
       detailWarmIdRef.current = firstId;
-      fetchDetailCore(firstId, { signal }).catch(() => null);
+      fetchDetailCore(firstId, { signal, withAttachments: false }).catch(() => null);
     }
   }
 
@@ -944,8 +944,8 @@ export default function Journal() {
     await refreshEntriesOnly();
   }
 
-  function detailCacheKey(entryId: string): string {
-    return `${activeOrgId || ""}:${String(entryId)}`;
+  function detailCacheKey(entryId: string, withAttachments?: boolean): string {
+    return `${activeOrgId || ""}:${String(entryId)}:${withAttachments ? "full" : "base"}`;
   }
 
   function isDetailCacheFresh(cached: CachedDetail | undefined): cached is CachedDetail {
@@ -1101,8 +1101,12 @@ export default function Journal() {
     taxSettings.sstReceivableAccountId,
   ]);
 
-  async function fetchDetailCore(entryId: string, opts?: { signal?: AbortSignal; force?: boolean }): Promise<EntryDetail> {
-    const key = detailCacheKey(entryId);
+  async function fetchDetailCore(
+    entryId: string,
+    opts?: { signal?: AbortSignal; force?: boolean; withAttachments?: boolean },
+  ): Promise<EntryDetail> {
+    const withAttachments = Boolean(opts?.withAttachments);
+    const key = detailCacheKey(entryId, withAttachments);
     const cached = detailCacheRef.current.get(key);
     if (!opts?.force && isDetailCacheFresh(cached)) {
       return cached.value;
@@ -1114,7 +1118,10 @@ export default function Journal() {
     }
 
     let p: Promise<EntryDetail>;
-    p = api<EntryDetail>(`/api/journals/${encodeURIComponent(entryId)}`, { signal: opts?.signal, cache: "no-store" })
+    p = api<EntryDetail>(
+      `/api/journals/${encodeURIComponent(entryId)}${withAttachments ? "" : "?withAttachments=0"}`,
+      { signal: opts?.signal, cache: "no-store" },
+    )
       .then((d) => {
         detailCacheRef.current.set(key, { key, ts: Date.now(), value: d });
         return d;
@@ -1133,7 +1140,7 @@ export default function Journal() {
     setBusy(true);
     setErr(null);
     try {
-      const d = detailOverride ?? (await fetchDetailCore(id, { force: true }));
+      const d = detailOverride ?? (await fetchDetailCore(id, { force: true, withAttachments: true }));
       setDetail(d);
 
       const needsInv = d.entry.status === "posted" && d.lines.some((l: any) => (l as any).inventoryItemId);
@@ -1267,7 +1274,7 @@ export default function Journal() {
     setBusy(true);
     setErr(null);
     try {
-      const d = await fetchDetailCore(entryId, { force: true });
+      const d = await fetchDetailCore(entryId, { force: true, withAttachments: true });
       if (d.entry.status !== "draft") {
         throw new Error(tr("仅支持对草稿凭证使用“新建”", "Only draft journals are supported for this action."));
       }
@@ -2028,10 +2035,22 @@ export default function Journal() {
   }, [draftDate, draftCurrency]);
 
   async function loadDetail(id: string, signal?: AbortSignal, opts?: { force?: boolean }) {
-    const d = await fetchDetailCore(id, { signal, force: opts?.force });
+    const d = await fetchDetailCore(id, { signal, force: opts?.force, withAttachments: false });
     if (signal?.aborted) return;
     setDetail(d);
     setErr((prev) => (prev === "请求超时，请重试" ? null : prev));
+    void fetchDetailCore(id, { signal, force: opts?.force, withAttachments: true })
+      .then((full) => {
+        if (signal?.aborted) return;
+        setDetail((prev) => {
+          if (!prev || prev.entry.id !== id) return prev;
+          if (prev.attachments === full.attachments) return prev;
+          return { ...prev, attachments: full.attachments };
+        });
+      })
+      .catch((e: any) => {
+        if (e?.name === "AbortError") return;
+      });
   }
 
   function prefetchDetail(id: string) {
@@ -2042,20 +2061,25 @@ export default function Journal() {
     }
     detailPrefetchTimerRef.current = window.setTimeout(() => {
       if (detailPrefetchIdRef.current !== id) return;
-      const cached = detailCacheRef.current.get(detailCacheKey(id));
+      const cached = detailCacheRef.current.get(detailCacheKey(id, false));
       if (isDetailCacheFresh(cached)) return;
       detailPrefetchAbortRef.current?.abort();
       const ctrl = new AbortController();
       detailPrefetchAbortRef.current = ctrl;
-      fetchDetailCore(id, { signal: ctrl.signal }).catch(() => null);
-    }, 200);
+      fetchDetailCore(id, { signal: ctrl.signal, withAttachments: false }).catch(() => null);
+    }, 120);
   }
 
   function selectEntry(id: string) {
     setSelectedId(id);
-    const cached = detailCacheRef.current.get(detailCacheKey(id));
-    if (isDetailCacheFresh(cached)) {
-      setDetail(cached.value);
+    const fullCached = detailCacheRef.current.get(detailCacheKey(id, true));
+    if (isDetailCacheFresh(fullCached)) {
+      setDetail(fullCached.value);
+      return;
+    }
+    const baseCached = detailCacheRef.current.get(detailCacheKey(id, false));
+    if (isDetailCacheFresh(baseCached)) {
+      setDetail(baseCached.value);
       return;
     }
     setDetail(null);

@@ -17,6 +17,34 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function normalizeOrigin(origin: string): string {
+  return origin.trim().replace(/\/+$/, "");
+}
+
+function requestOrigin(req: Request): string | null {
+  const originHeader = String(req.headers.origin || "").trim();
+  if (originHeader) {
+    return normalizeOrigin(originHeader);
+  }
+
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0]?.trim();
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").split(",")[0]?.trim();
+  const host = forwardedHost || String(req.headers.host || "").trim();
+  if (!host) return null;
+  return normalizeOrigin(`${forwardedProto || "https"}://${host}`);
+}
+
+function resolveInviteAppOrigin(req: Request): string {
+  const configured = String(process.env.APP_ORIGIN || "")
+    .split(",")
+    .map((part) => normalizeOrigin(part))
+    .filter(Boolean);
+  const reqOrigin = requestOrigin(req);
+  if (reqOrigin && configured.includes(reqOrigin)) return reqOrigin;
+  if (configured.length) return configured[0];
+  return reqOrigin || "http://localhost:5173";
+}
+
 router.post("/register", async (req: Request, res: Response): Promise<void> => {
   await ensureMigrated();
   const bodySchema = z.object({
@@ -304,7 +332,7 @@ router.post("/create-invite", requireAuth, async (req: AuthedRequest, res: Respo
     INSERT INTO invitations (org_id, email, role, token_hash, expires_at, created_by)
     VALUES (${orgId}, ${emailNorm}, ${parsed.data.role}, ${tokenHash}, ${expiresAt.toISOString()}, ${req.auth!.userId})
   `;
-  const appOrigin = process.env.APP_ORIGIN || "http://localhost:5173";
+  const appOrigin = resolveInviteAppOrigin(req);
   res.status(200).json({ success: true, data: { token, inviteUrl: `${appOrigin}/auth/invite?token=${token}` } });
 });
 
