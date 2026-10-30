@@ -1,6 +1,8 @@
 import { Router, type Response } from "express";
 import ExcelJS from "exceljs";
 import multer from "multer";
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 import { z } from "zod";
 import { getSql } from "../lib/db.js";
 import { ensureMigrated } from "../lib/migrate.js";
@@ -10,6 +12,7 @@ import { issueVoucherNo } from "../lib/voucher.js";
 
 const router = Router();
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
+(globalThis as any).pdfjsWorker ||= pdfjsWorker;
 
 type StatementSide = "debit" | "credit";
 type ColumnKey = "date" | "description" | "debit" | "credit" | "amount" | "side";
@@ -489,17 +492,8 @@ function ensurePdfRuntimePolyfills() {
   }
 }
 
-async function ensurePdfWorkerLoaded() {
-  const g = globalThis as any;
-  if (!g.pdfjsWorker?.WorkerMessageHandler) {
-    g.pdfjsWorker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  }
-}
-
 async function loadPdfStatementRows(file: Express.Multer.File): Promise<ParsedStatementRow[]> {
   ensurePdfRuntimePolyfills();
-  await ensurePdfWorkerLoaded();
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(file.buffer),
     useWorkerFetch: false,
