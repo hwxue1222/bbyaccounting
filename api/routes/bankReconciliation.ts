@@ -24,9 +24,9 @@ type ParsedStatementRow = {
 
 const HEADER_KEYWORDS: Record<ColumnKey, string[]> = {
   date: ["date", "transactiondate", "postingdate", "valuedate", "日期", "交易日期", "入账日期"],
-  description: ["description", "particular", "particulars", "narration", "memo", "details", "remark", "摘要", "描述", "备注", "说明"],
-  debit: ["debit", "dr", "withdrawal", "payment", "out", "借方", "支出", "付款", "转出"],
-  credit: ["credit", "cr", "deposit", "receipt", "in", "贷方", "收入", "收款", "转入"],
+  description: ["description", "decription", "particular", "particulars", "narration", "memo", "details", "remark", "摘要", "描述", "备注", "说明"],
+  debit: ["debit", "dr", "withdraw", "withdrawal", "payment", "out", "借方", "支出", "付款", "转出"],
+  credit: ["credit", "cr", "deposit", "deposits", "receipt", "in", "贷方", "收入", "收款", "转入"],
   amount: ["amount", "amt", "交易额", "金额", "发生额"],
   side: ["side", "drcr", "debitcredit", "借贷", "借贷方", "方向"],
 };
