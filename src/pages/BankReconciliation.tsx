@@ -711,6 +711,7 @@ export default function BankReconciliation() {
         entryDate: row.date,
         currency: baseCurrency(),
         fxRate: 1,
+        bankAccountId: selectedBank.id,
         memo,
         fixedAssetDisposal: { costLineNo: 3, accumDepLineNo: 2 },
         lines,
@@ -721,6 +722,7 @@ export default function BankReconciliation() {
       entryDate: row.date,
       currency: baseCurrency(),
       fxRate: 1,
+      bankAccountId: selectedBank.id,
       memo,
       inventoryLinkLineNo: needsInventory ? 1 : undefined,
       inventoryDetails: needsInventory

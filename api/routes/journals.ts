@@ -670,6 +670,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
     entryDate: z.string().min(10),
     currency: z.string().min(3).max(3),
     fxRate: z.number().positive().default(1),
+    bankAccountId: z.string().uuid().optional(),
     vendorId: z.string().uuid().nullable().optional(),
     customerId: z.string().uuid().nullable().optional(),
     voucherNo: z.string().trim().min(1).max(32).optional(),
@@ -690,6 +691,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const sql = getSql();
   const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const bankAccountId = parsed.data.bankAccountId;
   const vendorId = parsed.data.vendorId ?? null;
   const customerId = parsed.data.customerId ?? null;
   const inventoryDetails = parsed.data.inventoryDetails;
@@ -1210,6 +1212,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     entryDate: z.string().min(10),
     currency: z.string().min(3).max(3),
     fxRate: z.number().positive().default(1),
+    bankAccountId: z.string().uuid().optional(),
     vendorId: z.string().uuid().nullable().optional(),
     customerId: z.string().uuid().nullable().optional(),
     voucherNo: z.string().trim().min(1).max(32).optional(),
@@ -1232,6 +1235,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const sql = getSql();
   const { entryDate, currency, fxRate, memo, lines } = parsed.data;
+  const bankAccountId = parsed.data.bankAccountId;
   const vendorId = parsed.data.vendorId ?? null;
   const customerId = parsed.data.customerId ?? null;
   const inventoryDetails = parsed.data.inventoryDetails;
@@ -1250,6 +1254,22 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const orgRows = await sql`SELECT base_currency as "baseCurrency" FROM organizations WHERE id = ${orgId} LIMIT 1`;
   const baseCurrency = String((orgRows as any[])[0]?.baseCurrency || "BASE").toUpperCase();
+  let bankAccountRow: { id: string; accountId: string } | null = null;
+  if (bankAccountId) {
+    const found = (
+      await sql`
+        SELECT id, account_id as "accountId"
+        FROM bank_accounts
+        WHERE org_id = ${orgId} AND id = ${bankAccountId} AND is_active = true
+        LIMIT 1
+      `
+    )[0] as any;
+    if (!found) {
+      res.status(400).json({ success: false, error: "Invalid bank account" });
+      return;
+    }
+    bankAccountRow = { id: String(found.id), accountId: String(found.accountId) };
+  }
 
   const upsertFxRate = async (trx: any, rateDate: string) => {
     const ccy = String(currency || "").toUpperCase();
@@ -1301,6 +1321,7 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
     return {
       lineNo: idx + 1,
       accountId: l.accountId,
+      bankAccountId: bankAccountRow && l.accountId === bankAccountRow.accountId ? bankAccountRow.id : null,
       description: l.description || null,
       costCenterId: l.costCenterId ?? null,
       debitTxn: debit,
@@ -1543,10 +1564,10 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
           await trx`
             INSERT INTO journal_lines (
               org_id, entry_id, line_no, account_id, description, cost_center_id,
-              debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
+              debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id, bank_account_id
             ) VALUES (
               ${orgId}, ${entry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
-              ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${l.fixedAssetId || null}
+              ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${l.fixedAssetId || null}, ${l.bankAccountId}
             )
           `;
         }
@@ -1578,10 +1599,10 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
             await trx`
               INSERT INTO journal_lines (
                 org_id, entry_id, line_no, account_id, description, cost_center_id,
-                debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
+                debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id, bank_account_id
               ) VALUES (
                 ${orgId}, ${nextEntry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
-                ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${l.fixedAssetId || null}
+                ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${l.fixedAssetId || null}, ${l.bankAccountId}
               )
             `;
           }
@@ -1639,10 +1660,10 @@ router.post("/post", requireAuth, async (req: AuthedRequest, res: Response) => {
         await trx`
           INSERT INTO journal_lines (
             org_id, entry_id, line_no, account_id, description, cost_center_id,
-            debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id
+            debit_txn, credit_txn, debit_base, credit_base, fixed_asset_id, bank_account_id
           ) VALUES (
             ${orgId}, ${entry.id}, ${l.lineNo}, ${l.accountId}, ${l.description}, ${l.costCenterId},
-            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${fixedAssetIdByLineNo.get(l.lineNo) || l.fixedAssetId || null}
+            ${l.debitTxn}, ${l.creditTxn}, ${l.debitBase}, ${l.creditBase}, ${fixedAssetIdByLineNo.get(l.lineNo) || l.fixedAssetId || null}, ${l.bankAccountId}
           )
         `;
       }

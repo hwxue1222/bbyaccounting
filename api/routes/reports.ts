@@ -997,6 +997,7 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
   const costCenterId = q.data.costCenterId;
 
   const accountId = q.data.accountId;
+  const bankBucketUnassigned = "__unassigned__";
 
   const ccWhere =
     costCenterId === undefined
@@ -1015,9 +1016,39 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
     ORDER BY a.code ASC
   `) as any[];
 
+  const bankAccountRows = (await sql`
+    SELECT
+      id as "bankAccountId",
+      account_id as "accountId",
+      bank_name as "bankName",
+      account_no as "accountNo"
+    FROM bank_accounts
+    WHERE org_id = ${orgId} AND is_active = true
+    ORDER BY bank_name ASC, account_no ASC
+  `) as any[];
+  const bankAccountsByLedger = new Map<string, any[]>();
+  for (const row of bankAccountRows) {
+    const id = String(row.accountId);
+    const arr = bankAccountsByLedger.get(id) ?? [];
+    arr.push({
+      bankAccountId: String(row.bankAccountId),
+      bankName: String(row.bankName || ""),
+      accountNo: String(row.accountNo || ""),
+    });
+    bankAccountsByLedger.set(id, arr);
+  }
+  const normalizeBankBucket = (ledgerAccountId: string, bankAccountIdValue: unknown) => {
+    const linked = bankAccountsByLedger.get(ledgerAccountId) ?? [];
+    const raw = typeof bankAccountIdValue === "string" ? bankAccountIdValue.trim() : "";
+    if (raw) return raw;
+    if (linked.length === 1) return String(linked[0].bankAccountId);
+    return bankBucketUnassigned;
+  };
+
   const openingRows = (await sql`
     SELECT
       l.account_id as "accountId",
+      l.bank_account_id as "bankAccountId",
       COALESCE(SUM(l.debit_base - l.credit_base), 0) as "openingNet"
     FROM journal_lines l
     JOIN journal_entries e ON e.id = l.entry_id
@@ -1025,17 +1056,25 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
       AND e.status = 'posted'
       AND e.entry_date < ${q.data.start}
       ${ccWhere}
-    GROUP BY l.account_id
+    GROUP BY l.account_id, l.bank_account_id
   `) as any[];
 
   const openingByAccount = new Map<string, number>();
   for (const r of openingRows) {
-    openingByAccount.set(String(r.accountId), Number(r.openingNet || 0));
+    const ledgerAccountId = String(r.accountId);
+    const linkedBanks = bankAccountsByLedger.get(ledgerAccountId) ?? [];
+    if (!linkedBanks.length) {
+      openingByAccount.set(ledgerAccountId, Number(r.openingNet || 0));
+      continue;
+    }
+    const key = `${ledgerAccountId}::${normalizeBankBucket(ledgerAccountId, r.bankAccountId)}`;
+    openingByAccount.set(key, (openingByAccount.get(key) ?? 0) + Number(r.openingNet || 0));
   }
 
   const lineRows = (await sql`
     SELECT
       l.account_id as "accountId",
+      l.bank_account_id as "bankAccountId",
       to_char(e.entry_date, 'YYYY-MM-DD') as "entryDate",
       e.id as "entryId",
       e.voucher_no as "voucherNo",
@@ -1060,7 +1099,9 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
 
   const linesByAccount = new Map<string, any[]>();
   for (const r of lineRows) {
-    const id = String(r.accountId);
+    const ledgerAccountId = String(r.accountId);
+    const linkedBanks = bankAccountsByLedger.get(ledgerAccountId) ?? [];
+    const id = linkedBanks.length ? `${ledgerAccountId}::${normalizeBankBucket(ledgerAccountId, r.bankAccountId)}` : ledgerAccountId;
     const arr = linesByAccount.get(id) ?? [];
     arr.push(r);
     linesByAccount.set(id, arr);
@@ -1098,45 +1139,62 @@ router.get("/gl", requireAuth, async (req: AuthedRequest, res: Response) => {
       sectionByType.set(t, s);
       sections.push(s);
     }
-    const openingNet = openingByAccount.get(String(a.accountId)) ?? 0;
-    let runningNet = openingNet;
-    let periodDebit = 0;
-    let periodCredit = 0;
-    const tx = (linesByAccount.get(String(a.accountId)) ?? []).map((x) => {
-      const debit = Number(x.debitBase || 0);
-      const credit = Number(x.creditBase || 0);
-      periodDebit += debit;
-      periodCredit += credit;
-      runningNet = runningNet + (debit - credit);
-      return {
-        kind: "txn",
-        entryDate: String(x.entryDate),
-        entryId: String(x.entryId),
-        voucherNo: x.voucherNo == null ? null : String(x.voucherNo),
-        memo: x.memo == null ? null : String(x.memo),
-        description: x.description == null ? null : String(x.description),
-        costCenterId: x.costCenterId == null ? null : String(x.costCenterId),
-        costCenterCode: x.costCenterCode == null ? null : String(x.costCenterCode),
-        costCenterName: x.costCenterName == null ? null : String(x.costCenterName),
-        debitBase: debit,
-        creditBase: credit,
-        balanceNet: runningNet,
-      };
-    });
+    const ledgerAccountId = String(a.accountId);
+    const linkedBanks = bankAccountsByLedger.get(ledgerAccountId) ?? [];
+    const groupIds = linkedBanks.length
+      ? [
+          ...linkedBanks.map((b) => String(b.bankAccountId)),
+          ...((openingByAccount.has(`${ledgerAccountId}::${bankBucketUnassigned}`) || linesByAccount.has(`${ledgerAccountId}::${bankBucketUnassigned}`))
+            ? [bankBucketUnassigned]
+            : []),
+        ]
+      : [""];
 
-    const closingNet = runningNet;
-    (sectionByType.get(t) as any).accounts.push({
-      accountId: String(a.accountId),
-      accountCode: String(a.accountCode),
-      accountName: String(a.accountName),
-      accountType: t,
-      normalBalance: String(a.normalBalance),
-      openingNet,
-      closingNet,
-      periodDebit,
-      periodCredit,
-      lines: tx,
-    });
+    for (const groupId of groupIds) {
+      const key = linkedBanks.length ? `${ledgerAccountId}::${groupId}` : ledgerAccountId;
+      const openingNet = openingByAccount.get(key) ?? 0;
+      let runningNet = openingNet;
+      let periodDebit = 0;
+      let periodCredit = 0;
+      const tx = (linesByAccount.get(key) ?? []).map((x) => {
+        const debit = Number(x.debitBase || 0);
+        const credit = Number(x.creditBase || 0);
+        periodDebit += debit;
+        periodCredit += credit;
+        runningNet = runningNet + (debit - credit);
+        return {
+          kind: "txn",
+          entryDate: String(x.entryDate),
+          entryId: String(x.entryId),
+          voucherNo: x.voucherNo == null ? null : String(x.voucherNo),
+          memo: x.memo == null ? null : String(x.memo),
+          description: x.description == null ? null : String(x.description),
+          costCenterId: x.costCenterId == null ? null : String(x.costCenterId),
+          costCenterCode: x.costCenterCode == null ? null : String(x.costCenterCode),
+          costCenterName: x.costCenterName == null ? null : String(x.costCenterName),
+          debitBase: debit,
+          creditBase: credit,
+          balanceNet: runningNet,
+        };
+      });
+
+      const closingNet = runningNet;
+      const bankInfo = linkedBanks.find((b) => String(b.bankAccountId) === groupId);
+      (sectionByType.get(t) as any).accounts.push({
+        accountId: ledgerAccountId,
+        accountCode: String(a.accountCode),
+        accountName: String(a.accountName),
+        accountType: t,
+        normalBalance: String(a.normalBalance),
+        bankAccountId: bankInfo ? String(bankInfo.bankAccountId) : null,
+        bankLabel: bankInfo ? `${String(bankInfo.bankName).trim()} ${String(bankInfo.accountNo).trim()}`.trim() : groupId === bankBucketUnassigned ? "Unassigned Bank Entries" : null,
+        openingNet,
+        closingNet,
+        periodDebit,
+        periodCredit,
+        lines: tx,
+      });
+    }
   }
 
   res.status(200).json({ success: true, data: { sections } });

@@ -562,8 +562,10 @@ export async function ensureMigrated(): Promise<void> {
       credit_base NUMERIC(18,2) NOT NULL DEFAULT 0
     )
   `;
+  await sql`ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS bank_account_id UUID`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(org_id, account_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_bank_account ON journal_lines(org_id, bank_account_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_entry ON journal_lines(org_id, entry_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_entry_debit ON journal_lines(org_id, entry_id) INCLUDE (debit_txn, debit_base)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_journal_lines_org_fixed_asset ON journal_lines(org_id, fixed_asset_id)`;

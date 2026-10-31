@@ -182,7 +182,7 @@ export default function Reports() {
 
       out.push({ kind: "section", label: s.label || s.type });
       for (const a of accounts) {
-        out.push({ kind: "account", accountCode: a.accountCode, accountName: a.accountName });
+        out.push({ kind: "account", accountCode: a.accountCode, accountName: a.accountName, bankLabel: a.bankLabel || null });
         out.push({ kind: "opening", balanceNet: Number(a.openingNet || 0) });
         if (Array.isArray(a.lines) && a.lines.length) {
           for (const l of a.lines || []) {
@@ -190,6 +190,7 @@ export default function Reports() {
               ...l,
               accountCode: a.accountCode,
               accountName: a.accountName,
+              bankLabel: a.bankLabel || null,
             });
           }
         } else {
@@ -197,6 +198,7 @@ export default function Reports() {
             kind: "empty",
             accountCode: a.accountCode,
             accountName: a.accountName,
+            bankLabel: a.bankLabel || null,
           });
         }
         out.push({ kind: "closing", balanceNet: Number(a.closingNet || 0) });
@@ -368,7 +370,7 @@ export default function Reports() {
                       return (
                         <tr key={idx} className="border-t border-zinc-100 bg-white font-semibold">
                           <td className="px-3 py-2" colSpan={8}>
-                            {`${r.accountCode} ${r.accountName}`.trim()}
+                            {`${`${r.accountCode} ${r.accountName}`.trim()}${r.bankLabel ? ` - ${r.bankLabel}` : ""}`}
                           </td>
                         </tr>
                       );
@@ -404,7 +406,7 @@ export default function Reports() {
                     if (r.kind === "empty") {
                       return (
                         <tr key={idx} className="border-t border-zinc-100 bg-white text-zinc-500">
-                          <td className="px-3 py-2">{`${r.accountCode || ""} ${r.accountName || ""}`.trim()}</td>
+                          <td className="px-3 py-2">{`${`${r.accountCode || ""} ${r.accountName || ""}`.trim()}${r.bankLabel ? ` - ${r.bankLabel}` : ""}`}</td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2">{tr("本期没有分录", "No transactions in selected period")}</td>
@@ -419,7 +421,7 @@ export default function Reports() {
                     const summary = [String(r.memo || "").trim(), String(r.description || "").trim()].filter(Boolean).join(" / ");
                     return (
                       <tr key={idx} className="border-t border-zinc-100">
-                        <td className="px-3 py-2">{`${r.accountCode || ""} ${r.accountName || ""}`.trim()}</td>
+                        <td className="px-3 py-2">{`${`${r.accountCode || ""} ${r.accountName || ""}`.trim()}${r.bankLabel ? ` - ${r.bankLabel}` : ""}`}</td>
                         <td className="px-3 py-2">{r.entryDate}</td>
                         <td className="px-3 py-2">
                           {r.entryId ? (
