@@ -65,7 +65,8 @@ type InventoryRowState = {
   details: InventoryDraftRow[];
 };
 
-type FixedAssetRowState = {
+type FixedAssetPurchaseState = {
+  mode: "purchase";
   category: string;
   assetNo: string;
   name: string;
@@ -73,6 +74,34 @@ type FixedAssetRowState = {
   acquisitionDate: string;
   usefulLifeMonths: number;
   salvageBase: number;
+};
+
+type FixedAssetDisposalState = {
+  mode: "disposal";
+  assetId: string;
+  assetNo: string;
+  name: string;
+  costTxn: number;
+  accumDepTxn: number;
+  gainLossTxn: number;
+};
+
+type FixedAssetRowState = FixedAssetPurchaseState | FixedAssetDisposalState;
+
+type FixedAssetRecord = {
+  id: string;
+  assetNo: string | null;
+  category: string | null;
+  name: string;
+  status: string;
+  acquisitionDate: string | null;
+  usefulLifeMonths: number | null;
+  salvageValueBase: number | null;
+  memo: string | null;
+  costBase: number;
+  depExpenseAccountId: string | null;
+  accumDepAccountId: string | null;
+  assetAccountId: string | null;
 };
 
 const RULE_VERSION = 1;
@@ -256,6 +285,7 @@ export default function BankReconciliation() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [fixedAssets, setFixedAssets] = useState<FixedAssetRecord[]>([]);
   const [selectedBankAccountId, setSelectedBankAccountId] = useState("");
   const [rows, setRows] = useState<ImportedRow[]>([]);
   const [importedFileName, setImportedFileName] = useState("");
@@ -286,8 +316,10 @@ export default function BankReconciliation() {
   const [invNewItemForm, setInvNewItemForm] = useState({ sku: "", name: "", uom: "EA" });
 
   const [faModalOpen, setFaModalOpen] = useState(false);
+  const [faMode, setFaMode] = useState<"purchase" | "disposal">("purchase");
   const [faEditingRowId, setFaEditingRowId] = useState<string | null>(null);
-  const [faForm, setFaForm] = useState<FixedAssetRowState>({
+  const [faForm, setFaForm] = useState<FixedAssetPurchaseState>({
+    mode: "purchase",
     category: "",
     assetNo: "",
     name: "",
@@ -295,6 +327,15 @@ export default function BankReconciliation() {
     acquisitionDate: new Date().toISOString().slice(0, 10),
     usefulLifeMonths: 36,
     salvageBase: 0,
+  });
+  const [faDisposalForm, setFaDisposalForm] = useState<FixedAssetDisposalState>({
+    mode: "disposal",
+    assetId: "",
+    assetNo: "",
+    name: "",
+    costTxn: 0,
+    accumDepTxn: 0,
+    gainLossTxn: 0,
   });
 
   const activeBankAccounts = useMemo(() => bankAccounts.filter((item) => item.isActive), [bankAccounts]);
@@ -344,14 +385,32 @@ export default function BankReconciliation() {
   }
 
   async function refresh() {
-    const [accountsRes, bankAccountsRes, itemsRes] = await Promise.all([
+    const [accountsRes, bankAccountsRes, itemsRes, fixedAssetsRes] = await Promise.all([
       api<{ accounts: Account[] }>("/api/settings/accounts"),
       api<{ bankAccounts: BankAccount[] }>("/api/settings/bank-accounts"),
       api<{ items: any[] }>("/api/inventory/items"),
+      api<{ assets: any[] }>("/api/fixed-assets"),
     ]);
     setAccounts(accountsRes.accounts || []);
     setBankAccounts(bankAccountsRes.bankAccounts || []);
     setInventoryItems((itemsRes.items || []).map((item: any) => ({ id: item.id, sku: item.sku ?? null, name: item.name, uom: item.uom })));
+    setFixedAssets(
+      (fixedAssetsRes.assets || []).map((item: any) => ({
+        id: String(item.id),
+        assetNo: item.assetNo ? String(item.assetNo) : null,
+        category: item.category ? String(item.category) : null,
+        name: String(item.name || ""),
+        status: String(item.status || ""),
+        acquisitionDate: item.acquisitionDate ? String(item.acquisitionDate) : null,
+        usefulLifeMonths: item.usefulLifeMonths != null ? Number(item.usefulLifeMonths) : null,
+        salvageValueBase: item.salvageValueBase != null ? Number(item.salvageValueBase) : null,
+        memo: item.memo ? String(item.memo) : null,
+        costBase: Number(item.costBase || 0),
+        depExpenseAccountId: item.depExpenseAccountId ? String(item.depExpenseAccountId) : null,
+        accumDepAccountId: item.accumDepAccountId ? String(item.accumDepAccountId) : null,
+        assetAccountId: item.assetAccountId ? String(item.assetAccountId) : null,
+      })),
+    );
     setSelectedBankAccountId((prev) => {
       const activeItems = (bankAccountsRes.bankAccounts || []).filter((item) => item.isActive);
       if (prev && activeItems.some((item) => item.id === prev)) return prev;
@@ -480,12 +539,53 @@ export default function BankReconciliation() {
     setInvModalOpen(true);
   }
 
-  function openFixedAssetModalForRow(row: ImportedRow) {
+  async function openFixedAssetModalForRow(row: ImportedRow) {
     if (!row.accountId || !isFixedAssetLinkedAccount(row.accountId)) return;
     const existing = fixedAssetByRowId[row.id];
     setFaEditingRowId(row.id);
+    if (row.side === "credit") {
+      let availableAssets = fixedAssets;
+      if (!availableAssets.length) {
+        const resp = await api<{ assets: any[] }>("/api/fixed-assets");
+        availableAssets = (resp.assets || []).map((item: any) => ({
+          id: String(item.id),
+          assetNo: item.assetNo ? String(item.assetNo) : null,
+          category: item.category ? String(item.category) : null,
+          name: String(item.name || ""),
+          status: String(item.status || ""),
+          acquisitionDate: item.acquisitionDate ? String(item.acquisitionDate) : null,
+          usefulLifeMonths: item.usefulLifeMonths != null ? Number(item.usefulLifeMonths) : null,
+          salvageValueBase: item.salvageValueBase != null ? Number(item.salvageValueBase) : null,
+          memo: item.memo ? String(item.memo) : null,
+          costBase: Number(item.costBase || 0),
+          depExpenseAccountId: item.depExpenseAccountId ? String(item.depExpenseAccountId) : null,
+          accumDepAccountId: item.accumDepAccountId ? String(item.accumDepAccountId) : null,
+          assetAccountId: item.assetAccountId ? String(item.assetAccountId) : null,
+        }));
+        setFixedAssets(availableAssets);
+      }
+      setFaMode("disposal");
+      const disposalExisting = existing?.mode === "disposal" ? existing : null;
+      const seededAsset = disposalExisting?.assetId
+        ? availableAssets.find((item) => item.id === disposalExisting.assetId) || null
+        : availableAssets.find((item) => item.status === "active") || null;
+      setFaDisposalForm({
+        mode: "disposal",
+        assetId: disposalExisting?.assetId || seededAsset?.id || "",
+        assetNo: disposalExisting?.assetNo || seededAsset?.assetNo || "",
+        name: disposalExisting?.name || seededAsset?.name || "",
+        costTxn: disposalExisting?.costTxn || 0,
+        accumDepTxn: disposalExisting?.accumDepTxn || 0,
+        gainLossTxn: disposalExisting?.gainLossTxn || 0,
+      });
+      setFaModalOpen(true);
+      return;
+    }
+    setFaMode("purchase");
+    const purchaseExisting = existing?.mode === "purchase" ? existing : null;
     setFaForm(
-      existing || {
+      purchaseExisting || {
+        mode: "purchase",
         category: "",
         assetNo: "",
         name: row.description?.trim() || tr("固定资产", "Fixed asset"),
@@ -546,10 +646,75 @@ export default function BankReconciliation() {
       }
     }
 
-    if (needsFixedAsset) {
-      if (!fixedAssetState?.category || !fixedAssetState?.acquisitionDate || !fixedAssetState?.name.trim() || !(Number(fixedAssetState.usefulLifeMonths) > 0)) {
-        throw new Error(tr("固定资产科目必须先点“固定资产”并填写资料。", "Fixed-asset rows require fixed asset details first."));
+    if (needsFixedAsset && row.side === "debit") {
+      if (
+        fixedAssetState?.mode !== "purchase" ||
+        !fixedAssetState.category ||
+        !fixedAssetState.acquisitionDate ||
+        !fixedAssetState.name.trim() ||
+        !(Number(fixedAssetState.usefulLifeMonths) > 0)
+      ) {
+        throw new Error(tr("固定资产借方必须先点“购买”并填写资料。", "Debit fixed-asset rows require purchase details first."));
       }
+    }
+
+    if (needsFixedAsset && row.side === "credit") {
+      if (fixedAssetState?.mode !== "disposal" || !fixedAssetState.assetId || !(fixedAssetState.costTxn > 0) || !(fixedAssetState.accumDepTxn >= 0)) {
+        throw new Error(tr("固定资产贷方必须先点“处置”并选择资产。", "Credit fixed-asset rows require disposal details first."));
+      }
+      const gainLossAccountId = accounts.find((item) => String(item.code || "") === "7000")?.id || "";
+      if (!gainLossAccountId && Math.abs(fixedAssetState.gainLossTxn) >= 0.005) {
+        throw new Error(tr("缺少 7000 处置损益科目。", "Missing 7000 gain/loss on disposal account."));
+      }
+      const lines = [
+        {
+          accountId: selectedBank.accountId,
+          description: description || undefined,
+          costCenterId: null,
+          debitTxn: bankDebit,
+          creditTxn: bankCredit,
+        },
+        {
+          accountId: fixedAssets.find((item) => item.id === fixedAssetState.assetId)?.accumDepAccountId || "",
+          description: tr("处置累计折旧", "Disposal accumulated depreciation"),
+          costCenterId: null,
+          debitTxn: fixedAssetState.accumDepTxn,
+          creditTxn: 0,
+          fixedAssetId: fixedAssetState.assetId,
+        },
+        {
+          accountId: fixedAssets.find((item) => item.id === fixedAssetState.assetId)?.assetAccountId || row.accountId,
+          description: tr("处置固定资产", "Dispose fixed asset"),
+          costCenterId: null,
+          debitTxn: 0,
+          creditTxn: fixedAssetState.costTxn,
+          fixedAssetId: fixedAssetState.assetId,
+        },
+      ] as Array<{
+        accountId: string;
+        description?: string;
+        costCenterId: null;
+        debitTxn: number;
+        creditTxn: number;
+        fixedAssetId?: string;
+      }>;
+      if (Math.abs(fixedAssetState.gainLossTxn) >= 0.005) {
+        lines.push({
+          accountId: gainLossAccountId,
+          description: fixedAssetState.gainLossTxn > 0 ? tr("处置收益", "Disposal gain") : tr("处置损失", "Disposal loss"),
+          costCenterId: null,
+          debitTxn: fixedAssetState.gainLossTxn < 0 ? Math.abs(fixedAssetState.gainLossTxn) : 0,
+          creditTxn: fixedAssetState.gainLossTxn > 0 ? fixedAssetState.gainLossTxn : 0,
+        });
+      }
+      return {
+        entryDate: row.date,
+        currency: baseCurrency(),
+        fxRate: 1,
+        memo,
+        fixedAssetDisposal: { costLineNo: 3, accumDepLineNo: 2 },
+        lines,
+      };
     }
 
     return {
@@ -569,13 +734,13 @@ export default function BankReconciliation() {
         ? [
             {
               lineNo: 1,
-              category: fixedAssetState.category,
-              assetNo: fixedAssetState.assetNo || undefined,
-              name: fixedAssetState.name.trim(),
-              memo: fixedAssetState.memo || undefined,
-              acquisitionDate: fixedAssetState.acquisitionDate,
-              usefulLifeMonths: Number(fixedAssetState.usefulLifeMonths) || 0,
-              salvageBase: Number(fixedAssetState.salvageBase) || 0,
+              category: fixedAssetState.mode === "purchase" ? fixedAssetState.category : "",
+              assetNo: fixedAssetState.mode === "purchase" ? fixedAssetState.assetNo || undefined : undefined,
+              name: fixedAssetState.mode === "purchase" ? fixedAssetState.name.trim() : "",
+              memo: fixedAssetState.mode === "purchase" ? fixedAssetState.memo || undefined : undefined,
+              acquisitionDate: fixedAssetState.mode === "purchase" ? fixedAssetState.acquisitionDate : row.date,
+              usefulLifeMonths: fixedAssetState.mode === "purchase" ? Number(fixedAssetState.usefulLifeMonths) || 0 : 0,
+              salvageBase: fixedAssetState.mode === "purchase" ? Number(fixedAssetState.salvageBase) || 0 : 0,
             },
           ]
         : undefined,
@@ -901,13 +1066,13 @@ export default function BankReconciliation() {
             <>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                  <div className="text-xs text-zinc-500">{tr("流出（Debit）", "Outflow (Debit)")}</div>
-                  <div className="mt-1 text-sm font-medium text-zinc-800">
+                  <div className="text-xs text-zinc-500">{tr("付款", "Payments")}</div>
+                  <div className="mt-1 text-sm font-medium text-red-600">
                     {debitTotal.toFixed(2)} {active?.baseCurrency || ""}
                   </div>
                 </div>
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                  <div className="text-xs text-zinc-500">{tr("流入（Credit）", "Inflow (Credit)")}</div>
+                  <div className="text-xs text-zinc-500">{tr("收款", "Receipts")}</div>
                   <div className="mt-1 text-sm font-medium text-zinc-800">
                     {creditTotal.toFixed(2)} {active?.baseCurrency || ""}
                   </div>
@@ -953,9 +1118,9 @@ export default function BankReconciliation() {
                           <div className="max-w-[380px] whitespace-pre-wrap break-words">{row.description || "-"}</div>
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          {row.side === "debit" ? tr("借方 / 流出", "Debit / Outflow") : tr("贷方 / 流入", "Credit / Inflow")}
+                          {row.side === "debit" ? tr("付款", "Payment") : tr("收款", "Receipt")}
                         </td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">{row.amount.toFixed(2)}</td>
+                        <td className={`px-3 py-2 text-right whitespace-nowrap ${row.side === "debit" ? "text-red-600" : ""}`}>{row.amount.toFixed(2)}</td>
                         <td className="px-3 py-2">
                           <select
                             className="w-full min-w-[240px] rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
@@ -994,12 +1159,20 @@ export default function BankReconciliation() {
                             <div className="mt-1 text-xs text-indigo-700">
                               {fixedAssetByRowId[row.id]
                                 ? tr(
-                                    `已填写固定资产：${fixedAssetByRowId[row.id].name || "-"}`,
-                                    `Fixed asset info ready: ${fixedAssetByRowId[row.id].name || "-"}`,
+                                    row.side === "debit"
+                                      ? `已填写购买资料：${fixedAssetByRowId[row.id].name || "-"}`
+                                      : `已选择处置资产：${fixedAssetByRowId[row.id].name || "-"}`,
+                                    row.side === "debit"
+                                      ? `Purchase info ready: ${fixedAssetByRowId[row.id].name || "-"}`
+                                      : `Disposal asset ready: ${fixedAssetByRowId[row.id].name || "-"}`,
                                   )
                                 : tr(
-                                    "这是固定资产科目。请点右侧“固定资产”填写购置信息，再过账。",
-                                    "This is a fixed-asset account. Click 'Fixed Asset' to fill purchase details before posting.",
+                                    row.side === "debit"
+                                      ? "这是固定资产科目借方。请点右侧“购买”填写购置信息，再过账。"
+                                      : "这是固定资产科目贷方。请点右侧“处置”选择现有资产，再过账。",
+                                    row.side === "debit"
+                                      ? "This debit fixed-asset row needs purchase details before posting."
+                                      : "This credit fixed-asset row needs disposal asset selection before posting.",
                                   )}
                             </div>
                           ) : null}
@@ -1028,10 +1201,16 @@ export default function BankReconciliation() {
                                     : "border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
                                 }`}
                                 disabled={posting || importing}
-                                onClick={() => openFixedAssetModalForRow(row)}
+                                onClick={() => void openFixedAssetModalForRow(row).catch((e: any) => setErr(e.message))}
                                 type="button"
                               >
-                                {fixedAssetByRowId[row.id] ? tr("固定资产已设置", "Fixed Asset Ready") : tr("固定资产", "Fixed Asset")}
+                                {fixedAssetByRowId[row.id]
+                                  ? row.side === "debit"
+                                    ? tr("购买已设置", "Purchase Ready")
+                                    : tr("处置已设置", "Disposal Ready")
+                                  : row.side === "debit"
+                                    ? tr("购买", "Purchase")
+                                    : tr("处置", "Disposal")}
                               </button>
                             ) : null}
                             <button
@@ -1072,7 +1251,9 @@ export default function BankReconciliation() {
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">{tr("固定资产信息", "Fixed Asset Info")}</div>
+                <div className="text-sm font-semibold">
+                  {faMode === "purchase" ? tr("固定资产购买", "Fixed Asset Purchase") : tr("固定资产处置", "Fixed Asset Disposal")}
+                </div>
                 <button
                   className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                   disabled={posting}
@@ -1088,12 +1269,17 @@ export default function BankReconciliation() {
                 return row ? (
                   <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
                     <div>{tr(`银行流水金额：${row.amount.toFixed(2)} ${baseCurrency()}`, `Bank transaction amount: ${row.amount.toFixed(2)} ${baseCurrency()}`)}</div>
-                    <div className="mt-1">{tr(`银行账号会自动作为另一条分录，无需重复填写。`, `The bank account is posted as the offset line automatically.`)}</div>
+                    <div className="mt-1">
+                      {faMode === "purchase"
+                        ? tr(`银行账号会自动作为另一条分录，无需重复填写。`, `The bank account is posted as the offset line automatically.`)
+                        : tr(`系统会自动带出处置资产原值、累计折旧和处置损益。`, `The system auto-fills cost, accumulated depreciation, and disposal gain/loss.`)}
+                    </div>
                   </div>
                 ) : null;
               })()}
 
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {faMode === "purchase" ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div>
                   <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
                   <select
@@ -1169,7 +1355,74 @@ export default function BankReconciliation() {
                     disabled={posting}
                   />
                 </div>
-              </div>
+                </div>
+              ) : (
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">{tr("处置资产", "Asset")}</label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                      value={faDisposalForm.assetId}
+                      disabled={posting}
+                      onChange={async (e) => {
+                        const assetId = e.target.value;
+                        const asset = fixedAssets.find((item) => item.id === assetId) || null;
+                        setFaDisposalForm((prev) => ({
+                          ...prev,
+                          assetId,
+                          assetNo: asset?.assetNo || "",
+                          name: asset?.name || "",
+                        }));
+                        if (!assetId) return;
+                        const snap = await api<{ costBase: number; accumDepBase: number }>(
+                          `/api/fixed-assets/${encodeURIComponent(assetId)}/disposal-snapshot?date=${encodeURIComponent(rows.find((item) => item.id === faEditingRowId)?.date || new Date().toISOString().slice(0, 10))}`,
+                        );
+                        const costTxn = Math.round(Number(snap.costBase || 0) * 100) / 100;
+                        const accumDepTxn = Math.round(Number(snap.accumDepBase || 0) * 100) / 100;
+                        const proceeds = rows.find((item) => item.id === faEditingRowId)?.amount || 0;
+                        setFaDisposalForm((prev) => ({
+                          ...prev,
+                          assetId,
+                          assetNo: asset?.assetNo || "",
+                          name: asset?.name || "",
+                          costTxn,
+                          accumDepTxn,
+                          gainLossTxn: Math.round((proceeds + accumDepTxn - costTxn) * 100) / 100,
+                        }));
+                      }}
+                    >
+                      <option value="">{tr("请选择", "Select")}</option>
+                      {fixedAssets
+                        .filter((item) => item.status === "active")
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {(item.assetNo ? `${item.assetNo} · ` : "") + item.name + (item.category ? ` (${item.category})` : "")}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("固定资产编号", "Asset No")}</label>
+                    <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={faDisposalForm.assetNo} disabled />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
+                    <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={faDisposalForm.name} disabled />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("原值", "Cost")}</label>
+                    <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={faDisposalForm.costTxn} disabled />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">{tr("累计折旧", "Accumulated depreciation")}</label>
+                    <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={faDisposalForm.accumDepTxn} disabled />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-zinc-600">{tr("处置损益", "Disposal gain/loss")}</label>
+                    <input className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm" value={faDisposalForm.gainLossTxn} disabled />
+                  </div>
+                </div>
+              )}
 
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button
@@ -1182,20 +1435,38 @@ export default function BankReconciliation() {
                 </button>
                 <button
                   className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-                  disabled={posting || !faEditingRowId || !faForm.category.trim() || !faForm.name.trim() || !faForm.acquisitionDate.trim() || !(Number(faForm.usefulLifeMonths) > 0)}
+                  disabled={
+                    posting ||
+                    !faEditingRowId ||
+                    (faMode === "purchase"
+                      ? !faForm.category.trim() || !faForm.name.trim() || !faForm.acquisitionDate.trim() || !(Number(faForm.usefulLifeMonths) > 0)
+                      : !faDisposalForm.assetId || !(faDisposalForm.costTxn > 0))
+                  }
                   onClick={() => {
                     if (!faEditingRowId) return;
                     setFixedAssetByRowId((prev) => ({
                       ...prev,
-                      [faEditingRowId]: {
-                        category: faForm.category.trim(),
-                        assetNo: faForm.assetNo.trim().toUpperCase(),
-                        name: faForm.name.trim(),
-                        memo: faForm.memo.trim(),
-                        acquisitionDate: faForm.acquisitionDate,
-                        usefulLifeMonths: Number(faForm.usefulLifeMonths) || 0,
-                        salvageBase: Number(faForm.salvageBase) || 0,
-                      },
+                      [faEditingRowId]:
+                        faMode === "purchase"
+                          ? {
+                              mode: "purchase",
+                              category: faForm.category.trim(),
+                              assetNo: faForm.assetNo.trim().toUpperCase(),
+                              name: faForm.name.trim(),
+                              memo: faForm.memo.trim(),
+                              acquisitionDate: faForm.acquisitionDate,
+                              usefulLifeMonths: Number(faForm.usefulLifeMonths) || 0,
+                              salvageBase: Number(faForm.salvageBase) || 0,
+                            }
+                          : {
+                              mode: "disposal",
+                              assetId: faDisposalForm.assetId,
+                              assetNo: faDisposalForm.assetNo,
+                              name: faDisposalForm.name,
+                              costTxn: Number(faDisposalForm.costTxn) || 0,
+                              accumDepTxn: Number(faDisposalForm.accumDepTxn) || 0,
+                              gainLossTxn: Number(faDisposalForm.gainLossTxn) || 0,
+                            },
                     }));
                     setFaModalOpen(false);
                   }}
@@ -1245,18 +1516,20 @@ export default function BankReconciliation() {
                   <div className="text-xs text-zinc-500">
                     {tr(`绑定金额：${invExpectedTxn.toFixed(2)} ${baseCurrency()}`, `Bound amount: ${invExpectedTxn.toFixed(2)} ${baseCurrency()}`)}
                   </div>
-                  <button
-                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
-                    type="button"
-                    onClick={() => {
-                      setInvNewItemErr(null);
-                      setInvNewItemTargetRowId(invEditingDetails[0]?.rowId || null);
-                      setInvNewItemForm({ sku: "", name: "", uom: "EA" });
-                      setInvNewItemOpen(true);
-                    }}
-                  >
-                    {tr("新增 item", "New Item")}
-                  </button>
+                  {invMode === "receipt" ? (
+                    <button
+                      className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                      type="button"
+                      onClick={() => {
+                        setInvNewItemErr(null);
+                        setInvNewItemTargetRowId(invEditingDetails[0]?.rowId || null);
+                        setInvNewItemForm({ sku: "", name: "", uom: "EA" });
+                        setInvNewItemOpen(true);
+                      }}
+                    >
+                      {tr("新增 item", "New Item")}
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -1302,18 +1575,20 @@ export default function BankReconciliation() {
                                   </option>
                                 ))}
                               </select>
-                              <button
-                                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
-                                type="button"
-                                onClick={() => {
-                                  setInvNewItemErr(null);
-                                  setInvNewItemTargetRowId(item.rowId);
-                                  setInvNewItemForm({ sku: "", name: "", uom: "EA" });
-                                  setInvNewItemOpen(true);
-                                }}
-                              >
-                                {tr("新建", "New")}
-                              </button>
+                              {invMode === "receipt" ? (
+                                <button
+                                  className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                                  type="button"
+                                  onClick={() => {
+                                    setInvNewItemErr(null);
+                                    setInvNewItemTargetRowId(item.rowId);
+                                    setInvNewItemForm({ sku: "", name: "", uom: "EA" });
+                                    setInvNewItemOpen(true);
+                                  }}
+                                >
+                                  {tr("新建", "New")}
+                                </button>
+                              ) : null}
                             </div>
                             {(() => {
                               const invItem = inventoryItemById.get(item.itemId);
