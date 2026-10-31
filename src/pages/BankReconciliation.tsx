@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useTr } from "@/lib/tr";
@@ -10,6 +10,7 @@ type Account = {
   code: string;
   name: string;
   isActive?: boolean;
+  linkInventoryFifo?: boolean;
 };
 
 type BankAccount = {
@@ -211,6 +212,7 @@ function autoMatchRows(inputRows: ImportedRow[], accounts: Account[], validAccou
 }
 
 export default function BankReconciliation() {
+  const navigate = useNavigate();
   const tr = useTr();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
@@ -225,6 +227,8 @@ export default function BankReconciliation() {
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [postingRowId, setPostingRowId] = useState<string | null>(null);
+  const [lastPostedEntryId, setLastPostedEntryId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -243,6 +247,7 @@ export default function BankReconciliation() {
   );
   const rules = useMemo(() => readRules(activeOrgId, selectedBankAccountId), [activeOrgId, selectedBankAccountId]);
   const validAccountIds = useMemo(() => new Set(accountOptions.map((item) => item.id)), [accountOptions]);
+  const isInventoryLinkedAccount = (accountId: string) => Boolean(accountById.get(accountId)?.linkInventoryFifo);
 
   const selectedCount = useMemo(() => rows.filter((row) => row.post).length, [rows]);
   const readyCount = useMemo(() => rows.filter((row) => row.post && row.accountId).length, [rows]);
@@ -327,31 +332,43 @@ export default function BankReconciliation() {
     }
   }
 
-  async function submitPosting() {
+  async function submitPosting(rowId?: string) {
     if (!selectedBankAccountId) {
       setErr(tr("请先选择银行账号。", "Please select a bank account first."));
       return;
     }
-    const selectedRows = rows.filter((row) => row.post);
+    const selectedRows = rowId ? rows.filter((row) => row.id === rowId) : rows.filter((row) => row.post);
     if (!selectedRows.length) {
-      setErr(tr("请先勾选要过账的流水。", "Please select statement rows to post."));
+      setErr(rowId ? tr("当前流水不存在。", "The selected row no longer exists.") : tr("请先勾选要过账的流水。", "Please select statement rows to post."));
       return;
     }
     const missingAccount = selectedRows.find((row) => !row.accountId);
     if (missingAccount) {
-      setErr(tr("有流水还没有选择对应科目。", "Some statement rows do not have an account selected."));
+      setErr(rowId ? tr("请先为这笔流水选择对应科目。", "Please select an offset account for this row first.") : tr("有流水还没有选择对应科目。", "Some statement rows do not have an account selected."));
+      return;
+    }
+    const inventoryRow = selectedRows.find((row) => row.accountId && isInventoryLinkedAccount(row.accountId));
+    if (inventoryRow) {
+      setErr(
+        tr(
+          "勾选的流水里包含库存科目。库存相关流水请点该行右侧“去 Inventory 处理”，在那里统一选择现有或新建 item 后再过账。",
+          "Selected rows include an inventory-linked account. For inventory transactions, click 'Handle In Inventory' on that row and complete item selection there before posting.",
+        ),
+      );
       return;
     }
 
     setPosting(true);
+    setPostingRowId(rowId || null);
     setErr(null);
     setSuccess(null);
+    setLastPostedEntryId(null);
     try {
-      const result = await api<{ count: number }>("/api/bank-reconciliation/post", {
+      const result = await api<{ count: number; entries?: Array<{ id: string; voucherNo: string }> }>("/api/bank-reconciliation/post", {
         method: "POST",
         json: {
           bankAccountId: selectedBankAccountId,
-          rows: rows.map((row) => ({
+          rows: selectedRows.map((row) => ({
             date: row.date,
             description: row.description,
             side: row.side,
@@ -373,9 +390,16 @@ export default function BankReconciliation() {
           })),
         ),
       );
-      setRows((prev) => prev.filter((row) => !row.post));
-      setSuccess(tr(`已过账 ${result.count} 笔流水。`, `Posted ${result.count} bank transactions.`));
-      if (rows.every((row) => row.post)) {
+      const postedIds = new Set(selectedRows.map((row) => row.id));
+      const latestEntryId = result.entries?.[result.entries.length - 1]?.id || null;
+      setLastPostedEntryId(latestEntryId);
+      setRows((prev) => prev.filter((row) => !postedIds.has(row.id)));
+      setSuccess(
+        rowId
+          ? tr("该笔流水已过账。", "The selected transaction has been posted.")
+          : tr(`已过账 ${result.count} 笔流水。`, `Posted ${result.count} bank transactions.`),
+      );
+      if (rows.length === selectedRows.length) {
         setImportedFileName("");
         setImportedFileType("");
       }
@@ -383,7 +407,22 @@ export default function BankReconciliation() {
       setErr(e.message);
     } finally {
       setPosting(false);
+      setPostingRowId(null);
     }
+  }
+
+  function openInventoryForRow(row: ImportedRow) {
+    if (!selectedBank?.accountId || !row.accountId) return;
+    const params = new URLSearchParams();
+    params.set("source", "bank-reconciliation");
+    params.set("mode", row.side === "debit" ? "receipt" : "shipment");
+    params.set("date", row.date);
+    params.set("amount", row.amount.toFixed(2));
+    params.set("offsetAccountId", selectedBank.accountId);
+    params.set("accountId", row.accountId);
+    if (active?.baseCurrency) params.set("currency", active.baseCurrency);
+    if (row.description) params.set("memo", row.description);
+    navigate(`/inventory?${params.toString()}`);
   }
 
   return (
@@ -483,7 +522,20 @@ export default function BankReconciliation() {
           ) : null}
 
           {err ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
-          {success ? <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div> : null}
+          {success ? (
+            <div className="mt-4 flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 md:flex-row md:items-center md:justify-between">
+              <div>{success}</div>
+              {lastPostedEntryId ? (
+                <button
+                  className="rounded-md border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-100"
+                  onClick={() => navigate(`/journal?entryId=${encodeURIComponent(lastPostedEntryId)}`)}
+                  type="button"
+                >
+                  {tr("查看凭证列表", "Open Voucher List")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -565,6 +617,7 @@ export default function BankReconciliation() {
                       <th className="px-3 py-2 text-left">{tr("借贷方", "Statement Side")}</th>
                       <th className="px-3 py-2 text-right">{tr("金额", "Amount")}</th>
                       <th className="px-3 py-2 text-left">{tr("对应科目", "Offset Account")}</th>
+                      <th className="px-3 py-2 text-left">{tr("操作", "Action")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -619,6 +672,39 @@ export default function BankReconciliation() {
                                 : tr("已按关键字自动猜测", "Guessed from keywords")}
                             </div>
                           ) : null}
+                          {row.accountId && isInventoryLinkedAccount(row.accountId) ? (
+                            <div className="mt-1 text-xs text-amber-700">
+                              {tr(
+                                row.side === "debit"
+                                  ? "这是库存科目，请去 Inventory 里统一选择现有或新建 item 后入库过账。"
+                                  : "这是库存科目。若要统一库存处理，请改到 Inventory / 分录流程完成，不要在这里直接过账。",
+                                row.side === "debit"
+                                  ? "This is an inventory-linked account. Use Inventory to choose an existing/new item and post the receipt there."
+                                  : "This is an inventory-linked account. Complete it through the Inventory/Journal flow instead of direct posting here.",
+                              )}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {row.accountId && isInventoryLinkedAccount(row.accountId) ? (
+                            <button
+                              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                              disabled={posting || importing || row.side !== "debit"}
+                              onClick={() => openInventoryForRow(row)}
+                              type="button"
+                            >
+                              {row.side === "debit" ? tr("去 Inventory 处理", "Handle In Inventory") : tr("库存流水改走分录", "Use Journal Flow")}
+                            </button>
+                          ) : (
+                            <button
+                              className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                              disabled={posting || importing || !row.accountId}
+                              onClick={() => void submitPosting(row.id)}
+                              type="button"
+                            >
+                              {posting && postingRowId === row.id ? tr("过账中...", "Posting...") : tr("单独过账", "Post Row")}
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

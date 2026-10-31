@@ -37,6 +37,9 @@ type EntryDetail = {
     status: string;
     postedSource?: string | null;
     voucherNo?: string | null;
+    parentEntryId?: string | null;
+    isSystem?: boolean;
+    inventoryImpact?: boolean;
     currency: string;
     fxRate: number;
     memo: string | null;
@@ -878,17 +881,19 @@ export default function Journal() {
   }
 
   async function refreshCore(signal?: AbortSignal) {
-    const [{ accounts, costCenters, currencies, bankAccounts, tax }, { entries }] = await Promise.all([
+    const [{ accounts, costCenters, currencies, bankAccounts, tax }, { entries }, { items }] = await Promise.all([
       api<{ accounts: any[]; costCenters: any[]; currencies: any[]; fxRates: any[]; bankAccounts: any[]; tax: any }>("/api/settings/bootstrap?limit=50", {
         signal,
         cache: "no-store",
       }),
       api<{ entries: any[] }>("/api/journals?limit=50", { signal, cache: "no-store" }),
+      api<{ items: any[] }>("/api/inventory/items", { signal, cache: "no-store" }),
     ]);
     setAccounts(accounts as any);
     setCostCenters(costCenters as any);
     setCurrencies(currencies as any);
     setBankAccounts(bankAccounts as any);
+    setInventoryItems((items as any[]).map((it) => ({ id: it.id, sku: it.sku ?? null, name: it.name, uom: it.uom })));
     if (tax) {
       setTaxSettings({
         gstEnabled: Boolean((tax as any).gstEnabled ?? false),
@@ -960,6 +965,28 @@ export default function Journal() {
   function parseAmt(v: string): number {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
+  }
+
+  function buildEntryListRowFromDetail(d: EntryDetail): EntryListRow {
+    const totalDebitTxn = d.lines.reduce((sum, line) => sum + parseAmt(line.debitTxn), 0);
+    const totalDebitBase = d.lines.reduce((sum, line) => sum + parseAmt(line.debitBase), 0);
+    return {
+      id: d.entry.id,
+      entryDate: d.entry.entryDate,
+      status: d.entry.status,
+      postedSource: d.entry.postedSource || null,
+      voucherNo: d.entry.voucherNo || null,
+      isSystem: Boolean(d.entry.isSystem),
+      parentEntryId: d.entry.parentEntryId || null,
+      currency: d.entry.currency,
+      fxRate: d.entry.fxRate,
+      memo: d.entry.memo,
+      totalDebitTxn: totalDebitTxn.toFixed(2),
+      totalDebitBase: totalDebitBase.toFixed(2),
+      inventoryImpact: Boolean(d.entry.inventoryImpact),
+      vendorId: d.entry.vendorId || null,
+      customerId: d.entry.customerId || null,
+    };
   }
 
   function linesEqual(a: any[], b: any[]): boolean {
@@ -1885,7 +1912,10 @@ export default function Journal() {
     assistEditFaDisposalAccumLineIdx,
   ]);
 
-  function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
+  async function openInventoryDetailsModal(lineIdx: number, mode: "receipt" | "shipment", defaultSide: "debit" | "credit") {
+    if (!inventoryItems.length) {
+      await refreshInventoryItemsOnly(pageAbortRef.current?.signal);
+    }
     const line = draftLines[lineIdx];
     if (!line) {
       throw new Error("Invalid line");
@@ -2143,6 +2173,14 @@ export default function Journal() {
     });
     return () => ctrl.abort();
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!detail?.entry?.id) return;
+    setEntries((prev) => {
+      if (prev.some((item) => item.id === detail.entry.id)) return prev;
+      return [buildEntryListRowFromDetail(detail), ...prev];
+    });
+  }, [detail]);
 
   function renderEditorCard() {
     const voucherEmpty = !draftVoucherNo.trim();

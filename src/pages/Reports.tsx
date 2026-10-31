@@ -184,7 +184,21 @@ export default function Reports() {
       for (const a of accounts) {
         out.push({ kind: "account", accountCode: a.accountCode, accountName: a.accountName });
         out.push({ kind: "opening", balanceNet: Number(a.openingNet || 0) });
-        for (const l of a.lines || []) out.push(l);
+        if (Array.isArray(a.lines) && a.lines.length) {
+          for (const l of a.lines || []) {
+            out.push({
+              ...l,
+              accountCode: a.accountCode,
+              accountName: a.accountName,
+            });
+          }
+        } else {
+          out.push({
+            kind: "empty",
+            accountCode: a.accountCode,
+            accountName: a.accountName,
+          });
+        }
         out.push({ kind: "closing", balanceNet: Number(a.closingNet || 0) });
       }
     }
@@ -387,10 +401,25 @@ export default function Reports() {
                         </tr>
                       );
                     }
+                    if (r.kind === "empty") {
+                      return (
+                        <tr key={idx} className="border-t border-zinc-100 bg-white text-zinc-500">
+                          <td className="px-3 py-2">{`${r.accountCode || ""} ${r.accountName || ""}`.trim()}</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2">{tr("本期没有分录", "No transactions in selected period")}</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                          <td className="px-3 py-2 text-right"></td>
+                        </tr>
+                      );
+                    }
                     const cc = r.costCenterCode ? `${r.costCenterCode} ${r.costCenterName || ""}`.trim() : "";
+                    const summary = [String(r.memo || "").trim(), String(r.description || "").trim()].filter(Boolean).join(" / ");
                     return (
                       <tr key={idx} className="border-t border-zinc-100">
-                        <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2">{`${r.accountCode || ""} ${r.accountName || ""}`.trim()}</td>
                         <td className="px-3 py-2">{r.entryDate}</td>
                         <td className="px-3 py-2">
                           {r.entryId ? (
@@ -403,7 +432,7 @@ export default function Reports() {
                             </button>
                           ) : null}
                         </td>
-                        <td className="px-3 py-2">{r.memo || r.description || ""}</td>
+                        <td className="px-3 py-2">{summary}</td>
                         <td className="px-3 py-2">{cc}</td>
                         <td className="px-3 py-2 text-right">{Number(r.debitBase ?? 0).toFixed(2)}</td>
                         <td className="px-3 py-2 text-right">{Number(r.creditBase ?? 0).toFixed(2)}</td>

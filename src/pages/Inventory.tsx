@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -55,6 +56,7 @@ type StockTakeItemRow = {
 type StockTakeLine = { itemId: string; countedQty: string };
 
 export default function Inventory() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { activeOrgId, orgSwitching } = useAuthStore();
   const tr = useTr();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -88,6 +90,7 @@ export default function Inventory() {
   const [result, setResult] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [prefillHint, setPrefillHint] = useState<string | null>(null);
 
   const [journalModalOpen, setJournalModalOpen] = useState(false);
   const [journalDetail, setJournalDetail] = useState<JournalDetail | null>(null);
@@ -274,6 +277,54 @@ export default function Inventory() {
   }, [activeOrgId, orgSwitching]);
 
   useEffect(() => {
+    if (!items.length || !accounts.length) return;
+    const source = String(searchParams.get("source") || "");
+    if (source !== "bank-reconciliation") return;
+    const mode = String(searchParams.get("mode") || "");
+    const date = String(searchParams.get("date") || "").trim();
+    const amount = Number(searchParams.get("amount") || 0) || 0;
+    const offsetAccountId = String(searchParams.get("offsetAccountId") || "");
+    const currency = String(searchParams.get("currency") || "").trim().toUpperCase();
+    const memo = String(searchParams.get("memo") || "").trim();
+
+    if (mode === "receipt") {
+      setPanel("receipt");
+      setReceipt((prev) => ({
+        ...prev,
+        date: date || prev.date,
+        qty: prev.qty > 0 ? prev.qty : 1,
+        unitCostTxn: amount > 0 ? amount : prev.unitCostTxn,
+        currency: currency || prev.currency,
+        fxRate: 1,
+        offsetAccountId: offsetAccountId || prev.offsetAccountId,
+      }));
+      setPrefillHint(tr("已从银行对账带入一笔库存入库，请选择现有 item 或先新建 item 再过账。", "A bank reconciliation inventory receipt is prefilled. Select an existing item or create a new item, then post it."));
+    } else if (mode === "shipment") {
+      setPanel("shipment");
+      setShipment((prev) => ({
+        ...prev,
+        date: date || prev.date,
+        qty: prev.qty > 0 ? prev.qty : 1,
+      }));
+      setPrefillHint(tr("已从银行对账带入一笔库存出库，请选择现有 item 后再过账。", "A bank reconciliation inventory shipment is prefilled. Select an existing item before posting."));
+    }
+
+    if (memo) setErr(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("source");
+      next.delete("mode");
+      next.delete("date");
+      next.delete("amount");
+      next.delete("offsetAccountId");
+      next.delete("currency");
+      next.delete("memo");
+      next.delete("accountId");
+      return next;
+    }, { replace: true });
+  }, [items.length, accounts.length, searchParams, setSearchParams, tr]);
+
+  useEffect(() => {
     if (selectedItemId) {
       refreshStock(selectedItemId).catch((e) => setErr(e.message));
     } else {
@@ -297,6 +348,7 @@ export default function Inventory() {
         {panel !== "moves" ? (
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold">{tr("库存商品", "Items")}</div>
+            {prefillHint ? <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{prefillHint}</div> : null}
             <div className="mt-3 flex gap-2">
               <input
                 className="w-44 rounded-md border border-zinc-200 px-3 py-2 text-sm"
