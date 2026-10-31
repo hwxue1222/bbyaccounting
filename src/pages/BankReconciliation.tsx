@@ -11,6 +11,7 @@ type Account = {
   name: string;
   isActive?: boolean;
   linkInventoryFifo?: boolean;
+  linkFixedAssets?: boolean;
 };
 
 type BankAccount = {
@@ -19,6 +20,13 @@ type BankAccount = {
   accountNo: string;
   accountId: string;
   isActive: boolean;
+};
+
+type InventoryItem = {
+  id: string;
+  sku: string | null;
+  name: string;
+  uom: string;
 };
 
 type ImportedRow = {
@@ -39,6 +47,32 @@ type MappingRule = {
   accountId: string;
   hits: number;
   updatedAt: number;
+};
+
+type InventoryDraftRow = {
+  rowId: string;
+  itemId: string;
+  qty: string;
+  unitCostTxn: string;
+};
+
+type InventoryRowState = {
+  mode: "receipt" | "shipment";
+  defaultSide: "debit" | "credit";
+  expectedTxn: number;
+  expectedBase: number;
+  quoteBase: number;
+  details: InventoryDraftRow[];
+};
+
+type FixedAssetRowState = {
+  category: string;
+  assetNo: string;
+  name: string;
+  memo: string;
+  acquisitionDate: string;
+  usefulLifeMonths: number;
+  salvageBase: number;
 };
 
 const RULE_VERSION = 1;
@@ -215,11 +249,13 @@ export default function BankReconciliation() {
   const navigate = useNavigate();
   const tr = useTr();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const invQuoteAbortRef = useRef<AbortController | null>(null);
   const { orgs, activeOrgId, orgSwitching } = useAuthStore();
   const active = useMemo(() => orgs.find((org) => org.orgId === activeOrgId) || null, [orgs, activeOrgId]);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [selectedBankAccountId, setSelectedBankAccountId] = useState("");
   const [rows, setRows] = useState<ImportedRow[]>([]);
   const [importedFileName, setImportedFileName] = useState("");
@@ -231,6 +267,35 @@ export default function BankReconciliation() {
   const [lastPostedEntryId, setLastPostedEntryId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [inventoryByRowId, setInventoryByRowId] = useState<Record<string, InventoryRowState>>({});
+  const [fixedAssetByRowId, setFixedAssetByRowId] = useState<Record<string, FixedAssetRowState>>({});
+
+  const [invModalOpen, setInvModalOpen] = useState(false);
+  const [invEditingRowId, setInvEditingRowId] = useState<string | null>(null);
+  const [invMode, setInvMode] = useState<"receipt" | "shipment">("receipt");
+  const [invDefaultSide, setInvDefaultSide] = useState<"debit" | "credit">("debit");
+  const [invExpectedTxn, setInvExpectedTxn] = useState(0);
+  const [invExpectedBase, setInvExpectedBase] = useState(0);
+  const [invEditingDetails, setInvEditingDetails] = useState<InventoryDraftRow[]>([]);
+  const [invQuoteByRow, setInvQuoteByRow] = useState<Record<string, { base: number | null; err: string | null }>>({});
+
+  const [invNewItemOpen, setInvNewItemOpen] = useState(false);
+  const [invNewItemBusy, setInvNewItemBusy] = useState(false);
+  const [invNewItemErr, setInvNewItemErr] = useState<string | null>(null);
+  const [invNewItemTargetRowId, setInvNewItemTargetRowId] = useState<string | null>(null);
+  const [invNewItemForm, setInvNewItemForm] = useState({ sku: "", name: "", uom: "EA" });
+
+  const [faModalOpen, setFaModalOpen] = useState(false);
+  const [faEditingRowId, setFaEditingRowId] = useState<string | null>(null);
+  const [faForm, setFaForm] = useState<FixedAssetRowState>({
+    category: "",
+    assetNo: "",
+    name: "",
+    memo: "",
+    acquisitionDate: new Date().toISOString().slice(0, 10),
+    usefulLifeMonths: 36,
+    salvageBase: 0,
+  });
 
   const activeBankAccounts = useMemo(() => bankAccounts.filter((item) => item.isActive), [bankAccounts]);
   const selectedBank = useMemo(
@@ -238,6 +303,14 @@ export default function BankReconciliation() {
     [activeBankAccounts, selectedBankAccountId],
   );
   const accountById = useMemo(() => new Map(accounts.map((item) => [item.id, item] as const)), [accounts]);
+  const inventoryItemById = useMemo(() => new Map(inventoryItems.map((item) => [item.id, item] as const)), [inventoryItems]);
+  const inventoryItemsSorted = useMemo(
+    () =>
+      inventoryItems
+        .slice()
+        .sort((a, b) => `${a.sku || ""} ${a.name}`.localeCompare(`${b.sku || ""} ${b.name}`)),
+    [inventoryItems],
+  );
   const accountOptions = useMemo(
     () =>
       accounts
@@ -248,6 +321,7 @@ export default function BankReconciliation() {
   const rules = useMemo(() => readRules(activeOrgId, selectedBankAccountId), [activeOrgId, selectedBankAccountId]);
   const validAccountIds = useMemo(() => new Set(accountOptions.map((item) => item.id)), [accountOptions]);
   const isInventoryLinkedAccount = (accountId: string) => Boolean(accountById.get(accountId)?.linkInventoryFifo);
+  const isFixedAssetLinkedAccount = (accountId: string) => Boolean(accountById.get(accountId)?.linkFixedAssets);
 
   const selectedCount = useMemo(() => rows.filter((row) => row.post).length, [rows]);
   const readyCount = useMemo(() => rows.filter((row) => row.post && row.accountId).length, [rows]);
@@ -260,13 +334,24 @@ export default function BankReconciliation() {
     [rows],
   );
 
+  function newRowId(): string {
+    const c: any = (globalThis as any).crypto;
+    return typeof c?.randomUUID === "function" ? c.randomUUID() : `${Date.now()}-${Math.random()}`;
+  }
+
+  function baseCurrency(): string {
+    return String(active?.baseCurrency || "SGD").toUpperCase();
+  }
+
   async function refresh() {
-    const [accountsRes, bankAccountsRes] = await Promise.all([
+    const [accountsRes, bankAccountsRes, itemsRes] = await Promise.all([
       api<{ accounts: Account[] }>("/api/settings/accounts"),
       api<{ bankAccounts: BankAccount[] }>("/api/settings/bank-accounts"),
+      api<{ items: any[] }>("/api/inventory/items"),
     ]);
     setAccounts(accountsRes.accounts || []);
     setBankAccounts(bankAccountsRes.bankAccounts || []);
+    setInventoryItems((itemsRes.items || []).map((item: any) => ({ id: item.id, sku: item.sku ?? null, name: item.name, uom: item.uom })));
     setSelectedBankAccountId((prev) => {
       const activeItems = (bankAccountsRes.bankAccounts || []).filter((item) => item.isActive);
       if (prev && activeItems.some((item) => item.id === prev)) return prev;
@@ -283,6 +368,235 @@ export default function BankReconciliation() {
       .catch((e: any) => setErr(e.message))
       .finally(() => setBusy(false));
   }, [activeOrgId, orgSwitching]);
+
+  useEffect(() => {
+    const validIds = new Set(rows.map((row) => row.id));
+    setInventoryByRowId((prev) => {
+      const entries = Object.entries(prev).filter(([rowId]) => validIds.has(rowId));
+      if (entries.length === Object.keys(prev).length) return prev;
+      return Object.fromEntries(entries);
+    });
+    setFixedAssetByRowId((prev) => {
+      const entries = Object.entries(prev).filter(([rowId]) => validIds.has(rowId));
+      if (entries.length === Object.keys(prev).length) return prev;
+      return Object.fromEntries(entries);
+    });
+  }, [rows]);
+
+  const invEditingTotals = useMemo(() => {
+    const totalTxn =
+      invMode === "receipt"
+        ? Math.round(invEditingDetails.reduce((sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitCostTxn) || 0), 0) * 100) / 100
+        : 0;
+    const totalQuoteBase =
+      invMode === "shipment"
+        ? Math.round(invEditingDetails.reduce((sum, item) => sum + (Number(invQuoteByRow[item.rowId]?.base) || 0), 0) * 100) / 100
+        : 0;
+    return { totalTxn, totalQuoteBase };
+  }, [invMode, invEditingDetails, invQuoteByRow]);
+
+  useEffect(() => {
+    if (!invModalOpen || invMode !== "shipment") return;
+    invQuoteAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    invQuoteAbortRef.current = ctrl;
+
+    const validRows = invEditingDetails.filter((item) => item.itemId && (Number(item.qty) || 0) > 0);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const pairs = await Promise.all(
+          validRows.map(async (item) => {
+            try {
+              const resp = await api<{ itemId: string; qty: number; totalBase: number }>(
+                `/api/inventory/shipments/quote?itemId=${encodeURIComponent(item.itemId)}&qty=${encodeURIComponent(String(Number(item.qty) || 0))}`,
+                { signal: ctrl.signal },
+              );
+              return [item.rowId, { base: Number(resp.totalBase), err: null }] as const;
+            } catch (e: any) {
+              if (e?.name === "AbortError") return [item.rowId, { base: null, err: null }] as const;
+              return [item.rowId, { base: null, err: e?.message || "Quote failed" }] as const;
+            }
+          }),
+        );
+        if (ctrl.signal.aborted) return;
+        setInvQuoteByRow((prev) => ({ ...prev, ...Object.fromEntries(pairs) }));
+      })();
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [invModalOpen, invMode, invEditingDetails]);
+
+  function handleRowAccountChange(rowId: string, accountId: string) {
+    setRows((prev) =>
+      prev.map((item) =>
+        item.id === rowId
+          ? { ...item, accountId, touched: true, matchSource: "" }
+          : item,
+      ),
+    );
+    if (!accountId || !isInventoryLinkedAccount(accountId)) {
+      setInventoryByRowId((prev) => {
+        if (!(rowId in prev)) return prev;
+        const next = { ...prev };
+        delete next[rowId];
+        return next;
+      });
+    }
+    if (!accountId || !isFixedAssetLinkedAccount(accountId)) {
+      setFixedAssetByRowId((prev) => {
+        if (!(rowId in prev)) return prev;
+        const next = { ...prev };
+        delete next[rowId];
+        return next;
+      });
+    }
+  }
+
+  async function openInventoryModalForRow(row: ImportedRow) {
+    if (!row.accountId || !isInventoryLinkedAccount(row.accountId)) return;
+    let availableItems = inventoryItems;
+    if (!inventoryItems.length) {
+      const resp = await api<{ items: any[] }>("/api/inventory/items");
+      availableItems = (resp.items || []).map((item: any) => ({ id: item.id, sku: item.sku ?? null, name: item.name, uom: item.uom }));
+      setInventoryItems(availableItems);
+    }
+    const existing = inventoryByRowId[row.id];
+    const mode = existing?.mode || (row.side === "debit" ? "receipt" : "shipment");
+    const defaultSide = existing?.defaultSide || (row.side === "debit" ? "debit" : "credit");
+    setInvEditingRowId(row.id);
+    setInvMode(mode);
+    setInvDefaultSide(defaultSide);
+    setInvExpectedTxn(row.amount);
+    setInvExpectedBase(row.amount);
+    setInvEditingDetails(
+      existing?.details?.length
+        ? existing.details
+        : [{ rowId: newRowId(), itemId: availableItems[0]?.id || "", qty: "1", unitCostTxn: mode === "receipt" ? String(row.amount || 1) : "" }],
+    );
+    setInvQuoteByRow({});
+    setInvModalOpen(true);
+  }
+
+  function openFixedAssetModalForRow(row: ImportedRow) {
+    if (!row.accountId || !isFixedAssetLinkedAccount(row.accountId)) return;
+    const existing = fixedAssetByRowId[row.id];
+    setFaEditingRowId(row.id);
+    setFaForm(
+      existing || {
+        category: "",
+        assetNo: "",
+        name: row.description?.trim() || tr("固定资产", "Fixed asset"),
+        memo: row.description?.trim() || "",
+        acquisitionDate: row.date,
+        usefulLifeMonths: 36,
+        salvageBase: 0,
+      },
+    );
+    setFaModalOpen(true);
+  }
+
+  function buildJournalPayloadForRow(row: ImportedRow) {
+    if (!selectedBank?.accountId) {
+      throw new Error(tr("请先选择银行账号。", "Please select a bank account first."));
+    }
+    if (!row.accountId) {
+      throw new Error(tr("请先选择对应科目。", "Please select an offset account first."));
+    }
+
+    const description = String(row.description || "").trim();
+    const memo = `Bank reconciliation${description ? ` - ${description}` : ""}`;
+    const otherDebit = row.side === "debit" ? row.amount : 0;
+    const otherCredit = row.side === "credit" ? row.amount : 0;
+    const bankDebit = row.side === "credit" ? row.amount : 0;
+    const bankCredit = row.side === "debit" ? row.amount : 0;
+
+    const inventoryState = inventoryByRowId[row.id];
+    const fixedAssetState = fixedAssetByRowId[row.id];
+    const needsInventory = isInventoryLinkedAccount(row.accountId);
+    const needsFixedAsset = isFixedAssetLinkedAccount(row.accountId);
+
+    if (needsInventory) {
+      if (!inventoryState?.details?.length) {
+        throw new Error(tr("库存科目必须先点“库存”并确认明细。", "Inventory-linked rows require confirmed inventory details first."));
+      }
+      if (
+        inventoryState.details.some(
+          (item) =>
+            !item.itemId ||
+            (Number(item.qty) || 0) <= 0 ||
+            (inventoryState.mode === "receipt" && (Number(item.unitCostTxn) || 0) <= 0),
+        )
+      ) {
+        throw new Error(tr("库存明细未填写完整。", "Inventory details are incomplete."));
+      }
+      if (inventoryState.mode === "receipt") {
+        const totalTxn =
+          Math.round(
+            inventoryState.details.reduce(
+              (sum, item) => sum + (Number(item.qty) || 0) * (Number(item.unitCostTxn) || 0),
+              0,
+            ) * 100,
+          ) / 100;
+        if (Math.round(totalTxn * 100) / 100 !== Math.round(row.amount * 100) / 100) {
+          throw new Error(tr("库存入库明细合计必须与银行流水金额一致。", "Inventory receipt total must match the bank transaction amount."));
+        }
+      }
+    }
+
+    if (needsFixedAsset) {
+      if (!fixedAssetState?.category || !fixedAssetState?.acquisitionDate || !fixedAssetState?.name.trim() || !(Number(fixedAssetState.usefulLifeMonths) > 0)) {
+        throw new Error(tr("固定资产科目必须先点“固定资产”并填写资料。", "Fixed-asset rows require fixed asset details first."));
+      }
+    }
+
+    return {
+      entryDate: row.date,
+      currency: baseCurrency(),
+      fxRate: 1,
+      memo,
+      inventoryLinkLineNo: needsInventory ? 1 : undefined,
+      inventoryDetails: needsInventory
+        ? inventoryState.details.map((item) =>
+            inventoryState.mode === "receipt"
+              ? { moveType: "receipt" as const, itemId: item.itemId, qty: Number(item.qty) || 0, unitCostTxn: Number(item.unitCostTxn) || 0 }
+              : { moveType: "shipment" as const, itemId: item.itemId, qty: Number(item.qty) || 0 },
+          )
+        : undefined,
+      fixedAssetPurchases: needsFixedAsset
+        ? [
+            {
+              lineNo: 1,
+              category: fixedAssetState.category,
+              assetNo: fixedAssetState.assetNo || undefined,
+              name: fixedAssetState.name.trim(),
+              memo: fixedAssetState.memo || undefined,
+              acquisitionDate: fixedAssetState.acquisitionDate,
+              usefulLifeMonths: Number(fixedAssetState.usefulLifeMonths) || 0,
+              salvageBase: Number(fixedAssetState.salvageBase) || 0,
+            },
+          ]
+        : undefined,
+      lines: [
+        {
+          accountId: row.accountId,
+          description: description || undefined,
+          costCenterId: null,
+          debitTxn: otherDebit,
+          creditTxn: otherCredit,
+        },
+        {
+          accountId: selectedBank.accountId,
+          description: description || undefined,
+          costCenterId: null,
+          debitTxn: bankDebit,
+          creditTxn: bankCredit,
+        },
+      ],
+    };
+  }
 
   async function importFile(file: File) {
     if (!selectedBankAccountId) {
@@ -323,6 +637,8 @@ export default function BankReconciliation() {
           touched: false,
           matchSource: "" as const,
         }));
+      setInventoryByRowId({});
+      setFixedAssetByRowId({});
       setRows(autoMatchRows(importedRows, accountOptions, validAccountIds, rules));
     } catch (e: any) {
       setErr(e.message);
@@ -347,82 +663,79 @@ export default function BankReconciliation() {
       setErr(rowId ? tr("请先为这笔流水选择对应科目。", "Please select an offset account for this row first.") : tr("有流水还没有选择对应科目。", "Some statement rows do not have an account selected."));
       return;
     }
-    const inventoryRow = selectedRows.find((row) => row.accountId && isInventoryLinkedAccount(row.accountId));
-    if (inventoryRow) {
-      setErr(
-        tr(
-          "勾选的流水里包含库存科目。库存相关流水请点该行右侧“去 Inventory 处理”，在那里统一选择现有或新建 item 后再过账。",
-          "Selected rows include an inventory-linked account. For inventory transactions, click 'Handle In Inventory' on that row and complete item selection there before posting.",
-        ),
-      );
-      return;
-    }
 
     setPosting(true);
     setPostingRowId(rowId || null);
     setErr(null);
     setSuccess(null);
     setLastPostedEntryId(null);
+    const postedRows: ImportedRow[] = [];
+    let latestEntryId: string | null = null;
     try {
-      const result = await api<{ count: number; entries?: Array<{ id: string; voucherNo: string }> }>("/api/bank-reconciliation/post", {
-        method: "POST",
-        json: {
-          bankAccountId: selectedBankAccountId,
-          rows: selectedRows.map((row) => ({
-            date: row.date,
-            description: row.description,
-            side: row.side,
-            amount: row.amount,
-            accountId: row.accountId,
-            post: row.post,
-          })),
-        },
-        timeoutMs: 120_000,
-      });
+      for (const row of selectedRows) {
+        const result = await api<{ entry?: { id: string }; entries?: Array<{ id: string; voucherNo: string }> }>("/api/journals/post", {
+          method: "POST",
+          json: buildJournalPayloadForRow(row),
+          timeoutMs: 120_000,
+        });
+        postedRows.push(row);
+        latestEntryId = result.entry?.id || result.entries?.[result.entries.length - 1]?.id || latestEntryId;
+      }
       writeRules(
         activeOrgId,
         selectedBankAccountId,
         mergeRules(
           rules,
-          selectedRows.map((row) => ({
+          postedRows.map((row) => ({
             description: row.description,
             accountId: row.accountId,
           })),
         ),
       );
-      const postedIds = new Set(selectedRows.map((row) => row.id));
-      const latestEntryId = result.entries?.[result.entries.length - 1]?.id || null;
       setLastPostedEntryId(latestEntryId);
+      const postedIds = new Set(postedRows.map((row) => row.id));
       setRows((prev) => prev.filter((row) => !postedIds.has(row.id)));
+      setInventoryByRowId((prev) => {
+        const next = { ...prev };
+        for (const row of postedRows) delete next[row.id];
+        return next;
+      });
+      setFixedAssetByRowId((prev) => {
+        const next = { ...prev };
+        for (const row of postedRows) delete next[row.id];
+        return next;
+      });
       setSuccess(
         rowId
           ? tr("该笔流水已过账。", "The selected transaction has been posted.")
-          : tr(`已过账 ${result.count} 笔流水。`, `Posted ${result.count} bank transactions.`),
+          : tr(`已过账 ${postedRows.length} 笔流水。`, `Posted ${postedRows.length} bank transactions.`),
       );
-      if (rows.length === selectedRows.length) {
+      if (rows.length === postedRows.length) {
         setImportedFileName("");
         setImportedFileType("");
       }
     } catch (e: any) {
+      if (postedRows.length) {
+        const postedIds = new Set(postedRows.map((row) => row.id));
+        setLastPostedEntryId(latestEntryId);
+        setRows((prev) => prev.filter((row) => !postedIds.has(row.id)));
+        setInventoryByRowId((prev) => {
+          const next = { ...prev };
+          for (const row of postedRows) delete next[row.id];
+          return next;
+        });
+        setFixedAssetByRowId((prev) => {
+          const next = { ...prev };
+          for (const row of postedRows) delete next[row.id];
+          return next;
+        });
+        setSuccess(tr(`已先过账 ${postedRows.length} 笔流水。`, `Posted ${postedRows.length} bank transactions before the error.`));
+      }
       setErr(e.message);
     } finally {
       setPosting(false);
       setPostingRowId(null);
     }
-  }
-
-  function openInventoryForRow(row: ImportedRow) {
-    if (!selectedBank?.accountId || !row.accountId) return;
-    const params = new URLSearchParams();
-    params.set("source", "bank-reconciliation");
-    params.set("mode", row.side === "debit" ? "receipt" : "shipment");
-    params.set("date", row.date);
-    params.set("amount", row.amount.toFixed(2));
-    params.set("offsetAccountId", selectedBank.accountId);
-    params.set("accountId", row.accountId);
-    if (active?.baseCurrency) params.set("currency", active.baseCurrency);
-    if (row.description) params.set("memo", row.description);
-    navigate(`/inventory?${params.toString()}`);
   }
 
   return (
@@ -648,15 +961,7 @@ export default function BankReconciliation() {
                             className="w-full min-w-[240px] rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                             value={row.accountId}
                             disabled={posting}
-                            onChange={(e) =>
-                              setRows((prev) =>
-                                prev.map((item) =>
-                                  item.id === row.id
-                                    ? { ...item, accountId: e.target.value, touched: true, matchSource: "" }
-                                    : item,
-                                ),
-                              )
-                            }
+                            onChange={(e) => handleRowAccountChange(row.id, e.target.value)}
                           >
                             <option value="">{tr("请选择科目", "Select Account")}</option>
                             {accountOptions.map((account) => (
@@ -674,28 +979,61 @@ export default function BankReconciliation() {
                           ) : null}
                           {row.accountId && isInventoryLinkedAccount(row.accountId) ? (
                             <div className="mt-1 text-xs text-amber-700">
-                              {tr(
-                                row.side === "debit"
-                                  ? "这是库存科目，请去 Inventory 里统一选择现有或新建 item 后入库过账。"
-                                  : "这是库存科目。若要统一库存处理，请改到 Inventory / 分录流程完成，不要在这里直接过账。",
-                                row.side === "debit"
-                                  ? "This is an inventory-linked account. Use Inventory to choose an existing/new item and post the receipt there."
-                                  : "This is an inventory-linked account. Complete it through the Inventory/Journal flow instead of direct posting here.",
-                              )}
+                              {inventoryByRowId[row.id]
+                                ? tr(
+                                    `已设置库存明细：${inventoryByRowId[row.id].mode === "receipt" ? "入库" : "出库"}，${inventoryByRowId[row.id].details.length} 行。`,
+                                    `Inventory details ready: ${inventoryByRowId[row.id].mode === "receipt" ? "receipt" : "shipment"}, ${inventoryByRowId[row.id].details.length} rows.`,
+                                  )
+                                : tr(
+                                    "这是库存科目。请点右侧“库存”填写现有或新建 item 明细，再过账。",
+                                    "This is an inventory-linked account. Click 'Inventory' to fill item details before posting.",
+                                  )}
+                            </div>
+                          ) : null}
+                          {row.accountId && isFixedAssetLinkedAccount(row.accountId) ? (
+                            <div className="mt-1 text-xs text-indigo-700">
+                              {fixedAssetByRowId[row.id]
+                                ? tr(
+                                    `已填写固定资产：${fixedAssetByRowId[row.id].name || "-"}`,
+                                    `Fixed asset info ready: ${fixedAssetByRowId[row.id].name || "-"}`,
+                                  )
+                                : tr(
+                                    "这是固定资产科目。请点右侧“固定资产”填写购置信息，再过账。",
+                                    "This is a fixed-asset account. Click 'Fixed Asset' to fill purchase details before posting.",
+                                  )}
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {row.accountId && isInventoryLinkedAccount(row.accountId) ? (
-                            <button
-                              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-                              disabled={posting || importing || row.side !== "debit"}
-                              onClick={() => openInventoryForRow(row)}
-                              type="button"
-                            >
-                              {row.side === "debit" ? tr("去 Inventory 处理", "Handle In Inventory") : tr("库存流水改走分录", "Use Journal Flow")}
-                            </button>
-                          ) : (
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
+                            {row.accountId && isInventoryLinkedAccount(row.accountId) ? (
+                              <button
+                                className={`rounded-md px-3 py-2 text-sm disabled:opacity-50 ${
+                                  inventoryByRowId[row.id]
+                                    ? "border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+                                    : "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                }`}
+                                disabled={posting || importing}
+                                onClick={() => void openInventoryModalForRow(row).catch((e: any) => setErr(e.message))}
+                                type="button"
+                              >
+                                {inventoryByRowId[row.id] ? tr("库存已设置", "Inventory Ready") : tr("库存", "Inventory")}
+                              </button>
+                            ) : null}
+                            {row.accountId && isFixedAssetLinkedAccount(row.accountId) ? (
+                              <button
+                                className={`rounded-md px-3 py-2 text-sm disabled:opacity-50 ${
+                                  fixedAssetByRowId[row.id]
+                                    ? "border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100"
+                                    : "border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
+                                }`}
+                                disabled={posting || importing}
+                                onClick={() => openFixedAssetModalForRow(row)}
+                                type="button"
+                              >
+                                {fixedAssetByRowId[row.id] ? tr("固定资产已设置", "Fixed Asset Ready") : tr("固定资产", "Fixed Asset")}
+                              </button>
+                            ) : null}
                             <button
                               className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                               disabled={posting || importing || !row.accountId}
@@ -704,7 +1042,7 @@ export default function BankReconciliation() {
                             >
                               {posting && postingRowId === row.id ? tr("过账中...", "Posting...") : tr("单独过账", "Post Row")}
                             </button>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -718,6 +1056,500 @@ export default function BankReconciliation() {
             </div>
           )}
         </div>
+
+        {faModalOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4"
+            onMouseDown={() => {
+              if (posting) return;
+              setFaModalOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">{tr("固定资产信息", "Fixed Asset Info")}</div>
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={posting}
+                  onClick={() => setFaModalOpen(false)}
+                  type="button"
+                >
+                  {tr("关闭", "Close")}
+                </button>
+              </div>
+
+              {(() => {
+                const row = rows.find((item) => item.id === faEditingRowId) || null;
+                return row ? (
+                  <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+                    <div>{tr(`银行流水金额：${row.amount.toFixed(2)} ${baseCurrency()}`, `Bank transaction amount: ${row.amount.toFixed(2)} ${baseCurrency()}`)}</div>
+                    <div className="mt-1">{tr(`银行账号会自动作为另一条分录，无需重复填写。`, `The bank account is posted as the offset line automatically.`)}</div>
+                  </div>
+                ) : null;
+              })()}
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("大类", "Category")}</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-2 text-sm"
+                    value={faForm.category}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, category: e.target.value }))}
+                    disabled={posting}
+                  >
+                    <option value="">{tr("请选择", "Select")}</option>
+                    <option value="Machinery and Equipment">Machinery and Equipment</option>
+                    <option value="Vehicles">Vehicles</option>
+                    <option value="Computer">Computer</option>
+                    <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                    <option value="Renovation">Renovation</option>
+                    <option value="Intangible Fixed Assets">Intangible Fixed Assets</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("固定资产编号", "Asset No")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faForm.assetNo}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, assetNo: e.target.value.toUpperCase() }))}
+                    placeholder={tr("留空则系统自动生成", "Leave empty to auto-generate")}
+                    disabled={posting}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faForm.name}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, name: e.target.value }))}
+                    disabled={posting}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("购置日", "Acquisition date")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faForm.acquisitionDate}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, acquisitionDate: e.target.value }))}
+                    disabled={posting}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("折旧月数", "Useful life (months)")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faForm.usefulLifeMonths}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, usefulLifeMonths: Number(e.target.value) || 0 }))}
+                    type="number"
+                    disabled={posting}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("残值（本位）", "Salvage (base)")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faForm.salvageBase}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, salvageBase: Number(e.target.value) || 0 }))}
+                    type="number"
+                    step="0.01"
+                    disabled={posting}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("备注", "Memo")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={faForm.memo}
+                    onChange={(e) => setFaForm((prev) => ({ ...prev, memo: e.target.value }))}
+                    disabled={posting}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={posting}
+                  onClick={() => setFaModalOpen(false)}
+                  type="button"
+                >
+                  {tr("取消", "Cancel")}
+                </button>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={posting || !faEditingRowId || !faForm.category.trim() || !faForm.name.trim() || !faForm.acquisitionDate.trim() || !(Number(faForm.usefulLifeMonths) > 0)}
+                  onClick={() => {
+                    if (!faEditingRowId) return;
+                    setFixedAssetByRowId((prev) => ({
+                      ...prev,
+                      [faEditingRowId]: {
+                        category: faForm.category.trim(),
+                        assetNo: faForm.assetNo.trim().toUpperCase(),
+                        name: faForm.name.trim(),
+                        memo: faForm.memo.trim(),
+                        acquisitionDate: faForm.acquisitionDate,
+                        usefulLifeMonths: Number(faForm.usefulLifeMonths) || 0,
+                        salvageBase: Number(faForm.salvageBase) || 0,
+                      },
+                    }));
+                    setFaModalOpen(false);
+                  }}
+                  type="button"
+                >
+                  {tr("保存", "Save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {invModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-4xl rounded-xl bg-white p-4 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-semibold">{tr("库存明细", "Inventory Details")}</div>
+                  <button
+                    className={
+                      "rounded-full px-3 py-1 text-sm " +
+                      (invMode === "receipt" ? "bg-blue-700 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
+                    }
+                    type="button"
+                    onClick={() => {
+                      setInvMode("receipt");
+                      setInvQuoteByRow({});
+                    }}
+                  >
+                    {tr("入库", "Receipt")}
+                  </button>
+                  <button
+                    className={
+                      "rounded-full px-3 py-1 text-sm " +
+                      (invMode === "shipment" ? "bg-blue-700 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
+                    }
+                    type="button"
+                    onClick={() => {
+                      setInvMode("shipment");
+                      setInvQuoteByRow({});
+                    }}
+                  >
+                    {tr("出库", "Shipment")}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-xs text-zinc-500">
+                    {tr(`绑定金额：${invExpectedTxn.toFixed(2)} ${baseCurrency()}`, `Bound amount: ${invExpectedTxn.toFixed(2)} ${baseCurrency()}`)}
+                  </div>
+                  <button
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                    type="button"
+                    onClick={() => {
+                      setInvNewItemErr(null);
+                      setInvNewItemTargetRowId(invEditingDetails[0]?.rowId || null);
+                      setInvNewItemForm({ sku: "", name: "", uom: "EA" });
+                      setInvNewItemOpen(true);
+                    }}
+                  >
+                    {tr("新增 item", "New Item")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 overflow-auto rounded-lg border border-zinc-100">
+                <table className="w-full table-fixed text-sm">
+                  <thead className="bg-zinc-50 text-xs text-zinc-600">
+                    <tr>
+                      <th className="w-80 px-3 py-2 text-left">{tr("商品", "Item")}</th>
+                      <th className="w-28 px-3 py-2 text-right">{tr("数量", "Qty")}</th>
+                      {invMode === "receipt" ? (
+                        <th className="px-3 py-2 text-right">{tr(`单价(${baseCurrency()})`, `Unit Cost (${baseCurrency()})`)}</th>
+                      ) : (
+                        <th className="px-3 py-2 text-right">{tr(`FIFO 成本(${baseCurrency()})`, `FIFO Cost (${baseCurrency()})`)}</th>
+                      )}
+                      <th className="w-36 px-3 py-2 text-right">{tr("金额", "Amount")}</th>
+                      <th className="w-28 px-3 py-2 text-left">{tr("操作", "Action")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invEditingDetails.map((item) => {
+                      const quote = invQuoteByRow[item.rowId];
+                      const qty = Number(item.qty) || 0;
+                      const unit = Number(item.unitCostTxn) || 0;
+                      const amountTxn = Math.round(qty * unit * 100) / 100;
+                      const costBase = quote?.base == null ? null : Number(quote.base);
+                      return (
+                        <tr key={item.rowId} className="border-t border-zinc-100">
+                          <td className="px-3 py-2">
+                            <div className="flex gap-2">
+                              <select
+                                className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm"
+                                value={item.itemId}
+                                onChange={(e) =>
+                                  setInvEditingDetails((prev) =>
+                                    prev.map((rowItem) => (rowItem.rowId === item.rowId ? { ...rowItem, itemId: e.target.value } : rowItem)),
+                                  )
+                                }
+                              >
+                                <option value="">{tr("请选择", "Select")}</option>
+                                {inventoryItemsSorted.map((it) => (
+                                  <option key={it.id} value={it.id}>
+                                    {((it.sku ? `${it.sku} ` : "") + it.name).replace(/\s+/g, " ").trim()}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50"
+                                type="button"
+                                onClick={() => {
+                                  setInvNewItemErr(null);
+                                  setInvNewItemTargetRowId(item.rowId);
+                                  setInvNewItemForm({ sku: "", name: "", uom: "EA" });
+                                  setInvNewItemOpen(true);
+                                }}
+                              >
+                                {tr("新建", "New")}
+                              </button>
+                            </div>
+                            {(() => {
+                              const invItem = inventoryItemById.get(item.itemId);
+                              if (!invItem) return null;
+                              return (
+                                <div className="mt-1 text-xs text-zinc-500">
+                                  {(invItem.sku ? `SKU: ${invItem.sku}` : "SKU: -") + ` · ${invItem.name || "-"}`}
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              className="w-full rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                              type="number"
+                              step="1"
+                              value={item.qty}
+                              onChange={(e) =>
+                                setInvEditingDetails((prev) =>
+                                  prev.map((rowItem) => (rowItem.rowId === item.rowId ? { ...rowItem, qty: e.target.value } : rowItem)),
+                                )
+                              }
+                            />
+                          </td>
+                          {invMode === "receipt" ? (
+                            <td className="px-3 py-2 text-right">
+                              <input
+                                className="w-full rounded-md border border-zinc-200 px-2 py-1 text-right text-sm"
+                                type="number"
+                                step="0.01"
+                                value={item.unitCostTxn}
+                                onChange={(e) =>
+                                  setInvEditingDetails((prev) =>
+                                    prev.map((rowItem) => (rowItem.rowId === item.rowId ? { ...rowItem, unitCostTxn: e.target.value } : rowItem)),
+                                  )
+                                }
+                              />
+                            </td>
+                          ) : (
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              {quote?.err ? <span className="text-red-700">{quote.err}</span> : costBase == null ? "-" : `${costBase.toFixed(2)} ${baseCurrency()}`}
+                            </td>
+                          )}
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {invMode === "receipt" ? `${amountTxn.toFixed(2)} ${baseCurrency()}` : costBase == null ? "-" : `${(Math.round(costBase * 100) / 100).toFixed(2)} ${baseCurrency()}`}
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                              disabled={invEditingDetails.length <= 1}
+                              onClick={() => {
+                                setInvEditingDetails((prev) => prev.filter((rowItem) => rowItem.rowId !== item.rowId));
+                                setInvQuoteByRow((prev) => {
+                                  const next = { ...prev };
+                                  delete next[item.rowId];
+                                  return next;
+                                });
+                              }}
+                              type="button"
+                            >
+                              {tr("删除", "Delete")}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {invMode === "receipt" ? (
+                <div className="mt-3 text-sm">
+                  <div>{tr(`明细合计：${invEditingTotals.totalTxn.toFixed(2)} ${baseCurrency()}；银行流水金额：${invExpectedTxn.toFixed(2)} ${baseCurrency()}`, `Detail total: ${invEditingTotals.totalTxn.toFixed(2)} ${baseCurrency()}; bank amount: ${invExpectedTxn.toFixed(2)} ${baseCurrency()}`)}</div>
+                  {Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100 ? (
+                    <div className="mt-1 text-sm text-red-700">{tr("明细合计必须与该笔银行流水金额一致。", "Detail total must match the bank transaction amount.")}</div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-3 text-sm">
+                  {invEditingDetails.some((item) => invQuoteByRow[item.rowId]?.err) ? (
+                    <div className="text-red-700">{tr("存在库存不足或数据错误，请调整商品/数量。", "There is not enough stock or a data issue. Please adjust the item/qty.")}</div>
+                  ) : invEditingDetails.some((item) => item.itemId && (Number(item.qty) || 0) > 0 && invQuoteByRow[item.rowId]?.base == null) ? (
+                    <div className="text-zinc-500">{tr("正在计算 FIFO 成本...", "Calculating FIFO cost...")}</div>
+                  ) : null}
+                </div>
+              )}
+
+              <div className="mt-3 flex items-center justify-between">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                  onClick={() =>
+                    setInvEditingDetails((prev) => [
+                      ...prev,
+                      { rowId: newRowId(), itemId: inventoryItems[0]?.id || "", qty: "1", unitCostTxn: invMode === "receipt" ? "1" : "" },
+                    ])
+                  }
+                  type="button"
+                >
+                  {tr("增加行", "Add Row")}
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+                    onClick={() => setInvModalOpen(false)}
+                    disabled={posting}
+                    type="button"
+                  >
+                    {tr("取消", "Cancel")}
+                  </button>
+                  <button
+                    className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+                    disabled={
+                      posting ||
+                      !invEditingRowId ||
+                      invEditingDetails.some(
+                        (item) => !item.itemId || (Number(item.qty) || 0) <= 0 || (invMode === "receipt" && (Number(item.unitCostTxn) || 0) <= 0),
+                      ) ||
+                      (invMode === "receipt"
+                        ? Math.round(invEditingTotals.totalTxn * 100) / 100 !== Math.round(invExpectedTxn * 100) / 100
+                        : invEditingDetails.some((item) => invQuoteByRow[item.rowId]?.base == null || invQuoteByRow[item.rowId]?.err))
+                    }
+                    onClick={() => {
+                      if (!invEditingRowId) return;
+                      setInventoryByRowId((prev) => ({
+                        ...prev,
+                        [invEditingRowId]: {
+                          mode: invMode,
+                          defaultSide: invDefaultSide,
+                          expectedTxn: invExpectedTxn,
+                          expectedBase: invExpectedBase,
+                          quoteBase: invMode === "shipment" ? invEditingTotals.totalQuoteBase : 0,
+                          details: invEditingDetails,
+                        },
+                      }));
+                      setInvModalOpen(false);
+                    }}
+                    type="button"
+                  >
+                    {tr("确认", "Confirm")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {invNewItemOpen ? (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+            onMouseDown={() => {
+              if (invNewItemBusy) return;
+              setInvNewItemOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-xl rounded-xl bg-white shadow-xl"
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <div className="border-b border-zinc-200 p-4">
+                <div className="text-sm font-semibold">{tr("新增库存 item", "New Inventory Item")}</div>
+              </div>
+              <div className="grid gap-3 p-4 md:grid-cols-2">
+                <div>
+                  <label className="text-xs text-zinc-600">SKU</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={invNewItemForm.sku}
+                    onChange={(e) => setInvNewItemForm((prev) => ({ ...prev, sku: e.target.value }))}
+                    disabled={invNewItemBusy}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-600">{tr("单位", "UOM")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={invNewItemForm.uom}
+                    onChange={(e) => setInvNewItemForm((prev) => ({ ...prev, uom: e.target.value.toUpperCase() || "EA" }))}
+                    disabled={invNewItemBusy}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-zinc-600">{tr("名称", "Name")}</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-zinc-200 px-3 py-2 text-sm"
+                    value={invNewItemForm.name}
+                    onChange={(e) => setInvNewItemForm((prev) => ({ ...prev, name: e.target.value }))}
+                    disabled={invNewItemBusy}
+                  />
+                </div>
+                {invNewItemErr ? <div className="md:col-span-2 text-sm text-red-700">{invNewItemErr}</div> : null}
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-zinc-200 p-4">
+                <button
+                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={invNewItemBusy}
+                  onClick={() => setInvNewItemOpen(false)}
+                  type="button"
+                >
+                  {tr("取消", "Cancel")}
+                </button>
+                <button
+                  className="rounded-md bg-blue-700 px-3 py-2 text-sm text-white hover:bg-blue-800 disabled:opacity-50"
+                  disabled={invNewItemBusy || !invNewItemForm.sku.trim() || !invNewItemForm.name.trim()}
+                  onClick={async () => {
+                    setInvNewItemBusy(true);
+                    setInvNewItemErr(null);
+                    try {
+                      const resp = await api<{ item: any }>("/api/inventory/items", {
+                        method: "POST",
+                        json: { sku: invNewItemForm.sku.trim(), name: invNewItemForm.name.trim(), uom: invNewItemForm.uom.trim() || "EA" },
+                      });
+                      const newId = resp.item?.id ? String(resp.item.id) : "";
+                      const itemsResp = await api<{ items: any[] }>("/api/inventory/items");
+                      setInventoryItems((itemsResp.items || []).map((item: any) => ({ id: item.id, sku: item.sku ?? null, name: item.name, uom: item.uom })));
+                      if (invNewItemTargetRowId && newId) {
+                        setInvEditingDetails((prev) =>
+                          prev.map((item) => (item.rowId === invNewItemTargetRowId ? { ...item, itemId: newId } : item)),
+                        );
+                      }
+                      setInvNewItemOpen(false);
+                    } catch (e: any) {
+                      setInvNewItemErr(e.message);
+                    } finally {
+                      setInvNewItemBusy(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  {tr("保存", "Save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );
